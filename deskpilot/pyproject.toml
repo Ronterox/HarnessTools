@@ -1,0 +1,15 @@
+[project]
+name = "deskpilot"
+version = "0.1.0"
+description = "MCP server to drive a Linux/X11 desktop via accessibility tree, OCR and cheap screenshots"
+requires-python = ">=3.10"
+dependencies = ["mcp>=2.3", "pillow>=10"]
+# System deps (apt): python3-gi gir1.2-atspi-2.0 python3-pyatspi xdotool wmctrl x11-utils tesseract-ocr xclip
+# The venv must be created with --system-site-packages so gi/pyatspi are importable.
+
+[project.scripts]
+deskpilot = "deskpilot.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
