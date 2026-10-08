@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "deskpilot": {
+      "type": "stdio",
+      "command": "/home/rontero/Documents/Projects/AIProjects/HarnessTools/deskpilot/.venv/bin/deskpilot",
+      "args": []
+    }
+  }
+}
