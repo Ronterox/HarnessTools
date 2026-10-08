@@ -10,7 +10,7 @@ import functools
 from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from . import a11y, vision, xutil
+from . import a11y, osd, vision, xutil
 
 INSTRUCTIONS = """Control any app on this Linux (X11/GNOME) desktop. Cheapest first:
 1. ui(window) -> accessibility tree as text with refs like [e12]; then act(ref, 'click'|'set_text'|...).
@@ -177,9 +177,12 @@ def act(ref: str, action: str = "click", text: str | None = None) -> str:
     set_text (replace field contents; needs text) | type (append text) | toggle | check | uncheck |
     expand | collapse | select | scroll_into_view | read (full text of the subtree, untruncated) |
     actions (list the element's native actions) | <any native action name>."""
-    res = a11y.act(ref, action, text)
     if action.lower() in ("read", "text", "actions"):
-        return res
+        return a11y.act(ref, action, text)
+    what, cx, cy = a11y.describe(ref)
+    verb = {"set_text": "filling", "type": "typing into", "click": "clicking"}.get(action.lower(), action)
+    osd.show(f"{verb} {what}", cx, cy)
+    res = a11y.act(ref, action, text)
     time.sleep(0.35)
     return f"{res}; {_status()}"
 
@@ -188,39 +191,69 @@ def act(ref: str, action: str = "click", text: str | None = None) -> str:
 def input(action: str, keys: str | None = None, text: str | None = None, x: int | None = None,
           y: int | None = None, x2: int | None = None, y2: int | None = None, button: str = "left",
           count: int = 1, direction: str = "down", amount: int = 3, window: str | None = None) -> str:
-    """Raw keyboard/mouse (goes to the focused window; pass window= to focus one first). action:
+    """Raw keyboard/mouse. ALWAYS pass window= (id/title): it is focused (switching workspace if
+    needed) and verified before anything is sent, and pointer coords must lie on it. scroll/move without
+    x,y use the window's center. Without window=, input goes to whatever is at x,y / focused now. Keys/text are refused if they would land in Claude's own terminal. action:
     key (keys='ctrl+l', 'enter', 'alt+tab', several space-separated; count repeats) |
     type (text=; types literally, \\n = Enter) | click (x,y; button left/right/middle; count=2 double) |
     move (x,y) | scroll (direction up/down/left/right, amount notches, optional x,y) |
     drag (x,y -> x2,y2) | mouse (report pointer position)."""
-    if window:
-        xutil.focus_window(xutil.resolve_window(window))
     a = action.lower()
+    if a == "mouse":
+        mx, my = xutil.mouse_location()
+        return f"pointer at {mx},{my}; {_status()}"
+    if a not in ("key", "type", "click", "move", "scroll", "drag"):
+        raise RuntimeError(f"unknown input action {action!r}")
+    if a in ("click", "drag") and (x is None or y is None):
+        raise RuntimeError(f"{a} needs x and y")
+
+    pointer = a in ("click", "scroll", "drag", "move")
+    target = None
+    if window:
+        target = xutil.resolve_window(window)
+        if pointer and x is None:  # scroll/move without coords: middle of the target window
+            x, y = target.x + target.w // 2, target.y + target.h // 2
+    elif x is not None and y is not None:
+        target = xutil.window_at(x, y)  # current workspace only; pass window= to be sure
+    if target is not None and a != "move":
+        xutil.focus_window(target)  # switches workspace if needed, verifies focus
+    if window and pointer and target is not None:
+        under = xutil.window_at(x, y)
+        if under is None or under.id != target.id:
+            raise RuntimeError(f"point {x},{y} is not on {target.hex} ({target.title!r}) but on "
+                               f"{under.title if under else 'nothing'!r}; nothing sent")
+    if a in ("key", "type"):
+        aid = xutil.active_window_id()
+        if xutil.is_own_terminal(aid) and not window:
+            raise RuntimeError("refusing: the focused window is the terminal running Claude itself; "
+                               "pass window= to target the app you mean")
+
+    px, py = (x, y) if x is not None else (target.x + target.w // 2, target.y) if target else (None, None)
     if a == "key":
         if not keys:
             raise RuntimeError("key needs keys=")
+        osd.show(f"pressing {keys}", px, py)
         xutil.key(keys, count)
     elif a == "type":
         if text is None:
             raise RuntimeError("type needs text=")
+        preview = text if len(text) <= 40 else text[:37] + "…"
+        osd.show(f"typing \"{preview}\"".replace("\n", "⏎"), px, py)
         xutil.type_text(text)
     elif a == "click":
-        if x is None or y is None:
-            raise RuntimeError("click needs x and y")
+        osd.show(f"{'double-' if count == 2 else ''}{button} click at {x},{y}", px, py)
         xutil.click(x, y, button, count)
     elif a == "move":
         xutil.move(x, y)
     elif a == "scroll":
+        osd.show(f"scrolling {direction} ×{amount}", px, py)
         xutil.scroll(direction, amount, x, y)
     elif a == "drag":
+        osd.show(f"dragging {x},{y} → {x2},{y2}", px, py)
         xutil.drag(x, y, x2, y2, button)
-    elif a == "mouse":
-        mx, my = xutil.mouse_location()
-        return f"pointer at {mx},{my}; {_status()}"
-    else:
-        raise RuntimeError(f"unknown input action {action!r}")
     time.sleep(0.3)
-    return f"{a} ok; {_status()}"
+    went = f"; went to {target.title!r}" if target is not None and not window else ""
+    return f"{a} ok{went}; {_status()}"
 
 
 @tool
@@ -229,6 +262,7 @@ def read_screen(window: str | None = None, region: str | None = None, find: str 
     Returns lines 'x,y  text' where x,y is the text's center in screen coords — clickable via input().
     window: id/title/app (default active). region: 'x,y,w,h' | monitor name | 'screen' (overrides window).
     find: only return lines containing this text."""
+    osd.hide()
     return vision.ocr(_rect(window, region), find=find)
 
 
@@ -239,6 +273,7 @@ def screenshot(window: str | None = None, region: str | None = None, max_side: i
     Cost ≈ w*h/750 tokens (1024x576 ≈ 790; max_side=640 ≈ 300). Crop with region='x,y,w,h' to see
     detail cheaply. grid=100 overlays labeled lines every 100 screen px for precise clicking.
     Returns a note with the img->screen coordinate mapping."""
+    osd.hide()
     data, note = vision.screenshot(_rect(window, region), max_side=max_side, gray=gray, grid=grid,
                                    quality=quality)
     return [note, Image(data=data, format="jpeg")]

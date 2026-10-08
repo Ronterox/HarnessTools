@@ -1,6 +1,7 @@
 """X11 helpers: window listing/management and raw input via wmctrl + xdotool."""
 from __future__ import annotations
 
+import os
 import re
 import socket
 import subprocess
@@ -143,8 +144,72 @@ def monitors() -> list[tuple[str, int, int, int, int]]:
 
 
 def focus_window(w: Win) -> None:
-    run("wmctrl", "-i", "-a", w.hex)
-    time.sleep(0.15)
+    """Activate w (switching workspace if needed) and verify it really got focus; raise otherwise."""
+    if active_window_id() == w.id:
+        return
+    for attempt in range(3):
+        if attempt == 0:
+            run("wmctrl", "-i", "-a", w.hex)
+        else:
+            run("xdotool", "windowactivate", str(w.id))
+        for _ in range(10):
+            time.sleep(0.05)
+            if active_window_id() == w.id:
+                time.sleep(0.1)  # let the app process the focus-in before input arrives
+                return
+    raise RuntimeError(f"could not focus {w.hex} ({w.title!r}); input not sent")
+
+
+def window_at(x: int, y: int) -> Win | None:
+    """Topmost managed window containing screen point (x, y) on the current workspace."""
+    try:
+        stack = run("xprop", "-root", "_NET_CLIENT_LIST_STACKING").split("#", 1)[1]
+        order = [int(t.strip(), 16) for t in stack.split(",") if t.strip()]
+        cur = int(run("xdotool", "get_desktop").strip())
+    except Exception:
+        return None
+    wins = {w.id: w for w in list_windows()}
+    for wid in reversed(order):  # top of stack first
+        w = wins.get(wid)
+        if w and w.desktop in (cur, -1) and w.x <= x < w.x + w.w and w.y <= y < w.y + w.h:
+            return w
+    return None
+
+
+def _ancestors(pid: int) -> set[int]:
+    pids = set()
+    while pid > 1:
+        pids.add(pid)
+        try:
+            with open(f"/proc/{pid}/stat") as f:
+                pid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except OSError:
+            break
+    return pids
+
+
+def _own_pids() -> set[int]:
+    """Pids whose windows show this Claude session: our ancestors, plus (under tmux) the ancestors of
+    every tmux client attached to our session, since the tmux server is not a child of the terminal."""
+    pids = _ancestors(os.getpid())
+    if os.environ.get("TMUX"):
+        try:
+            sess = run("tmux", "display", "-p", "#{session_name}").strip()
+            for line in run("tmux", "list-clients", "-t", sess, "-F", "#{client_pid}").split():
+                pids |= _ancestors(int(line))
+        except Exception:
+            pass
+    return pids
+
+
+def is_own_terminal(wid: int | None) -> bool:
+    """True if wid belongs to the terminal hosting this Claude session (typing there = typing to Claude)."""
+    if wid is None:
+        return False
+    try:
+        return _pid_of(wid) in _own_pids()  # recomputed: tmux clients come and go
+    except Exception:
+        return False
 
 
 # ---------------------------------------------------------------- input
@@ -198,12 +263,14 @@ _BUTTONS = {"left": "1", "middle": "2", "right": "3"}
 
 
 def click(x: int, y: int, button: str = "left", count: int = 1) -> None:
-    run("xdotool", "mousemove", "--sync", str(x), str(y), "click", "--repeat", str(max(1, count)),
-        "--delay", "80", _BUTTONS.get(button, button))
+    move(x, y)
+    run("xdotool", "click", "--repeat", str(max(1, count)), "--delay", "80", _BUTTONS.get(button, button))
 
 
 def move(x: int, y: int) -> None:
-    run("xdotool", "mousemove", "--sync", str(x), str(y))
+    # Not --sync: it waits for a motion event, which never comes if the pointer is already there.
+    run("xdotool", "mousemove", str(x), str(y))
+    time.sleep(0.05)
 
 
 def scroll(direction: str, amount: int = 3, x: int | None = None, y: int | None = None) -> None:

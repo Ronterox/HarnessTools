@@ -506,11 +506,19 @@ def _center(acc):
 
 def _ensure_window(wid: int):
     if xutil.active_window_id() != wid:
-        try:
-            xutil.run("wmctrl", "-i", "-a", f"0x{wid:08x}")
-            time.sleep(0.2)
-        except Exception:
-            pass
+        xutil.focus_window(xutil.resolve_window(f"0x{wid:08x}"))
+
+
+def describe(ref: str) -> tuple[str, int | None, int | None]:
+    """('button "Send"', cx, cy) for the on-screen indicator; never raises."""
+    try:
+        acc, _ = REFS.get(ref)
+        role = ROLE_SHORT.get(_role(acc), _role(acc))
+        name = _clean(acc.name or "", 40)
+        c = _center(acc)
+        return (f'{role} "{name}"' if name else role), (c[0] if c else None), (c[1] if c else None)
+    except Exception:
+        return ref, None, None
 
 
 def _scroll_into_view(acc):

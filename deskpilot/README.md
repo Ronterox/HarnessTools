@@ -20,8 +20,16 @@ Modal dialogs (save prompts, file choosers) are appended to `ui()` output for th
 sudo apt install python3-pyatspi gir1.2-atspi-2.0 xdotool wmctrl x11-utils tesseract-ocr xclip
 uv venv --system-site-packages .venv      # system site-packages needed for gi/pyatspi
 uv pip install --python .venv/bin/python -e .
-claude mcp add deskpilot -s user -- "$PWD/.venv/bin/deskpilot"
 ```
+
+deskpilot is **opt-in per session** (it is not registered globally). Start Claude with it:
+
+```bash
+claude --mcp-config ~/Documents/Projects/AIProjects/HarnessTools/deskpilot/deskpilot.mcp.json
+```
+
+(`deskpilot.mcp.json` holds an absolute path to `.venv/bin/deskpilot`; edit it if you move the repo.)
+To make it always-on instead: `claude mcp add deskpilot -s user -- "$PWD/.venv/bin/deskpilot"`.
 
 On start the server sets the AT-SPI bus flag `IsEnabled=true` so apps expose their trees. It deliberately
 never sets `ScreenReaderEnabled`, which on GNOME launches the Orca narrator. If an app shows an empty tree,
@@ -35,6 +43,14 @@ Both open a throwaway window, drive it, and close it:
 .venv/bin/python tests/e2e_calculator.py   # over MCP stdio: 7 × 6 = 42 via a11y clicks, OCR, screenshot
 .venv/bin/python tests/e2e_editor.py       # gedit: set_text, keys, typing, clipboard, save-dialog
 ```
+
+## Safety & visibility
+
+- `input(window=…)` switches to the window's workspace, focuses it and verifies focus before sending
+  anything; pointer coordinates must lie on that window or nothing is sent.
+- Keys/text are refused if they would land in the terminal running Claude itself (tmux-aware).
+- An on-screen indicator ("● Claude: scrolling down ×5") shows each action. It is override-redirect, so it
+  can never take focus, and it is hidden before OCR/screenshots. Disable with `DESKPILOT_OSD=0`.
 
 ## Notes
 
