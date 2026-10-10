@@ -304,8 +304,11 @@ def _bootstrap_env() -> None:
             if os.path.isdir("/tmp/.X11-unix") else []
         for s in socks:
             disp = ":" + s[1:]
-            r = subprocess.run(["xdotool", "getdisplaygeometry"], env={**os.environ, "DISPLAY": disp},
-                               capture_output=True, timeout=5)
+            try:
+                r = subprocess.run(["xdotool", "getdisplaygeometry"], env={**os.environ, "DISPLAY": disp},
+                                   capture_output=True, timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                continue  # a hung or missing display must not stop the server from starting
             if r.returncode == 0:
                 os.environ["DISPLAY"] = disp
                 break
