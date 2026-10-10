@@ -1,0 +1,22 @@
+{
+  "_doc": "Shared anchor-grammar fixture: the Python tests and the Neovim smoke test must both produce exactly these [kind, anchor] lists. Build a project root containing `files` (any content; src/app.js gets the given text) and `dirs`, then parse each case's text.",
+  "files": ["a.py", "src/app.js", "server.js"],
+  "dirs": ["src", "public"],
+  "app_js": "const x = 1;\n// uses render\nfunction render(a) {\n  return a;\n}\n",
+  "cases": [
+    {"text": "@src/app.js", "anchors": [["file", "@src/app.js"]]},
+    {"text": "see @src/app.js:3.", "anchors": [["line", "@src/app.js:3"]]},
+    {"text": "(@src/app.js:2-4)", "anchors": [["range", "@src/app.js:2-4"]]},
+    {"text": "@src/app.js:render, ok", "anchors": [["symbol", "@src/app.js:render"]]},
+    {"text": "@src/ and @src", "anchors": [["dir", "@src/"], ["dir", "@src"]]},
+    {"text": "@diff @diff:src/app.js @staged", "anchors": [["diff", "@diff"], ["diff", "@diff:src/app.js"], ["staged", "@staged"]]},
+    {"text": "@log @log:src/app.js @log:../..", "anchors": [["log", "@log"], ["log", "@log:src/app.js"], ["log", "@log:../.."]]},
+    {"text": "@show:HEAD~1 @show:HEAD@{1} @show:@{u}", "anchors": [["show", "@show:HEAD~1"], ["show", "@show:HEAD@{1}"], ["show", "@show:@{u}"]]},
+    {"text": "@turn:2 @turn:last", "anchors": [["turn", "@turn:2"], ["turn", "@turn:last"]]},
+    {"text": "mail a@src/app.js x@y.com @missing.js @src/nope/ email@diff", "anchors": []},
+    {"text": "@show:-x @turn:x @a.py:0 @a.py:0-3 @a.py:5-2", "anchors": []},
+    {"text": "@a.py;y @a.py|z @a.py! @a.py?", "anchors": [["file", "@a.py"], ["file", "@a.py"]]},
+    {"text": "`@a.py` \"@server.js\" '@a.py:1'", "anchors": [["file", "@server.js"], ["line", "@a.py:1"]]},
+    {"text": "@src/app.js:1-2]. @public/)", "anchors": [["range", "@src/app.js:1-2"], ["dir", "@public/"]]}
+  ]
+}

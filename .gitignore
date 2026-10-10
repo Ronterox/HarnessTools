@@ -1,1 +1,5 @@
 .omc/
+__pycache__/
+*.pyc
+# demo project used to exercise aic; it is its own git repo
+test-webapp/
