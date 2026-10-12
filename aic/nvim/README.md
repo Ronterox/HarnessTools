@@ -76,8 +76,9 @@ Other commands: `:Aic` (open/switch to the tab), `:AicCompile`,
 
 | key | action |
 |---|---|
-| `<CR>` | jump to file:line of the node or hunk line (marks the node seen). On nodes without a file, toggles the fold |
-| `za` `zo` `zc` … | normal folds (turns open, details folded) |
+| `<CR>` | on a turn, or a node with details (why, diff hunks): show/hide them (showing marks it seen). On a hunk line or a node without details: jump to its file:line |
+| `gf` | jump to file:line of the node or hunk line (marks the node seen) |
+| `za` `zo` `zc` … | normal folds (turns open, details hidden); what you open or close survives new events |
 | `]u` / `[u` | next / previous unseen node |
 | `m` / `M` | toggle seen on the node / mark all seen |
 | `a` / `W` | ask / what-if at cursor |
