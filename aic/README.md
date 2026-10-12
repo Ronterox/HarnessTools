@@ -28,7 +28,7 @@ cd your-project
 4. `<leader>zs` submits the spec diff (visual: just the selected lines) to the
    worker; `<leader>zS` interrupts it to deliver now; `<leader>zh` holds it at its
    next tool call; `<leader>zc` continues.
-5. Read along in the trace (`]u` next unseen, `<CR>` jump to code, `W` what-if),
+5. Read along in the trace (`]u` next unseen, `<CR>` show/hide a node's diff, `gf` jump to code, `W` what-if),
    ask about anything with `<leader>z?`, see who touched a line with `<leader>zb`.
 
 ## Ways of working (all tested live)

@@ -8,6 +8,10 @@ local M = {}
 M.buf = nil
 M.map = {} -- [lnum] = { ev = event, head = bool, line = target line in file }
 M.levels = {} -- [lnum] = foldexpr value
+-- Fold state the human chose, by node key ('turn:N' or event id); true = open.
+-- Unset = default: turns open, an event's details (why, hunks) closed.
+M.folds = {}
+local folds_dir -- session M.folds belongs to (turn numbers repeat across sessions)
 local ns = api.nvim_create_namespace('aic_trace')
 
 function M.foldexpr(lnum)
@@ -28,8 +32,9 @@ end
 local function build()
   local lines, map, indents, hls = {}, {}, {}, {}
 
-  -- add(indent, parts, node): parts = list of { text, hl }
-  local function add(indent, parts, node)
+  -- add(indent, parts, node, depth): parts = list of { text, hl }; depth =
+  -- fold depth when it differs from the visual indent
+  local function add(indent, parts, node, depth)
     local text = string.rep('  ', indent)
     local lnum = #lines + 1
     for _, p in ipairs(parts) do
@@ -39,7 +44,7 @@ local function build()
       text = text .. p[1]
     end
     lines[lnum] = text
-    indents[lnum] = indent
+    indents[lnum] = depth or indent
     map[lnum] = node
   end
 
@@ -60,10 +65,10 @@ local function build()
     end
   end
 
-  local function add_rest(ev, text, indent, hl)
+  local function add_rest(ev, text, indent, hl, depth)
     local ls = util.split(vim.trim(text or ''))
     for i = 2, #ls do
-      add(indent, { { ls[i], hl } }, { ev = ev })
+      add(indent, { { ls[i], hl } }, { ev = ev }, depth)
     end
   end
 
@@ -93,7 +98,7 @@ local function build()
       { ts and ('   ' .. os.date('%H:%M', math.floor(ts))) or '', 'AicTime' },
     }, { ev = g.prompt, head = true, turn = t })
     if g.prompt then
-      add_rest(g.prompt, g.prompt.text, 2, 'AicPrompt')
+      add_rest(g.prompt, g.prompt.text, 2, 'AicPrompt', 1) -- part of the turn, not a fold of its own
     end
     for _, ev in ipairs(g.events) do
       local glyph = state.seenable(ev) and { state.seen[ev.id] and '○ ' or '● ', state.seen[ev.id] and 'AicSeen' or 'AicUnseen' }
@@ -164,6 +169,63 @@ local function build()
   return lines, map, levels, hls
 end
 
+local function fold_key(node)
+  if not node or not node.head then
+    return nil
+  end
+  if node.turn then
+    return 'turn:' .. node.turn
+  end
+  return node.ev and node.ev.id
+end
+
+local function starts_fold(lnum)
+  return (M.levels[lnum] or ''):sub(1, 1) == '>'
+end
+
+-- Remember what the human opened/closed (with <CR>, za, zo...) before the
+-- buffer changes under the folds.
+local function harvest(win)
+  api.nvim_win_call(win, function()
+    for lnum, node in pairs(M.map) do
+      local k = starts_fold(lnum) and fold_key(node)
+      if k then
+        local c = vim.fn.foldclosed(lnum)
+        if c == -1 or c == lnum then -- not hidden inside another closed fold
+          M.folds[k] = c == -1
+        end
+      end
+    end
+  end)
+end
+
+-- Recompute folds from scratch (incremental fold updates go wrong when lines
+-- change inside folds) and re-apply the remembered state.
+local function apply_folds(win)
+  api.nvim_win_call(win, function()
+    local view = vim.fn.winsaveview()
+    vim.wo.foldlevel = 1 -- even after a zm/zr: turns open, details closed
+    vim.cmd('silent! normal! zX')
+    local turns = {}
+    for lnum, node in pairs(M.map) do
+      local k = starts_fold(lnum) and fold_key(node)
+      if k ~= nil and M.folds[k] ~= nil then
+        if node.turn then
+          turns[lnum] = M.folds[k]
+        elseif M.folds[k] then
+          vim.cmd(('silent! %dfoldopen'):format(lnum))
+        end
+      end
+    end
+    for lnum, open in pairs(turns) do -- after events: :foldclose hits the innermost open fold
+      if not open then
+        vim.cmd(('silent! %dfoldclose'):format(lnum))
+      end
+    end
+    vim.fn.winrestview(view)
+  end)
+end
+
 -- Re-render, touching only lines that changed (keeps folds and cursor).
 function M.render()
   local b = M.buf
@@ -174,17 +236,30 @@ function M.render()
   local old = api.nvim_buf_get_lines(b, 0, -1, false)
   local old_levels = M.levels
 
+  local new_session = folds_dir ~= state.dir
+  if new_session then
+    M.folds, folds_dir = {}, state.dir
+  end
   local wins = {}
   for _, w in ipairs(vim.fn.win_findbuf(b)) do
-    wins[w] = api.nvim_win_get_cursor(w)[1] == #old
+    api.nvim_win_call(w, function() -- following the tail: on the last visible line
+      local cur = api.nvim_win_get_cursor(w)[1]
+      local e = vim.fn.foldclosedend(cur)
+      wins[w] = (e == -1 and cur or e) == #old
+    end)
+    if vim.wo[w].foldmethod == 'expr' and not new_session then
+      harvest(w)
+    end
   end
 
   M.map, M.levels = map, levels
   vim.bo[b].modifiable = true
+  local changed = #lines ~= #old
   local n = math.min(#old, #lines)
   for i = 1, n do
     if old[i] ~= lines[i] or old_levels[i] ~= levels[i] then
       api.nvim_buf_set_lines(b, i - 1, i, false, { lines[i] })
+      changed = true
     end
   end
   if #lines > #old then
@@ -201,6 +276,9 @@ function M.render()
   end
 
   for w, was_last in pairs(wins) do
+    if changed and vim.wo[w].foldmethod == 'expr' then
+      apply_folds(w)
+    end
     if was_last and #lines > #old and #old > 1 then
       api.nvim_win_set_cursor(w, { #lines, 0 })
     end
@@ -271,21 +349,43 @@ function M.mark_all_seen()
   state.set_seen(ids, true)
 end
 
+-- Jump to the file:line of the node or hunk line (marks the node seen).
 function M.jump()
   local n = M.node_at()
   local ev = n and n.ev
-  if not ev then
-    vim.cmd('normal! za')
-    return
+  if not ev or not ev.file or ev.file == vim.NIL then
+    return false
   end
   if state.seenable(ev) then
     state.set_seen({ ev.id }, true)
   end
-  if ev.file and ev.file ~= vim.NIL then
-    require('aic.layout').open_code(ev.file, n.line or 1)
-  else
-    pcall(vim.cmd, 'normal! za')
+  require('aic.layout').open_code(ev.file, n.line or 1)
+  return true
+end
+
+-- <CR>: on a line that heads a fold (turn, or an event with details) show/hide
+-- it; elsewhere jump to code. Never folds the enclosing turn by accident.
+function M.enter()
+  local lnum = api.nvim_win_get_cursor(0)[1]
+  local c = vim.fn.foldclosed(lnum)
+  if c ~= -1 and c ~= lnum then -- the cursor hides inside a closed fold: act on what is shown
+    lnum = c
+    api.nvim_win_set_cursor(0, { lnum, 0 })
   end
+  local n = M.node_at(lnum)
+  if starts_fold(lnum) then
+    local opening = vim.fn.foldclosed(lnum) ~= -1
+    vim.cmd(('silent! %d%s'):format(lnum, opening and 'foldopen' or 'foldclose'))
+    local k = fold_key(n)
+    if k then
+      M.folds[k] = opening
+    end
+    if opening and n and state.seenable(n.ev) and not state.seen[n.ev.id] then
+      state.set_seen({ n.ev.id }, true)
+    end
+    return
+  end
+  M.jump()
 end
 
 local function setup_window(win)
@@ -301,6 +401,9 @@ local function setup_window(win)
   wo.relativenumber = false
   wo.signcolumn = 'no'
   wo.cursorline = true
+  if api.nvim_win_get_buf(win) == M.buf then
+    apply_folds(win) -- setting 'foldlevel' reset them
+  end
 end
 
 function M.get_buf()
@@ -320,7 +423,8 @@ function M.get_buf()
   local function map(lhs, fn, desc)
     vim.keymap.set('n', lhs, fn, { buffer = b, nowait = true, silent = true, desc = 'aic: ' .. desc })
   end
-  map('<CR>', M.jump, 'jump to code')
+  map('<CR>', M.enter, 'show/hide details, or jump to code')
+  map('gf', M.jump, 'jump to code')
   map(']u', function()
     M.next_unseen(1)
   end, 'next unseen')
@@ -341,6 +445,16 @@ function M.get_buf()
     end)
   end, 'refresh')
 
+  api.nvim_create_autocmd('BufWinLeave', {
+    buffer = b,
+    callback = function()
+      for _, w in ipairs(vim.fn.win_findbuf(b)) do
+        if vim.wo[w].foldmethod == 'expr' and folds_dir == state.dir then
+          harvest(w)
+        end
+      end
+    end,
+  })
   api.nvim_create_autocmd('BufWinEnter', {
     buffer = b,
     callback = function()
@@ -353,6 +467,10 @@ function M.get_buf()
 end
 
 function M.show(win)
+  win = win == 0 and api.nvim_get_current_win() or win
+  if M.buf and api.nvim_win_get_buf(win) == M.buf and vim.wo[win].foldmethod == 'expr' and folds_dir == state.dir then
+    harvest(win) -- shown already: keep what za/zo/zc did before folds are reset
+  end
   util.set_win_buf(win, M.get_buf())
   setup_window(win)
   util.detach_ufo(M.buf)

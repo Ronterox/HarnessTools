@@ -365,6 +365,84 @@ ok(wait(3000, function()
 end), 'release event rendered')
 ok(vim.fn.foldclosed(tool_l + 1) == -1, 'tool node still open after re-render')
 
+-- <CR> on a node with details shows/hides them; on a bullet without details it
+-- never folds the turn; new edits arrive folded
+local function find_line(pat)
+  for i, t in ipairs(vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) do
+    if t:find(pat, 1, true) then
+      return i
+    end
+  end
+end
+vim.api.nvim_win_set_cursor(0, { tool_l, 0 })
+trace.enter()
+ok(vim.fn.foldclosed(tool_l) == tool_l, '<CR> on open edit node hides its details')
+trace.enter()
+ok(vim.fn.foldclosed(tool_l + 1) == -1, '<CR> on closed edit node shows its details')
+ok(vim.api.nvim_get_current_win() == layout.wins.trace, '<CR> on an edit node stays in the trace')
+trace.enter()
+local rel_l = find_line('▶ release')
+vim.api.nvim_win_set_cursor(0, { rel_l, 0 })
+trace.enter()
+ok(vim.fn.foldclosed(1) == -1 and vim.fn.foldclosed(rel_l) == -1, '<CR> on a bullet without details leaves the turn open')
+ok(vim.api.nvim_get_current_win() == layout.wins.trace, '<CR> on a bullet without file stays in the trace')
+ok(vim.fn.maparg('gf', 'n', false, true).desc == 'aic: jump to code', 'gf jumps to code')
+f = io.open(dir .. '/trace.jsonl', 'ab')
+f:write(jl({ id = 'e7', seq = 7, ts = now + 6, kind = 'tool', turn = 1, tool = 'Edit', title = 'Edit src/app.js:20-20',
+  why = 'later edit', file = 'src/app.js', hunks = { { start = 20, count = 1, lines = { '-a', '+b' } } } }))
+f:close()
+ok(wait(3000, function()
+  return find_line('app.js:20-20') ~= nil
+end), 'new edit rendered')
+local e7 = find_line('app.js:20-20')
+ok(vim.fn.foldclosed(e7) == e7, 'new edit arrives with details hidden')
+ok(vim.fn.foldclosed(tool_l) == tool_l, 'edit hidden with <CR> stays hidden after re-render')
+state.set_seen({ 'e7' }, true) -- one-line change inside folds: levels must stay right
+ok(wait(2000, function()
+  return find_line('○ Edit src/app.js:20-20') ~= nil
+end), 'seen glyph re-rendered')
+ok(vim.fn.foldlevel(e7 + 3) == 2 and vim.fn.foldlevel(tool_l + 5) == 2 and vim.fn.foldclosed(e7) == e7,
+  'fold levels intact after a one-line re-render')
+vim.api.nvim_win_set_cursor(0, { 1, 0 })
+trace.enter()
+ok(vim.fn.foldclosed(1) == 1, '<CR> on a turn header hides the turn')
+f = io.open(dir .. '/trace.jsonl', 'ab')
+f:write(jl({ id = 'e8', seq = 8, ts = now + 7, kind = 'release', turn = 1 }))
+f:close()
+ok(wait(3000, function()
+  return #vim.tbl_filter(function(t) return t:find('▶ release', 1, true) end, vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) == 2
+end) and vim.fn.foldclosed(1) == 1, 'hidden turn stays hidden after re-render')
+trace.enter()
+ok(vim.fn.foldclosed(1) == -1 and vim.fn.foldclosed(e7) == e7, '<CR> shows the turn again, its edits still hidden')
+-- <CR> acts on the visible line when the cursor hides inside a closed fold
+vim.api.nvim_win_set_cursor(0, { rel_l, 0 })
+vim.cmd('normal! zc')
+trace.enter()
+ok(vim.fn.foldclosed(1) == -1, '<CR> on a turn closed with zc from a child line reopens it')
+vim.api.nvim_win_set_cursor(0, { e7 + 2, 0 })
+vim.cmd('normal! zo')
+vim.cmd('normal! zc')
+ok(vim.fn.foldclosed(e7) == e7, 'zc from a hunk line hides the edit')
+trace.enter()
+ok(vim.fn.foldclosed(e7 + 1) == -1 and vim.api.nvim_get_current_win() == layout.wins.trace,
+  '<CR> on an edit closed with zc from a hunk line opens it (no jump)')
+-- za/zo state survives re-showing the trace window without a render in between
+vim.api.nvim_win_set_cursor(0, { e7, 0 })
+vim.cmd('normal! zc')
+vim.cmd('normal! zo')
+trace.show(0)
+ok(vim.fn.foldclosed(e7 + 1) == -1, 'zo state survives trace.show()')
+-- ... and the trace leaving its window (BufWinLeave) and coming back
+local tw = vim.api.nvim_get_current_win()
+vim.wo[tw].winfixbuf = false
+local scratch = vim.api.nvim_create_buf(false, true)
+vim.api.nvim_win_set_buf(tw, scratch)
+trace.show(tw)
+ok(vim.fn.foldclosed(e7 + 1) == -1 and vim.fn.foldclosed(tool_l) == tool_l, 'fold state survives the trace leaving its window')
+vim.api.nvim_buf_delete(scratch, { force = true })
+vim.api.nvim_win_set_cursor(0, { e7, 0 })
+vim.cmd('normal! zc')
+
 -- worker context compacted: one line, not an unseen item
 local unseen_before = state.unseen_count()
 f = io.open(dir .. '/trace.jsonl', 'ab')

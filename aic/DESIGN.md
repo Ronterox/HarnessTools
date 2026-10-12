@@ -89,7 +89,7 @@ The daemon:
 ## Seeing the worker
 
 - **Trace buffer**: foldable chronological tree
-  `turn → tool call → one-line "why" → diff hunk`. `<CR>` jumps to file:line.
+  `turn → tool call → one-line "why" → diff hunk`. `<CR>` shows/hides a node's details, `gf` jumps to file:line.
   Built from the transcript, so it uses no AI. Messages you sent mid-turn show
   as `✉ you (mid-turn)`; holds, submits and your own saves are nodes too.
 - **Bash edits are visible.** Workers often edit with `sed`/`python` through
