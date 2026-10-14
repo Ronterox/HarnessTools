@@ -28,6 +28,7 @@ Color kind_color(EvKind k) {
     case EV_EDIT: return (Color){250, 200, 90, 255};
     case EV_DELETE: return (Color){255, 85, 85, 255};
     case EV_TOUCH: return (Color){190, 140, 255, 255};
+    case EV_TOOL: return (Color){240, 130, 200, 255};
     default: return (Color){200, 200, 200, 255};
     }
 }
@@ -283,6 +284,12 @@ void model_apply(Scene *m, const Event *e, bool effects) {
         m->commands++;
         char buf[160];
         snprintf(buf, sizeof buf, "$ %s", e->text ? e->text : "");
+        set_bubble(a, buf);
+        return;
+    }
+    case EV_TOOL: {
+        char buf[160];
+        snprintf(buf, sizeof buf, "%s", e->text ? e->text : "");
         set_bubble(a, buf);
         return;
     }
