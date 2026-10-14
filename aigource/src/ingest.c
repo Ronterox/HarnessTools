@@ -135,7 +135,7 @@ static void track(Ingest *in, const char *path) {
     t->path = xstrdup(path);
     t->actor = id;
     t->actor_name = name;
-    t->tr = tr_new(in->root, id, name, on_event, in);
+    t->tr = tr_new(in->root, id, name, t->path, on_event, in);
     strmap_put(&in->tracked, path, in->ntails++);
 }
 
@@ -285,7 +285,7 @@ static void read_tail(Ingest *in, Tail *t) {
     int replaced = t->ino && (st.st_ino != t->ino || st.st_dev != t->dev);
     if (replaced || st.st_size < t->off) { /* rotated or truncated: start over */
         tr_free(t->tr);
-        t->tr = tr_new(in->root, t->actor, t->actor_name, on_event, in);
+        t->tr = tr_new(in->root, t->actor, t->actor_name, t->path, on_event, in);
         t->off = 0;
         t->blen = 0;
     }
@@ -298,6 +298,7 @@ static void read_tail(Ingest *in, Tail *t) {
     char chunk[1 << 16];
     ssize_t n;
     while ((n = read(fd, chunk, sizeof chunk)) > 0) {
+        off_t base = t->off; /* file offset of chunk[0] */
         t->off += n;
         size_t start = 0;
         for (size_t i = 0; i < (size_t)n; i++) {
@@ -310,10 +311,10 @@ static void read_tail(Ingest *in, Tail *t) {
                     t->buf = xrealloc(t->buf, t->bcap);
                 }
                 memcpy(t->buf + t->blen, line, len);
-                tr_feed(t->tr, t->buf, t->blen + len);
+                tr_feed(t->tr, t->buf, t->blen + len, (long)(base - (off_t)t->blen));
                 t->blen = 0;
             } else if (len) {
-                tr_feed(t->tr, line, len);
+                tr_feed(t->tr, line, len, (long)(base + (off_t)start));
             }
             start = i + 1;
         }

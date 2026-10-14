@@ -24,6 +24,9 @@ check() { # name, then command producing NDJSON
 check parse $BIN --dump --root /proj tests/fixtures/proj/s1.jsonl \
       tests/fixtures/proj/s1/subagents/agent-abc123def.jsonl
 
+# Detail view: every kind of step in full (diffs, files, commands, tools).
+check detail $BIN --dump --detail --root /proj tests/fixtures/detail/d1.jsonl
+
 # Discovery: project dir found from the root's slug, subagents picked up.
 mkdir -p "$cfg/projects"
 ln -s "$PWD/tests/fixtures/proj" "$cfg/projects/-proj"

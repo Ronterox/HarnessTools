@@ -83,6 +83,45 @@ sub = [
     result("s1", {"originalFile": "a\n", "structuredPatch": [{"lines": ["+b"]}]}),
 ]
 
+# Detail view: what each kind of step shows in full.
+detail = [
+    user("Show me everything"),
+    use("d1", "Edit", {"file_path": "/proj/src/a.py", "old_string": "two", "new_string": "2"}),
+    result("d1", {"structuredPatch": [{"oldStart": 4, "oldLines": 3, "newStart": 4, "newLines": 3,
+                                       "lines": [" one", "-two", "+2", " three"]}]}),
+    use("d2", "Write", {"file_path": "/proj/src/new.py", "content": "print(1)\n\tindented\n"}),
+    result("d2", {"type": "create", "structuredPatch": []}),
+    use("d3", "Read", {"file_path": "/proj/src/a.py", "offset": 10}),
+    result("d3", {"type": "text", "file": {"content": "ten\neleven", "startLine": 10, "totalLines": 40}}),
+    use("d4", "Bash", {"command": "make gen\nmake test", "description": "build"}),
+    result("d4", {"stdout": "built\nok", "stderr": "warning: x", "interrupted": False, "bashEditDiff": {
+        "files": [{"filePath": "/proj/gen.c", "hunks": [{"oldStart": 1, "oldLines": 0, "newStart": 1,
+                                                          "newLines": 1, "lines": ["+int x;"]}],
+                   "created": True}]}}),
+    use("d5", "Grep", {"pattern": "def", "path": "/proj/src", "output_mode": "content"}),
+    user([{"type": "tool_result", "tool_use_id": "d5", "content": "src/a.py:1:def a():"}],
+         toolUseResult={"mode": "content"}),
+    use("d6", "mcp__deskpilot__ui", {"window": "Firefox", "query": "Save"}),
+    user([{"type": "tool_result", "tool_use_id": "d6",
+           "content": [{"type": "text", "text": "[e12] button Save"}, {"type": "image"}]}]),
+    use("d7", "mcp__web__fetch", {"url": "http://x"}),
+    user([{"type": "tool_result", "tool_use_id": "d7", "is_error": True, "content": "timeout"}]),
+    use("d8", "MultiEdit", {"file_path": "/proj/src/a.py",
+                            "edits": [{"old_string": "a", "new_string": "b"}]}),
+    result("d8", {"filePath": "/proj/src/a.py"}),                  # no patch: the edits as asked
+    # Two calls in one record; the second never answered (still running).
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "tool_use", "id": "d9", "name": "WebSearch", "input": {"query": "raylib"}},
+        {"type": "tool_use", "id": "d10", "name": "Bash", "input": {"command": "sleep 99"}}]}},
+    user([{"type": "tool_result", "tool_use_id": "d9", "content": "3 results"}]),
+    # An id that prefixes a later one: x10's result comes first and must not match x1.
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "tool_use", "id": "x1", "name": "WebFetch", "input": {"url": "http://one"}},
+        {"type": "tool_use", "id": "x10", "name": "WebFetch", "input": {"url": "http://ten"}}]}},
+    user([{"type": "tool_result", "tool_use_id": "x10", "content": "ten"}]),
+    user([{"type": "tool_result", "tool_use_id": "x1", "content": "one"}]),
+]
+
 def write(path, recs):
     with open(path, "w") as f:
         for r in recs:
@@ -93,5 +132,7 @@ write(os.path.join(OUT, "s1.jsonl"), main)
 with open(os.path.join(OUT, "s1.jsonl"), "a") as f:  # lone surrogate: record must survive
     f.write('{"type":"user","timestamp":"2026-10-14T10:01:00.000Z","message":{"content":"bad \\ud800 text"}}\n')
 write(os.path.join(OUT, "s1", "subagents", "agent-abc123def.jsonl"), sub)
+os.makedirs(os.path.join(HERE, "fixtures", "detail"), exist_ok=True)
+write(os.path.join(HERE, "fixtures", "detail", "d1.jsonl"), detail)
 with open(os.path.join(OUT, "s1", "subagents", "agent-abc123def.meta.json"), "w") as f:
     json.dump({"agentType": "oh-my-claudecode:executor"}, f)

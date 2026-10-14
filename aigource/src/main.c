@@ -7,6 +7,7 @@
 #include "event.h"
 #include "ingest.h"
 #include "render.h"
+#include "transcript.h"
 #include "util.h"
 
 static void usage(void) {
@@ -23,19 +24,37 @@ static void usage(void) {
           "  -W, --size WxH     window size (default 1600x900)\n"
           "  --dump             print the normalized event stream as NDJSON and exit\n"
           "  --follow SECS      with --dump: keep printing new events for SECS seconds\n"
+          "  --detail           with --dump: after each step, what the detail window shows\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
           "  --mouse X,Y        fake mouse position for --shot (hover testing)\n"
           "  --turn ID          open the turn window of the actor whose id starts with ID\n"
+          "  --step N           with --turn: open its step N in full (negative: from the end)\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
           "      F fullscreen, Q quit, Esc close window. Click or drag the timeline\n"
           "      to jump; click an actor to see its current turn.\n",
           stderr);
 }
 
+/* A step's detail window content as one NDJSON line. */
+static void print_detail(const Event *e) {
+    Detail *d = tr_detail(e->src, e->src_off, e->tool_id, e->path);
+    static const char *kinds[] = {"text", "head", "dim", "hunk", "add", "del", "err"};
+    fputs("{\"detail\":", stdout);
+    json_str(stdout, d->tool);
+    printf(",\"state\":%d,\"lines\":[", d->state);
+    for (int i = 0; i < d->n; i++) {
+        printf("%s[\"%s\",%d,", i ? "," : "", kinds[d->lines[i].kind], d->lines[i].no);
+        json_str(stdout, d->lines[i].s);
+        putchar(']');
+    }
+    puts("]}");
+    detail_free(d);
+}
+
 /* History as sorted NDJSON; with follow > 0, then new events as they come. */
-static int dump(Ingest *in, EvQueue *q, double follow) {
+static int dump(Ingest *in, EvQueue *q, double follow, int details) {
     double until = now_wall() + follow;
     do {
         ingest_poll(in);
@@ -44,6 +63,7 @@ static int dump(Ingest *in, EvQueue *q, double follow) {
         if (n) qsort(evs, n, sizeof *evs, ev_cmp);
         for (size_t i = 0; i < n; i++) {
             ev_print_json(stdout, &evs[i]);
+            if (details && evs[i].src) print_detail(&evs[i]);
             ev_free(&evs[i]);
         }
         free(evs);
@@ -57,7 +77,7 @@ int main(int argc, char **argv) {
     char root[PATH_MAX];
     const char *root_arg = ".";
     double since_h = 2;
-    int all = 0, want_dump = 0, watch = 0;
+    int all = 0, want_dump = 0, watch = 0, details = 0;
     double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
                   .mouse_x = -1, .mouse_y = -1};
@@ -77,11 +97,13 @@ int main(int argc, char **argv) {
         else if (TAKES("--seek", "--seek")) vo.seek = atof(v);
         else if (TAKES("--mouse", "--mouse")) sscanf(v, "%f,%f", &vo.mouse_x, &vo.mouse_y);
         else if (TAKES("--turn", "--turn")) vo.turn = v;
+        else if (TAKES("--step", "--step")) vo.step = v;
         else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
         else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;
         else if (!strcmp(a, "--dump")) want_dump = 1;
+        else if (!strcmp(a, "--detail")) details = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else if (*a == '-') { fprintf(stderr, "aigource: unknown option %s\n", a); usage(); return 2; }
         else files[nfiles++] = a;
@@ -98,7 +120,7 @@ int main(int argc, char **argv) {
     IngestOpts io = {.root = root, .since = all ? 0 : now_wall() - since_h * 3600,
                      .files = files, .nfiles = nfiles, .watch = watch};
     Ingest *in = ingest_new(&io, &q);
-    if (want_dump) return dump(in, &q, follow);
+    if (want_dump) return dump(in, &q, follow, details);
 
     vo.root = root;
     ingest_poll(in); /* load history before the first frame */

@@ -1,0 +1,27 @@
+{"ts":1791972041.000,"kind":"turn","actor":"d1","name":"claude·d1","turn":1,"text":"Show me everything"}
+{"ts":1791972043.000,"kind":"edit","actor":"d1","name":"claude·d1","path":"src/a.py","add":1,"del":1,"turn":1}
+{"detail":"Edit","state":0,"lines":[["dim",0,"/proj/src/a.py"],["hunk",0,"@@ -4,3 +4,3 @@"],["text",4,"one"],["del",5,"two"],["add",5,"2"],["text",6,"three"]]}
+{"ts":1791972045.000,"kind":"create","actor":"d1","name":"claude·d1","path":"src/new.py","turn":1}
+{"detail":"Write","state":0,"lines":[["dim",0,"/proj/src/new.py"],["add",1,"print(1)"],["add",2,"    indented"]]}
+{"ts":1791972047.000,"kind":"read","actor":"d1","name":"claude·d1","path":"src/a.py","lines":40,"turn":1}
+{"detail":"Read","state":0,"lines":[["dim",0,"/proj/src/a.py"],["text",10,"ten"],["text",11,"eleven"]]}
+{"ts":1791972048.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"make gen"}
+{"detail":"Bash","state":0,"lines":[["head",0,"$ make gen"],["head",0,"make test"],["dim",0,"# build"],["text",0,""],["text",0,"built"],["text",0,"ok"],["err",0,"warning: x"]]}
+{"ts":1791972049.000,"kind":"create","actor":"d1","name":"claude·d1","path":"gen.c","add":1,"del":0,"lines":1,"turn":1}
+{"detail":"Bash","state":0,"lines":[["dim",0,"changes to gen.c, made by:"],["hunk",0,"@@ -1,0 +1,1 @@"],["add",1,"int x;"],["text",0,""],["head",0,"$ make gen"],["head",0,"make test"],["dim",0,"# build"],["text",0,""],["text",0,"built"],["text",0,"ok"],["err",0,"warning: x"]]}
+{"ts":1791972051.000,"kind":"search","actor":"d1","name":"claude·d1","path":"src","turn":1,"text":"def"}
+{"detail":"Grep","state":0,"lines":[["head",0,"pattern: def"],["head",0,"path: /proj/src"],["head",0,"output_mode: content"],["text",0,""],["text",0,"src/a.py:1:def a():"]]}
+{"ts":1791972052.000,"kind":"tool","actor":"d1","name":"claude·d1","turn":1,"text":"deskpilot: ui  Save"}
+{"detail":"deskpilot: ui","state":0,"lines":[["text",0,"window: Firefox"],["text",0,"query: Save"],["text",0,""],["text",0,"[e12] button Save"],["dim",0,"[image]"]]}
+{"ts":1791972054.000,"kind":"tool","actor":"d1","name":"claude·d1","turn":1,"text":"web: fetch  http://x"}
+{"detail":"web: fetch","state":0,"lines":[["text",0,"url: http://x"],["text",0,""],["err",0,"timeout"]]}
+{"ts":1791972057.000,"kind":"edit","actor":"d1","name":"claude·d1","path":"src/a.py","turn":1}
+{"detail":"MultiEdit","state":0,"lines":[["dim",0,"/proj/src/a.py"],["hunk",0,"@@ edit @@"],["del",0,"a"],["add",0,"b"]]}
+{"ts":1791972058.000,"kind":"tool","actor":"d1","name":"claude·d1","turn":1,"text":"WebSearch  raylib"}
+{"detail":"WebSearch","state":0,"lines":[["text",0,"query: raylib"],["text",0,""],["text",0,"3 results"]]}
+{"ts":1791972058.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"sleep 99"}
+{"detail":"Bash","state":1,"lines":[["head",0,"$ sleep 99"]]}
+{"ts":1791972060.000,"kind":"tool","actor":"d1","name":"claude·d1","turn":1,"text":"WebFetch  http://one"}
+{"detail":"WebFetch","state":0,"lines":[["text",0,"url: http://one"],["text",0,""],["text",0,"one"]]}
+{"ts":1791972060.000,"kind":"tool","actor":"d1","name":"claude·d1","turn":1,"text":"WebFetch  http://ten"}
+{"detail":"WebFetch","state":0,"lines":[["text",0,"url: http://ten"],["text",0,""],["text",0,"ten"]]}

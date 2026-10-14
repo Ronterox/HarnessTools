@@ -1,12 +1,15 @@
 #include "render.h"
 
+#include <limits.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/stat.h>
 
 #include "model.h"
+#include "transcript.h"
 #include "raylib.h"
 #include "timeline.h"
 #include "util.h"
@@ -55,6 +58,34 @@ static void load_font(void) {
         return;
     }
     g_font = GetFontDefault();
+}
+
+/* Monospace for the detail view: code, diffs, command output. */
+static Font g_mono;
+static bool g_mono_ok;
+
+static void load_mono(void) {
+    static const char *paths[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+        NULL,
+    };
+    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2190, 0x21FF},
+                                    {0x2500, 0x25FF}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
+    int cps[1200], n = 0;
+    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
+        for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
+    for (int i = 0; paths[i]; i++) {
+        if (!FileExists(paths[i])) continue;
+        SetTraceLogLevel(LOG_ERROR); /* box-drawing glyphs overflow the cell: harmless warnings */
+        g_mono = LoadFontEx(paths[i], 32, cps, n);
+        SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
+        SetTextureFilter(g_mono.texture, TEXTURE_FILTER_BILINEAR);
+        g_mono_ok = true;
+        return;
+    }
+    g_mono = g_font;
 }
 
 static void text(const char *s, float x, float y, float size, Color c) {
@@ -179,6 +210,20 @@ typedef struct {
     bool hover_from_win;
     Vector2 press_at;
     bool press_outside;
+    /* Detail window: one step in full. Holds the step's identity, not its
+     * history index: late events get sorted in and shift indices. */
+    Detail *det;
+    EvKind det_kind;
+    double det_ts, det_reload;
+    long det_size; /* transcript size when loaded: reload only after it grows */
+    char *det_label, *det_id, *det_path;
+    const char *det_src;
+    long det_off;
+    int det_add, det_del;
+    float det_scroll;
+    Rectangle det_win, det_close;
+    struct DetRow { int line, start, len; } *det_rows; /* wrapped */
+    int det_nrows, det_caprows, det_cols, det_vis;
     /* Actor panel rows, for clicks. */
     Rectangle row_rect[PANEL_MAX];
     int row_actor[PANEL_MAX], nrows;
@@ -241,8 +286,12 @@ static int actor_index(Scene *m, const char *id) {
     return -1;
 }
 
+static void detail_close(Viz *v);
+
 static void turn_open(Viz *v, int actor) {
     if (actor < 0 || actor >= v->m->nactors) return;
+    if (!v->turn_actor || strcmp(v->turn_actor, v->m->actors[actor].id) || v->turn_no != v->m->actors[actor].turn)
+        detail_close(v); /* another turn: its step no longer belongs */
     free(v->turn_actor);
     v->turn_actor = xstrdup(v->m->actors[actor].id);
     v->turn_no = v->m->actors[actor].turn;
@@ -252,6 +301,7 @@ static void turn_open(Viz *v, int actor) {
 }
 
 static void turn_close(Viz *v) {
+    detail_close(v);
     v->turn_open = false;
     v->hover = HOVER_NONE;
 }
@@ -592,6 +642,202 @@ static void draw_panel(Viz *v) {
 
 /* ---- turn window: drawing ----------------------------------------------- */
 
+/* One line describing a step, as the turn window lists it. */
+static void step_label(char *line, size_t n, const Event *e) {
+    if (e->kind == EV_BASH) snprintf(line, n, "$ %s", e->text ? e->text : "");
+    else if (e->kind == EV_TOOL) snprintf(line, n, "%s", e->text ? e->text : "");
+    else if (e->kind == EV_SEARCH)
+        snprintf(line, n, "Search  %s%s%s", e->text ? e->text : "", e->path && *e->path ? "  in " : "",
+                 e->path ? e->path : "");
+    else snprintf(line, n, "%s  %s", kind_verb(e->kind), e->path ? e->path : "");
+}
+
+static Color step_color(EvKind k) { return k == EV_BASH ? DIM : kind_color(k); }
+
+/* ---- detail window ------------------------------------------------------ */
+
+static void detail_close(Viz *v) {
+    detail_free(v->det);
+    v->det = NULL;
+    free(v->det_label);
+    free(v->det_id);
+    free(v->det_path);
+    v->det_label = v->det_id = v->det_path = NULL;
+    v->det_nrows = 0;
+}
+
+static void detail_load(Viz *v) {
+    Detail *d;
+    if (v->det_src) {
+        d = tr_detail(v->det_src, v->det_off, v->det_id, v->det_path);
+    } else { /* seen by the watcher: nothing recorded what changed */
+        d = detail_new("you");
+        char buf[160];
+        snprintf(buf, sizeof buf, "%s\nchanged outside the agents (seen by --watch): +%d \xE2\x88\x92%d lines",
+                 v->det_path ? v->det_path : "", v->det_add, v->det_del);
+        detail_line(d, DL_DIM, buf);
+        detail_line(d, DL_DIM, "nothing recorded its content");
+    }
+    detail_free(v->det);
+    v->det = d;
+    v->det_cols = 0; /* rewrap */
+    v->det_reload = GetTime();
+    struct stat st;
+    v->det_size = v->det_src && !stat(v->det_src, &st) ? (long)st.st_size : -1;
+}
+
+static bool is_detail_of(Viz *v, const Event *e) {
+    if (!v->det) return false;
+    if (e->tool_id || v->det_id)
+        return e->tool_id && v->det_id && !strcmp(e->tool_id, v->det_id) && e->kind == v->det_kind &&
+               !strcmp(e->path ? e->path : "", v->det_path ? v->det_path : "");
+    return e->ts == v->det_ts && e->kind == v->det_kind && !strcmp(e->path ? e->path : "", v->det_path ? v->det_path : "");
+}
+
+static void detail_open(Viz *v, const Event *e) {
+    if (is_detail_of(v, e)) { detail_close(v); return; } /* click again: close */
+    detail_close(v);
+    char line[512];
+    step_label(line, sizeof line, e);
+    v->det_label = xstrdup(line);
+    v->det_kind = e->kind;
+    v->det_ts = e->ts;
+    v->det_src = e->src;
+    v->det_off = e->src_off;
+    v->det_id = e->tool_id ? xstrdup(e->tool_id) : NULL;
+    v->det_path = e->path ? xstrdup(e->path) : NULL;
+    v->det_add = e->add;
+    v->det_del = e->del;
+    v->det_scroll = 0;
+    detail_load(v);
+}
+
+/* Wrap every line at `cols` characters (UTF-8 aware). */
+static void detail_wrap(Viz *v, int cols) {
+    v->det_cols = cols;
+    v->det_nrows = 0;
+    for (int i = 0; v->det && i < v->det->n; i++) {
+        const char *s = v->det->lines[i].s;
+        int start = 0, chars = 0, k = 0;
+        for (;; k++) {
+            bool end = !s[k];
+            if (!end && ((unsigned char)s[k] & 0xC0) == 0x80) continue; /* continuation byte */
+            if (end || chars == cols) {
+                if (v->det_nrows == v->det_caprows) {
+                    v->det_caprows = v->det_caprows ? v->det_caprows * 2 : 256;
+                    v->det_rows = xrealloc(v->det_rows, (size_t)v->det_caprows * sizeof *v->det_rows);
+                }
+                v->det_rows[v->det_nrows++] = (struct DetRow){i, start, k - start};
+                if (end) break;
+                start = k;
+                chars = 0;
+            }
+            chars++;
+        }
+    }
+}
+
+static void detail_copy(Viz *v) {
+    if (!v->det) return;
+    size_t n = strlen(v->det_label) + 2;
+    for (int i = 0; i < v->det->n; i++) n += strlen(v->det->lines[i].s) + 3;
+    char *buf = xmalloc(n), *p = buf;
+    p += sprintf(p, "%s\n", v->det_label);
+    for (int i = 0; i < v->det->n; i++) {
+        DlKind k = v->det->lines[i].kind;
+        p += sprintf(p, "%s%s\n", k == DL_ADD ? "+" : k == DL_DEL ? "-" : "", v->det->lines[i].s);
+    }
+    SetClipboardText(buf);
+    free(buf);
+}
+
+#define DET_FONT 14.0f
+#define DET_ROW 18.0f
+#define DET_ROW_BYTES 2048
+#define DET_TOP 58.0f /* header height */
+
+static void draw_detail(Viz *v, Vector2 mouse) {
+    if (!v->det) { v->det_win = (Rectangle){0}; return; }
+    Detail *d = v->det;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    float x = v->win.width > 0 ? v->win.x + v->win.width + 10 : 16;
+    if (W - x < 420) x = 16; /* too narrow beside it: over it */
+    float y = HUD_TOP, w = (float)W - x - 16;
+    float h = (float)H - TL_H - panel_height(v->m, v->sim) - 8 - y;
+    if (h < 200) h = (float)H - TL_H - 8 - y;
+    v->det_win = (Rectangle){x, y, w, h};
+    Color kc = step_color(v->det_kind);
+    DrawRectangleRounded(v->det_win, 0.015f, 6, (Color){16, 20, 26, 250});
+    DrawRectangleRoundedLinesEx(v->det_win, 0.015f, 6, 1.5f, fade(kc, 0.55f));
+
+    /* Header: what it was, when, and close. */
+    char line[512], fitbuf[512], tm[16];
+    DrawCircle((int)x + 18, (int)y + 20, 5, kc);
+    fmt_clock(tm, sizeof tm, v->det_ts, "%H:%M:%S");
+    float tw = text_w(tm, 13);
+    v->det_close = (Rectangle){x + w - 34, y + 6, 26, 26};
+    fit(fitbuf, sizeof fitbuf, v->det_label, 16, w - 70 - tw - 40);
+    text(fitbuf, x + 32, y + 11, 16, TEXT);
+    text(tm, x + w - 44 - tw, y + 13, 13, DIM);
+    text("\xE2\x9C\x95", v->det_close.x + 6, v->det_close.y + 3, 18, CheckCollisionPointRec(mouse, v->det_close) ? TEXT : DIM);
+    snprintf(line, sizeof line, "%s%s  \xC2\xB7  %d lines  \xC2\xB7  wheel/PgUp/PgDn scroll  \xC2\xB7  Ctrl+C copy  \xC2\xB7  Esc close",
+             d->tool, d->state == 1 ? "  \xC2\xB7  running\xE2\x80\xA6 (no result yet)" : "", d->n);
+    fit(fitbuf, sizeof fitbuf, line, 13, w - 46);
+    text(fitbuf, x + 32, y + 34, 13, d->state == 1 ? kind_color(EV_EDIT) : DIM);
+    DrawLine((int)x + 10, (int)(y + DET_TOP - 4), (int)(x + w - 10), (int)(y + DET_TOP - 4), fade(DIM, 0.3f));
+
+    /* Body: gutter with line numbers when the content has them, wrapped rows. */
+    float cw = MeasureTextEx(g_mono, "M", DET_FONT, 0).x;
+    bool numbered = false;
+    for (int i = 0; i < d->n && !numbered; i++) numbered = d->lines[i].no > 0;
+    float gutter = numbered ? cw * 6 + 8 : 0;
+    float tx = x + 14 + gutter + cw * 2; /* room for a +/- mark */
+    int cols = (int)((x + w - 18 - tx) / cw);
+    if (cols < 10) cols = 10;
+    if (cols != v->det_cols) detail_wrap(v, cols);
+    int vis = (int)((h - DET_TOP - 10) / DET_ROW);
+    int max_scroll = v->det_nrows - vis > 0 ? v->det_nrows - vis : 0;
+    if (v->det_scroll > max_scroll) v->det_scroll = (float)max_scroll;
+    if (v->det_scroll < 0) v->det_scroll = 0;
+    int first = (int)v->det_scroll;
+    float ry = y + DET_TOP;
+    char buf[DET_ROW_BYTES];
+    BeginScissorMode((int)x, (int)(y + DET_TOP - 2), (int)w, (int)(h - DET_TOP));
+    for (int r = first; r < v->det_nrows && r < first + vis; r++, ry += DET_ROW) {
+        struct DetRow *row = &v->det_rows[r];
+        DetailLine *dl = &d->lines[row->line];
+        bool cont = r > 0 && v->det_rows[r - 1].line == row->line; /* wrapped continuation */
+        Color c = TEXT;
+        switch (dl->kind) {
+        case DL_ADD: c = (Color){150, 240, 160, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){40, 120, 60, 60}); break;
+        case DL_DEL: c = (Color){255, 150, 150, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){140, 40, 40, 60}); break;
+        case DL_HUNK: c = (Color){110, 190, 230, 255}; break;
+        case DL_HEAD: c = (Color){255, 230, 160, 255}; break;
+        case DL_DIM: c = DIM; break;
+        case DL_ERR: c = (Color){255, 120, 120, 255}; break;
+        default: break;
+        }
+        if (!cont && dl->no > 0) {
+            snprintf(buf, sizeof buf, "%6d", dl->no);
+            DrawTextEx(g_mono, buf, (Vector2){x + 10, ry + 1}, DET_FONT, 0, fade(DIM, 0.7f));
+        }
+        if (!cont && (dl->kind == DL_ADD || dl->kind == DL_DEL))
+            DrawTextEx(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, c);
+        int len = row->len < (int)sizeof buf - 1 ? row->len : (int)sizeof buf - 1;
+        memcpy(buf, dl->s + row->start, (size_t)len);
+        buf[len] = 0;
+        DrawTextEx(g_mono, buf, (Vector2){tx, ry + 1}, DET_FONT, 0, c);
+    }
+    EndScissorMode();
+    if (max_scroll) { /* scrollbar */
+        float track_h = h - DET_TOP - 10;
+        float bh = fmaxf(20, track_h * (float)vis / (float)v->det_nrows);
+        float by = y + DET_TOP + (track_h - bh) * (v->det_scroll / (float)max_scroll);
+        DrawRectangleRounded((Rectangle){x + w - 7, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
+    }
+    v->det_vis = vis;
+}
+
 static void draw_turn_window(Viz *v, Vector2 mouse) {
     if (!v->turn_open) { v->win = (Rectangle){0}; return; }
     Scene *m = v->m;
@@ -649,12 +895,13 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     for (int r = 0; r < vis && first + r < nrows; r++, ry += WIN_ROW) {
         const Event *e = &v->h.ev[v->steps[first + r]];
         Rectangle rr = {x + 6, ry, w - 12, WIN_ROW};
-        if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, fade(TEXT, 0.06f));
+        if (is_detail_of(v, e)) DrawRectangleRec(rr, fade(step_color(e->kind), 0.18f));
+        else if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, fade(TEXT, 0.06f));
         char tm[16];
         fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
         text(tm, x + 14, ry + 3, 13, DIM);
         float cx = x + 14 + text_w("00:00:00", 13) + 10;
-        Color kc = e->kind == EV_BASH ? DIM : kind_color(e->kind);
+        Color kc = step_color(e->kind);
         DrawCircle((int)cx + 4, (int)(ry + 11), 4, kc);
         cx += 14;
         char pa[16], pd[24];
@@ -662,11 +909,7 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         snprintf(pd, sizeof pd, "\xE2\x88\x92%d", e->del);
         bool has_diff = e->add || e->del;
         float dw = has_diff ? text_w(pa, 13) + 6 + text_w(pd, 13) + 8 : 0;
-        if (e->kind == EV_BASH) snprintf(line, sizeof line, "$ %s", e->text ? e->text : "");
-        else if (e->kind == EV_SEARCH)
-            snprintf(line, sizeof line, "Search  %s%s%s", e->text ? e->text : "", e->path && *e->path ? "  in " : "",
-                     e->path ? e->path : "");
-        else snprintf(line, sizeof line, "%s  %s", kind_verb(e->kind), e->path ? e->path : "");
+        step_label(line, sizeof line, e);
         fit(fitbuf, sizeof fitbuf, line, 14, x + w - 14 - dw - cx);
         text(fitbuf, cx, ry + 3, 14, e->kind == EV_BASH ? fade(TEXT, 0.75f) : TEXT);
         if (has_diff) {
@@ -835,6 +1078,7 @@ static void update_hover(Viz *v, Vector2 mouse) {
     v->hover_from_win = false;
     if (in_timeline(mouse) || v->drag == 1 || v->drag == 2) return;
     Scene *m = v->m;
+    if (v->det && CheckCollisionPointRec(mouse, v->det_win)) return;
     if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
         /* A step row: ring its file in the graph (no card over the list). */
         int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
@@ -969,7 +1213,7 @@ static void handle_input(Viz *v, float dt) {
     if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD) || IsKeyPressed(KEY_UP)) v->speed *= 2;
     if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT) || IsKeyPressed(KEY_DOWN))
         v->speed = fmax(1, v->speed / 2);
-    if (IsKeyPressed(KEY_C)) v->auto_cam = true;
+    if (IsKeyPressed(KEY_C) && !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL)) v->auto_cam = true;
     if (IsKeyPressed(KEY_H)) v->legend = !v->legend;
     if (IsKeyPressed(KEY_F)) ToggleFullscreen();
     if (IsKeyPressed(KEY_L)) seek(v, now_wall());
@@ -983,7 +1227,14 @@ static void handle_input(Viz *v, float dt) {
     }
 
     float wheel = GetMouseWheelMove();
-    if (wheel != 0 && v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+    if (v->det) {
+        if (IsKeyPressed(KEY_PAGE_DOWN)) v->det_scroll += (float)(v->det_vis - 1);
+        if (IsKeyPressed(KEY_PAGE_UP)) v->det_scroll -= (float)(v->det_vis - 1);
+        if ((IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) && IsKeyPressed(KEY_C)) detail_copy(v);
+    }
+    if (wheel != 0 && v->det && CheckCollisionPointRec(mouse, v->det_win)) {
+        v->det_scroll -= wheel * 3;
+    } else if (wheel != 0 && v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
         v->turn_scroll -= wheel * 3;
         v->turn_stick = false; /* re-sticks when scrolled back to the bottom */
     } else if (wheel != 0 && !in_timeline(mouse)) {
@@ -1000,8 +1251,14 @@ static void handle_input(Viz *v, float dt) {
         for (int k = 0; k < v->nrows; k++)
             if (CheckCollisionPointRec(mouse, v->row_rect[k])) row = v->row_actor[k];
         v->press_outside = false;
-        if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+        if (v->det && CheckCollisionPointRec(mouse, v->det_win)) {
+            if (CheckCollisionPointRec(mouse, v->det_close)) detail_close(v);
+            v->drag = 3;
+        } else if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+            int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
             if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
+            else if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps)
+                detail_open(v, &v->h.ev[v->steps[v->win_first + r]]); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
         } else if (in_timeline(mouse) && mouse.x > tr.x1 - text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             seek(v, now_wall()); /* "go live" label */
@@ -1021,8 +1278,10 @@ static void handle_input(Viz *v, float dt) {
         }
     }
     if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && v->drag == 1 && v->press_outside &&
-        dist2d(mouse, v->press_at) < 4)
-        turn_close(v);
+        dist2d(mouse, v->press_at) < 4) {
+        if (v->det) detail_close(v); /* one layer at a time */
+        else turn_close(v);
+    }
     if (v->drag == 1 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Vector2 d = GetMouseDelta();
         if (d.x || d.y) {
@@ -1067,6 +1326,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
     load_font();
+    load_mono();
 
     Viz v = {.o = o, .m = model_new(o->root), .speed = o->speed > 0 ? o->speed : 60,
              .auto_cam = true, .legend = true, .cam = {.zoom = 1}};
@@ -1087,9 +1347,10 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
         if (IsKeyPressed(KEY_Q)) break;
-        if (IsKeyPressed(KEY_ESCAPE)) {
-            if (!v.turn_open) break;
-            turn_close(&v);
+        if (IsKeyPressed(KEY_ESCAPE)) { /* closes the top window; quits when none is open */
+            if (v.det) detail_close(&v);
+            else if (v.turn_open) turn_close(&v);
+            else break;
         }
         ingest_new_events(&v, q);
         handle_input(&v, dt);
@@ -1100,6 +1361,16 @@ int viz_run(const VizOpts *o, EvQueue *q) {
                 if (!strncmp(v.m->actors[i].id, o->turn, strlen(o->turn))) { turn_open(&v, i); break; }
         }
         turn_update(&v); /* before anything reads hl[]: input may have just opened a turn */
+        if (o->step && v.turn_open && !v.det && frame == 0 && v.nsteps) { /* test hook: a step's detail */
+            long k = strtol(o->step, NULL, 10);
+            if (k < 0) k += (long)v.nsteps;
+            if (k >= 0 && (size_t)k < v.nsteps) detail_open(&v, &v.h.ev[v.steps[k]]);
+        }
+        if (v.det && v.det->state == 1 && GetTime() - v.det_reload > 1) { /* still running */
+            struct stat st;
+            v.det_reload = GetTime();
+            if (v.det_src && !stat(v.det_src, &st) && (long)st.st_size != v.det_size) detail_load(&v);
+        }
         if (v.auto_cam) auto_camera(&v, dt);
 
         Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
@@ -1116,16 +1387,20 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         draw_panel(&v);
         draw_timeline(&v, mouse);
         draw_turn_window(&v, mouse);
+        draw_detail(&v, mouse);
         draw_hover(&v, mouse);
         EndDrawing();
 
-        if (o->shot && ++frame >= o->frames) {
+        if (frame < INT_MAX) frame++; /* also gates the test hooks to the first frame */
+        if (o->shot && frame >= o->frames) {
             Image img = LoadImageFromScreen(); /* TakeScreenshot drops the directory */
             ExportImage(img, o->shot);
             UnloadImage(img);
             break;
         }
     }
+    detail_close(&v);
+    free(v.det_rows);
     CloseWindow();
     return 0;
 }

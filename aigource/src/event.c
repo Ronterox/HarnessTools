@@ -6,7 +6,7 @@
 #include "util.h"
 
 static const char *KIND_NAMES[EV_KIND_COUNT] = {
-    "turn", "read", "search", "create", "edit", "delete", "touch", "bash",
+    "turn", "read", "search", "create", "edit", "delete", "touch", "bash", "tool",
 };
 
 const char *ev_kind_name(EvKind k) { return k < EV_KIND_COUNT ? KIND_NAMES[k] : "?"; }
@@ -16,6 +16,7 @@ void ev_free(Event *e) {
     free(e->actor_name);
     free(e->path);
     free(e->text);
+    free(e->tool_id);
     memset(e, 0, sizeof *e);
 }
 

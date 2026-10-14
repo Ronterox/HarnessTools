@@ -29,10 +29,19 @@ Actors dim after 2 minutes idle and leave the stage after 10.
 
 **Click an actor** (in the graph or the panel) to open its current turn: the
 prompt, then one line per step (read, edit, create, delete, search, `$`
-command, with +/−). The files that turn touched get a soft area per folder in
+command, any other tool or MCP call, with +/−). The files that turn touched get a soft area per folder in
 the actor's color, everything else dims, and the camera frames them. Hover a
 step to ring its file. Steps of that same turn keep appending live. `✕`,
 `Esc` or a click outside closes it.
+
+**Click a step** to see it in full, beside the turn window: an edit's diff with
+line numbers, a created file's contents, what a read returned, a command with
+its output (stderr in red; for a file a command changed, that file's diff
+first), a search's parameters and matches, any other tool's input and result.
+It's read back from the transcript on click, so nothing extra stays in memory;
+a step still running shows so and fills in when its result lands. Wheel or
+`PgUp`/`PgDn` scroll, `Ctrl+C` copies it, `✕`/`Esc`/click outside close it
+(one window at a time).
 
 **Hover** a file for what last happened to it ("Edit · src/a.py", size, the
 session's +/− on it, who touched it and when), a folder for its counts, an
@@ -56,13 +65,15 @@ the layout where it was. "go live →" (or `L`) returns to now.
 -w, --watch        also show filesystem changes not made by an agent (live only)
 --dump             print the normalized event stream as NDJSON and exit
 --follow SECS      with --dump: keep printing new events for SECS seconds
+--detail           with --dump: after each step, what its detail window shows
 --shot FILE        render, save a PNG after --frames frames, exit
 --seek F           start paused at fraction F (0..1) of the timeline
 --mouse X,Y        fake mouse position for --shot (hover testing)
 --turn ID          open the turn window of the actor whose id starts with ID
+--step N           with --turn: open its step N in full (negative: from the end)
 ```
 
-Keys: `Esc` close the turn window, `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed, `L` live,
+Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed, `L` live,
 `H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `Q` quit.
 
 ## Where the data comes from
