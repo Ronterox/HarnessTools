@@ -1,6 +1,8 @@
 """X11 helpers: window listing/management and raw input via wmctrl + xdotool."""
 from __future__ import annotations
 
+import ctypes
+import ctypes.util
 import os
 import re
 import socket
@@ -9,8 +11,31 @@ import time
 from dataclasses import dataclass
 
 
+# The X display every command targets: None = the user's desktop ($DISPLAY), else e.g. ":91" (a
+# sandbox from procs.py). Switched for the whole server, so all tools agree on one display.
+_display: str | None = None
+_has_wm: dict[str | None, bool] = {}
+
+
+def use_display(display: str | None) -> None:
+    global _display
+    _display = display
+
+
+def current_display() -> str | None:
+    return _display
+
+
+def env() -> dict[str, str]:
+    """Environment for X clients aimed at the current display."""
+    e = dict(os.environ)
+    if _display:
+        e["DISPLAY"] = _display
+    return e
+
+
 def run(*args: str, input: str | None = None, timeout: float = 15) -> str:
-    r = subprocess.run(args, capture_output=True, text=True, input=input, timeout=timeout)
+    r = subprocess.run(args, capture_output=True, text=True, input=input, timeout=timeout, env=env())
     if r.returncode != 0:
         raise RuntimeError(f"{args[0]} failed: {r.stderr.strip() or r.returncode}")
     return r.stdout
@@ -37,8 +62,26 @@ class Win:
         return self.wm_class.rsplit(".", 1)[-1]
 
 
+def has_wm() -> bool:
+    """Is an EWMH window manager running on the current display? (A sandbox usually has none, and
+    then wmctrl and _NET_* properties don't work: windows are found and focused with plain X calls.)
+    Always True for the user's desktop: a slow or failing wmctrl there must never switch on the
+    WM-less paths (frame windows would then defeat the own-terminal check)."""
+    if _display is None:
+        return True
+    if _display not in _has_wm:
+        try:
+            run("wmctrl", "-m", timeout=5)
+            _has_wm[_display] = True
+        except Exception:
+            _has_wm[_display] = False
+    return _has_wm[_display]
+
+
 def active_window_id() -> int | None:
     try:
+        if not has_wm():
+            return _toplevel_of(int(run("xdotool", "getwindowfocus", "-f").strip()))
         return int(run("xdotool", "getactivewindow").strip())
     except Exception:
         return None
@@ -59,7 +102,141 @@ def _is_desktop_or_dock(wid: int) -> bool:
     return "DESKTOP" in t or "DOCK" in t
 
 
+def _toplevel_of(wid: int) -> int:
+    """Without a WM, focus can sit on a subwindow: climb to the child of the root."""
+    root = None
+    for _ in range(32):
+        out = run("xwininfo", "-children", "-id", str(wid))
+        m_root = re.search(r"Root window id: (0x[0-9a-f]+)", out)
+        m_par = re.search(r"Parent window id: (0x[0-9a-f]+)", out)
+        if not m_root or not m_par:
+            return wid
+        root = int(m_root.group(1), 16)
+        parent = int(m_par.group(1), 16)
+        if parent == root:
+            return wid
+        wid = parent
+    return wid
+
+
+class _XResSpec(ctypes.Structure):
+    _fields_ = [("client", ctypes.c_ulong), ("mask", ctypes.c_uint)]
+
+
+class _XResValue(ctypes.Structure):
+    _fields_ = [("spec", _XResSpec), ("length", ctypes.c_long), ("value", ctypes.c_void_p)]
+
+
+_xlibs = None
+
+
+def _xres_libs():
+    """libX11 + libXRes, set up once. Connections are opened per query instead of cached: a cached
+    one to a sandbox that has since stopped would make Xlib's I/O error handler exit the server."""
+    global _xlibs
+    if _xlibs is not None:
+        return _xlibs
+    x11 = ctypes.CDLL(ctypes.util.find_library("X11") or "libX11.so.6")
+    xres = ctypes.CDLL(ctypes.util.find_library("XRes") or "libXRes.so.1")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    # A window that vanished between listing and asking must not kill the server (Xlib's default
+    # error handler exits the process): ignore X protocol errors. Note this handler is process-wide
+    # for libX11 (nothing else in deskpilot uses libX11 through ctypes; PIL and python-xlib don't).
+    handler = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(lambda d, e: 0)
+    x11.XSetErrorHandler(handler)
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    xres.XResQueryClientIds.argtypes = [ctypes.c_void_p, ctypes.c_long, ctypes.POINTER(_XResSpec),
+                                        ctypes.POINTER(ctypes.c_long), ctypes.POINTER(ctypes.POINTER(_XResValue))]
+    xres.XResGetClientPid.argtypes = [ctypes.POINTER(_XResValue)]
+    xres.XResGetClientPid.restype = ctypes.c_int
+    xres.XResClientIdsDestroy.argtypes = [ctypes.c_long, ctypes.POINTER(_XResValue)]
+    _xlibs = (x11, xres, handler)
+    return _xlibs
+
+
+def xres_pid(wid: int, display: str | None = None) -> int:
+    """Pid of the X client that owns wid, asked of the X server itself (XRes extension). Works for
+    toolkits that don't set _NET_WM_PID (Tk, Xephyr, many games); 0 when unknown or remote.
+    display: which X server to ask (default: the current one)."""
+    try:
+        x11, xres, _ = _xres_libs()
+        dpy = x11.XOpenDisplay((display or _display or os.environ.get("DISPLAY", "")).encode())
+        if not dpy:
+            return 0
+    except Exception:
+        return 0
+    try:
+        spec = _XResSpec(wid, 2)  # XRES_CLIENT_ID_PID_MASK
+        n = ctypes.c_long(0)
+        vals = ctypes.POINTER(_XResValue)()
+        if xres.XResQueryClientIds(dpy, 1, ctypes.byref(spec), ctypes.byref(n), ctypes.byref(vals)) != 0:
+            return 0  # returns X's Success (0) when it worked
+        pid = 0
+        for i in range(n.value):
+            p = xres.XResGetClientPid(ctypes.byref(vals[i]))
+            if p > 0:
+                pid = p
+        xres.XResClientIdsDestroy(n, vals)
+        return pid
+    except Exception:
+        return 0
+    finally:
+        x11.XCloseDisplay(dpy)
+
+
+def request_close(wid: int) -> bool:
+    """Ask a window to close the way a WM would (WM_DELETE_WINDOW), so the app can still ask about
+    unsaved changes. False when the window doesn't take part in that protocol."""
+    if "WM_DELETE_WINDOW" not in _prop(wid, "WM_PROTOCOLS"):
+        return False
+    from Xlib import X, display as xdisplay, protocol  # pure Python: a dead server can't exit us
+    d = xdisplay.Display(_display or os.environ.get("DISPLAY"))
+    try:
+        w = d.create_resource_object("window", wid)
+        ev = protocol.event.ClientMessage(window=w, client_type=d.intern_atom("WM_PROTOCOLS"),
+                                          data=(32, [d.intern_atom("WM_DELETE_WINDOW"), X.CurrentTime, 0, 0, 0]))
+        w.send_event(ev, event_mask=X.NoEventMask)
+        d.flush()
+    finally:
+        d.close()
+    return True
+
+
+def _prop(wid: int, name: str) -> str:
+    try:
+        return run("xprop", "-id", str(wid), name, timeout=5)
+    except Exception:
+        return ""
+
+
+def _list_windows_plain() -> list[Win]:
+    """Viewable top-level windows straight from the X server (no WM), in stacking order bottom->top."""
+    wins = []
+    out = run("xwininfo", "-root", "-children")
+    for m in re.finditer(r"^\s+(0x[0-9a-f]+) (?:\"(.*?)\"|\(has no name\))", out, re.M):
+        wid = int(m.group(1), 16)
+        try:
+            info = run("xwininfo", "-id", str(wid), timeout=5)
+        except Exception:
+            continue
+        if "IsViewable" not in info or "Override Redirect State: yes" in info:
+            continue
+        pm = re.search(r"= (\d+)", _prop(wid, "_NET_WM_PID"))
+        cm = re.findall(r'"([^"]*)"', _prop(wid, "WM_CLASS"))
+        w = Win(wid, 0, int(pm.group(1)) if pm else xres_pid(wid), ".".join(cm), m.group(2) or "")
+        try:
+            w.x, w.y, w.w, w.h = geometry(wid)
+        except Exception:
+            pass
+        if w.w > 1 and w.h > 1:
+            wins.append(w)
+    return wins
+
+
 def list_windows() -> list[Win]:
+    if not has_wm():
+        return _list_windows_plain()
     wins = []
     # WM_CLASS may contain spaces, so anchor on the client-machine column (hostname or N/A).
     host = re.escape(socket.gethostname())
@@ -69,7 +246,7 @@ def list_windows() -> list[Win]:
         if not m:
             continue
         wid, desk, pid, wm_class, title = m.groups()
-        w = Win(int(wid, 16), int(desk), int(pid), wm_class, title or "")
+        w = Win(int(wid, 16), int(desk), int(pid) or xres_pid(int(wid, 16)), wm_class, title or "")
         if w.desktop == -1 and _is_desktop_or_dock(w.id):
             continue
         try:
@@ -94,6 +271,13 @@ def resolve_window(target: str | None) -> Win:
             return Win(aid, 0, 0, "", run("xdotool", "getwindowname", str(aid)).strip(), x, y, ww, hh)
         raise RuntimeError("no active window")
     t = target.strip()
+    if t.lower().startswith("pid:"):  # a process we (or anyone) started: its window or its children's
+        pids = descendants(int(t[4:]))
+        hits = [w for w in wins if w.pid in pids]
+        if not hits:
+            raise RuntimeError(f"no window belongs to {t} (or its child processes) yet")
+        aid = active_window_id()
+        return next((w for w in hits if w.id == aid), hits[-1])
     if re.fullmatch(r"0x[0-9a-fA-F]+|\d+", t):
         n = int(t, 16) if t.lower().startswith("0x") else int(t)
         for w in wins:
@@ -134,6 +318,9 @@ def _pid_of(wid: int) -> int:
 
 
 def monitors() -> list[tuple[str, int, int, int, int]]:
+    if _display:  # a sandbox: one screen, xrandr may not be there
+        w, h = (int(v) for v in run("xdotool", "getdisplaygeometry").split())
+        return [("sandbox", 0, 0, w, h)]
     mons = []
     for line in run("xrandr", "--listmonitors").splitlines()[1:]:
         m = re.search(r"(\d+)/\d+x(\d+)/\d+\+(-?\d+)\+(-?\d+)\s+(\S+)", line)
@@ -143,9 +330,37 @@ def monitors() -> list[tuple[str, int, int, int, int]]:
     return mons
 
 
+def descendants(pid: int) -> set[int]:
+    """pid and every process below it (a shell command's real app is usually a child)."""
+    kids: dict[int, list[int]] = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            with open(f"/proc/{d}/stat") as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, IndexError, ValueError):
+            continue
+        kids.setdefault(ppid, []).append(int(d))
+    out, todo = set(), [pid]
+    while todo:
+        p = todo.pop()
+        if p not in out:
+            out.add(p)
+            todo += kids.get(p, [])
+    return out
+
+
 def focus_window(w: Win) -> None:
     """Activate w (switching workspace if needed) and verify it really got focus; raise otherwise."""
     if active_window_id() == w.id:
+        return
+    if not has_wm():  # no WM to ask: raise it and set the X input focus ourselves
+        run("xdotool", "windowraise", str(w.id))
+        run("xdotool", "windowfocus", "--sync", str(w.id))
+        if active_window_id() != w.id:
+            raise RuntimeError(f"could not focus {w.hex} ({w.title!r}); input not sent")
+        time.sleep(0.05)
         return
     for attempt in range(3):
         if attempt == 0:
@@ -162,6 +377,11 @@ def focus_window(w: Win) -> None:
 
 def window_at(x: int, y: int) -> Win | None:
     """Topmost managed window containing screen point (x, y) on the current workspace."""
+    if not has_wm():
+        for w in reversed(_list_windows_plain()):  # top of stack first
+            if w.x <= x < w.x + w.w and w.y <= y < w.y + w.h:
+                return w
+        return None
     try:
         stack = run("xprop", "-root", "_NET_CLIENT_LIST_STACKING").split("#", 1)[1]
         order = [int(t.strip(), 16) for t in stack.split(",") if t.strip()]
@@ -204,12 +424,17 @@ def _own_pids() -> set[int]:
 
 def is_own_terminal(wid: int | None) -> bool:
     """True if wid belongs to the terminal hosting this Claude session (typing there = typing to Claude)."""
+    if _display:  # a sandbox display can't hold our terminal
+        return False
     if wid is None:
-        return False
+        return True  # can't tell what has focus: don't type blind
     try:
-        return _pid_of(wid) in _own_pids()  # recomputed: tmux clients come and go
+        pid = _pid_of(wid)
     except Exception:
-        return False
+        pid = xres_pid(wid)
+    if not pid:
+        return True  # unknown owner: fail closed rather than maybe type into Claude
+    return pid in _own_pids()  # recomputed: tmux clients come and go
 
 
 # ---------------------------------------------------------------- input
@@ -244,10 +469,30 @@ def normalize_keys(keys: str) -> list[str]:
     return combos
 
 
-def key(keys: str, repeat: int = 1) -> None:
+# How long a key or button stays down. Apps that poll input once per frame (games, raylib/GLFW/SDL,
+# canvas UIs) never see a press and release that land within one frame, as plain `xdotool click`
+# and `xdotool key` do; 60 ms spans several frames even at 30 fps.
+HOLD_MS = 60
+
+
+def key(keys: str, repeat: int = 1, hold_ms: int = HOLD_MS) -> None:
     combos = normalize_keys(keys)
     for _ in range(max(1, repeat)):
-        run("xdotool", "key", "--clearmodifiers", "--delay", "40", *combos)
+        for c in combos:
+            if hold_ms <= 0:
+                run("xdotool", "key", "--clearmodifiers", c)
+            else:
+                # Down, hold, up in ONE xdotool process, without --clearmodifiers: on keyup it would
+                # "restore" the modifier our own keydown pressed, leaving e.g. Ctrl stuck down.
+                try:
+                    run("xdotool", "keydown", c, "sleep", f"{hold_ms / 1000:.3f}", "keyup", c)
+                except Exception:
+                    try:
+                        run("xdotool", "keyup", c)  # never leave a key held
+                    except Exception:
+                        pass  # display gone: keep the original error
+                    raise
+            time.sleep(0.04)
 
 
 def type_text(text: str) -> None:
@@ -262,9 +507,26 @@ def type_text(text: str) -> None:
 _BUTTONS = {"left": "1", "middle": "2", "right": "3"}
 
 
-def click(x: int, y: int, button: str = "left", count: int = 1) -> None:
+def click(x: int, y: int, button: str = "left", count: int = 1, hold_ms: int = HOLD_MS) -> None:
     move(x, y)
-    run("xdotool", "click", "--repeat", str(max(1, count)), "--delay", "80", _BUTTONS.get(button, button))
+    b = _BUTTONS.get(button, button)
+    if hold_ms <= 0:
+        run("xdotool", "click", "--repeat", str(max(1, count)), "--delay", "80", b)
+        return
+    # One xdotool process for all presses: exact timing, so a double-click (hold capped at 80 ms,
+    # 60 ms apart) stays inside even a short double-click interval.
+    hold = (min(hold_ms, 80) if count > 1 else hold_ms) / 1000
+    chain: list[str] = []
+    for i in range(max(1, count)):
+        chain += (["sleep", "0.06"] if i else []) + ["mousedown", b, "sleep", f"{hold:.3f}", "mouseup", b]
+    try:
+        run("xdotool", *chain)
+    except Exception:
+        try:
+            run("xdotool", "mouseup", b)  # never leave a button held
+        except Exception:
+            pass  # display gone: keep the original error
+        raise
 
 
 def move(x: int, y: int) -> None:
@@ -305,6 +567,6 @@ def clipboard_get() -> str:
 
 def clipboard_set(text: str) -> None:
     # xclip forks to serve the selection; don't wait on its stdout.
-    p = subprocess.Popen(["xclip", "-selection", "clipboard", "-i"], stdin=subprocess.PIPE,
+    p = subprocess.Popen(["xclip", "-selection", "clipboard", "-i"], stdin=subprocess.PIPE, env=env(),
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     p.communicate(text.encode(), timeout=5)

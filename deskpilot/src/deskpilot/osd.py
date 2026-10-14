@@ -19,7 +19,8 @@ _lock = threading.Lock()
 
 
 def _enabled() -> bool:
-    return os.environ.get("DESKPILOT_OSD", "1") != "0"
+    # Not for a sandbox: its actions are off your screen, and the overlay lives on your desktop.
+    return os.environ.get("DESKPILOT_OSD", "1") != "0" and not xutil.current_display()
 
 
 def _send(msg: dict) -> None:
