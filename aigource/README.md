@@ -17,7 +17,7 @@ Sessions launched in a subdirectory of the repo are included.
 
 | | |
 |---|---|
-| node size | file length in lines; color = file type (muted, listed in the legend) |
+| file | size = length in lines; color = what last happened to it (edit, create, delete, changed by a command; dim blue = only read), brighter the more often it changed |
 | beam actor → file | the action, colored: read, search, create, edit, delete, changed by a command; thickness = diff size |
 | rings | diff pulse: green = lines added, red = lines removed, size = how many |
 | bubble | the command it's running, or the pattern it's searching |
@@ -26,6 +26,13 @@ Sessions launched in a subdirectory of the repo are included.
 | legend | right side; `H` toggles it |
 
 Actors dim after 2 minutes idle and leave the stage after 10.
+
+**Click an actor** (in the graph or the panel) to open its current turn: the
+prompt, then one line per step (read, edit, create, delete, search, `$`
+command, with +/−). The files that turn touched get a soft area per folder in
+the actor's color, everything else dims, and the camera frames them. Hover a
+step to ring its file. Steps of that same turn keep appending live. `✕`,
+`Esc` or a click outside closes it.
 
 **Hover** a file for what last happened to it ("Edit · src/a.py", size, the
 session's +/− on it, who touched it and when), a folder for its counts, an
@@ -46,13 +53,16 @@ the layout where it was. "go live →" (or `L`) returns to now.
 -a, --all          every session of the repo
 -x, --speed N      replay speed multiplier (default 60)
 -l, --live         skip the replay, start at now
+-w, --watch        also show filesystem changes not made by an agent (live only)
 --dump             print the normalized event stream as NDJSON and exit
+--follow SECS      with --dump: keep printing new events for SECS seconds
 --shot FILE        render, save a PNG after --frames frames, exit
 --seek F           start paused at fraction F (0..1) of the timeline
 --mouse X,Y        fake mouse position for --shot (hover testing)
+--turn ID          open the turn window of the actor whose id starts with ID
 ```
 
-Keys: `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed, `L` live,
+Keys: `Esc` close the turn window, `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed, `L` live,
 `H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `Q` quit.
 
 ## Where the data comes from
@@ -64,15 +74,23 @@ created, changed or deleted, generated files included. The transcript format
 is internal to Claude Code; every assumption about it lives in
 `src/transcript.c`.
 
+## --watch
+
+Watches the repo with inotify (skipping `.git`, gitignored paths and editor
+temp files) and shows changes no agent made as a **you** actor: your saves,
+formatters, a `git checkout`. Claude Code records every file an agent changes,
+Bash commands included, so a change is yours when no transcript accounts for
+it; while an agent call that may still report it is running, it waits. Live
+only: nothing records past filesystem changes, so replays don't have them.
+
 ## Tests
 
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
 unit-tests the timeline's time mapping (`tests/test_timeline.c`).
+`make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 
 ## Roadmap
 
-- M2: filesystem watcher (your saves, external tools), heat map, side file
-  tree.
 - M3: tree-sitter dependency edges (using Neovim's installed grammars),
   fading agent trails, same-turn grouping, click to open in Neovim.

@@ -20,7 +20,9 @@ typedef struct {
     float radius;
     int lines;        /* -1 = unknown */
     float disp_lines; /* eased toward lines */
-    Color color;
+    Color color;      /* dirs only; files are drawn in their heat color */
+    EvKind act_kind;  /* heat hue: last change's kind, EV_READ when only read */
+    int churn;        /* heat brightness: times changed */
     float flash;      /* 1 on touch, decays */
     float alpha;      /* fade-in / fade-out */
     double last_touch;

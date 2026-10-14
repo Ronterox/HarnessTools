@@ -10,12 +10,17 @@
 #include <unistd.h>
 
 #include "transcript.h"
+#include "watch.h"
 #include "util.h"
 #include "yyjson.h"
 
 #define RESCAN_SECS 1.0
 #define PROJDIR_SECS 10.0  /* new project dirs (sessions in new subdirs) */
 #define META_WAIT_SECS 5.0 /* a subagent's .meta.json can lag its transcript */
+#define SETTLE_SECS 2.5    /* a file quiet this long is one change */
+#define DUP_SECS 15.0      /* agent recorded the same file this close: not a separate change */
+#define DEFER_MAX 600.0    /* stop waiting on a running command after this */
+#define RECENT 512
 #define POLL_USECS 100000
 
 typedef struct {
@@ -41,16 +46,33 @@ struct Ingest {
     EvQueue *q;
     unsigned long seq;
     double last_scan, last_projscan;
+    /* Filesystem watcher and what it needs for attribution. */
+    Watch *watch;
+    struct { char *path; double ts; } recent[RECENT]; /* agent file events */
+    int recent_head;
     pthread_t th;
     int started;
     atomic_int stop;
 };
 
-static void on_event(void *ud, Event *e) {
-    Ingest *in = ud;
+static void push(Ingest *in, Event *e) {
     e->seq = in->seq++;
     evq_push(in->q, *e);
 }
+
+/* Transcript events; file ones are remembered so the watcher can tell the
+ * agent's own writes from other changes. */
+static void on_event(void *ud, Event *e) {
+    Ingest *in = ud;
+    if (e->path && (e->kind == EV_CREATE || e->kind == EV_EDIT || e->kind == EV_DELETE || e->kind == EV_TOUCH)) {
+        int k = in->recent_head++ % RECENT;
+        free(in->recent[k].path);
+        in->recent[k].path = xstrdup(e->path);
+        in->recent[k].ts = e->ts;
+    }
+    push(in, e);
+}
+
 
 static char *path_join(const char *a, const char *b) {
     size_t na = strlen(a), nb = strlen(b);
@@ -298,11 +320,52 @@ static void read_tail(Ingest *in, Tail *t) {
     close(fd);
 }
 
+/* A filesystem change the agents' transcripts don't account for is yours.
+ * Claude Code records every file an agent's Edit/Write/Bash changed (Bash via
+ * bashEditDiff), so: drop what a transcript has, wait while an agent call that
+ * may still report it is open, and attribute the rest to "you".
+ * Returns 0 to wait, -1 dropped, 1 emitted. */
+static int attribute(Ingest *in, WatchChange *c, double now) {
+    for (int i = 0; i < RECENT; i++) /* the transcript already has it */
+        if (in->recent[i].path && !strcmp(in->recent[i].path, c->path) &&
+            in->recent[i].ts > c->ts - DUP_SECS && in->recent[i].ts < c->ts + DUP_SECS)
+            return -1;
+    char *abs = xmalloc(strlen(in->root) + strlen(c->path) + 2);
+    sprintf(abs, "%s/%s", in->root, c->path);
+    int wait = 0;
+    for (int i = 0; i < in->ntails && !wait; i++) {
+        double start;
+        wait = tr_writing(in->tails[i].tr, abs) ||
+               (tr_bash_running(in->tails[i].tr, &start) && start <= c->ts + 1);
+    }
+    free(abs);
+    if (wait && now - c->ts < DEFER_MAX) return 0;
+
+    const char *actor = "you", *name = "you";
+    static const EvKind kinds[] = {[WC_CREATE] = EV_CREATE, [WC_EDIT] = EV_EDIT, [WC_DELETE] = EV_DELETE};
+    Event e = {.ts = c->ts, .kind = kinds[c->kind], .actor = xstrdup(actor), .actor_name = xstrdup(name),
+               .path = xstrdup(c->path), .add = c->add, .del = c->del, .lines = c->lines};
+    push(in, &e); /* not into `recent`: your next save of the same file is a new change */
+    return 1;
+}
+
+static void poll_watch(Ingest *in, double now) {
+    watch_poll(in->watch, now);
+    WatchChange *cs;
+    int n = watch_take(in->watch, now, SETTLE_SECS, &cs);
+    for (int i = 0; i < n; i++) {
+        if (attribute(in, &cs[i], now) == 0) watch_defer(in->watch, &cs[i]);
+        else free(cs[i].path);
+    }
+    free(cs);
+}
+
 Ingest *ingest_new(const IngestOpts *o, EvQueue *q) {
     Ingest *in = xcalloc(1, sizeof *in);
     in->root = xstrdup(o->root);
     in->since = o->since;
     in->q = q;
+    if (o->watch) in->watch = watch_new(o->root);
     if (o->nfiles) {
         in->explicit_files = 1;
         for (int i = 0; i < o->nfiles; i++) track(in, o->files[i]);
@@ -321,6 +384,7 @@ void ingest_poll(Ingest *in) {
         in->last_scan = now;
     }
     for (int i = 0; i < in->ntails; i++) read_tail(in, &in->tails[i]);
+    if (in->watch) poll_watch(in, now);
 }
 
 int ingest_nfiles(const Ingest *in) { return in->ntails; }

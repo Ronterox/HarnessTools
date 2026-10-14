@@ -34,25 +34,6 @@ Color kind_color(EvKind k) {
 
 static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 
-/* File type colors: muted, so the vivid action colors (beams, flashes, rings)
- * stay distinct. Common types get fixed, well-separated hues. */
-static Color file_color(const char *name) {
-    static const struct { const char *ext; float hue; } known[] = {
-        {".py", 205}, {".lua", 235}, {".c", 15}, {".h", 35}, {".js", 55}, {".ts", 195},
-        {".tsx", 185}, {".jsx", 65}, {".json", 280}, {".md", 160}, {".sh", 95}, {".go", 175},
-        {".rs", 25}, {".html", 330}, {".css", 300}, {".toml", 120}, {".yml", 140}, {".yaml", 140},
-        {".txt", 0}, {".pyc", 260}, {".java", 10}, {".rb", 350}, {".php", 250}, {".cpp", 45},
-        {".sql", 215}, {".ndjson", 270}, {".jsonl", 270}, {".png", 315}, {".svg", 320},
-    };
-    const char *dot = strrchr(name, '.');
-    const char *ext = dot && dot != name ? dot : name;
-    for (size_t i = 0; i < sizeof known / sizeof *known; i++)
-        if (!strcmp(ext, known[i].ext))
-            return known[i].hue == 0 && !strcmp(ext, ".txt") ? (Color){170, 175, 185, 255}
-                                                            : ColorFromHSV(known[i].hue, 0.42f, 0.88f);
-    return ColorFromHSV((float)(hash_str(ext) % 360), 0.30f, 0.80f);
-}
-
 /* ---- nodes -------------------------------------------------------------- */
 
 static int add_node(Scene *m, const char *path, int parent, bool is_dir) {
@@ -81,7 +62,8 @@ static int add_node(Scene *m, const char *path, int parent, bool is_dir) {
         float dist = is_dir ? p->radius + DIR_GAP + 20 : p->radius * 0.5f;
         n->pos = (Vector2){p->pos.x + cosf(base) * dist, p->pos.y + sinf(base) * dist};
     }
-    n->color = is_dir ? (Color){160, 170, 190, 255} : file_color(n->name);
+    n->color = (Color){160, 170, 190, 255};
+    n->act_kind = EV_READ;
     char key[8 + 4096];
     snprintf(key, sizeof key, "%c:%s", is_dir ? 'd' : 'f', path);
     strmap_put(&m->index, key, i);
@@ -344,6 +326,8 @@ void model_apply(Scene *m, const Event *e, bool effects) {
     default: break;
     }
     if (e->kind != EV_READ) {
+        n->churn++;
+        n->act_kind = e->kind;
         n->add += e->add;
         n->del += e->del;
         a->add += e->add;
