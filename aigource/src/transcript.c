@@ -25,23 +25,32 @@ struct Transcript {
     int turn;
     char *last_prompt_parent;
     char *cwd; /* of the latest record: relative tool paths resolve against it */
+    double t0; /* start of the tool call whose result is being handled */
 };
 
 const char *tr_actor(const Transcript *t) { return t->actor; }
 
-int tr_writing(const Transcript *t, const char *abs_path) {
-    for (int i = 0; i < t->npend; i++)
-        if (t->pend[i].path && strcmp(t->pend[i].name, "Read") && strcmp(t->pend[i].name, "Bash") &&
-            strcmp(t->pend[i].name, "Grep") && strcmp(t->pend[i].name, "Glob") && !strcmp(t->pend[i].path, abs_path))
-            return 1;
+static char *rel_path(Transcript *t, const char *p);
+
+int tr_writing(Transcript *t, const char *rel) {
+    for (int i = 0; i < t->npend; i++) {
+        Pending *p = &t->pend[i];
+        if (!p->path || !strcmp(p->name, "Read") || !strcmp(p->name, "Bash") || !strcmp(p->name, "Grep") ||
+            !strcmp(p->name, "Glob"))
+            continue;
+        char *r = rel_path(t, p->path);
+        int hit = r && !strcmp(r, rel);
+        free(r);
+        if (hit) return 1;
+    }
     return 0;
 }
 const char *tr_actor_name(const Transcript *t) { return t->actor_name; }
 
-int tr_bash_running(const Transcript *t, double *start) {
+int tr_bash_running(const Transcript *t, double since, double *start) {
     int found = 0;
     for (int i = 0; i < t->npend; i++) {
-        if (strcmp(t->pend[i].name, "Bash")) continue;
+        if (strcmp(t->pend[i].name, "Bash") || t->pend[i].ts <= since) continue;
         if (!found || t->pend[i].ts < *start) *start = t->pend[i].ts;
         found = 1;
     }
@@ -147,7 +156,7 @@ static void emit(Transcript *t, EvKind kind, double ts, char *path, char *text,
                  int add, int del, int lines) {
     Event e = {.ts = ts, .kind = kind, .actor = xstrdup(t->actor),
                .actor_name = xstrdup(t->actor_name), .path = path, .text = text,
-               .add = add, .del = del, .lines = lines, .turn = t->turn};
+               .add = add, .del = del, .lines = lines, .turn = t->turn, .t0 = t->t0};
     t->emit(t->ud, &e);
 }
 
@@ -267,6 +276,7 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     t->pend[k] = t->pend[--t->npend];
     int err = yyjson_get_bool(yyjson_obj_get(block, "is_error"));
     const char *name = p.name;
+    t->t0 = p.ts;
 
     if (!strcmp(name, "Bash")) {
         /* A failing command may still have changed files: no error check. */
@@ -301,6 +311,7 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
             emit(t, EV_EDIT, ts, rel, NULL, add, del, orig >= 0 ? orig + add - del : -1);
         }
     }
+    t->t0 = 0;
     pending_free(&p);
 }
 

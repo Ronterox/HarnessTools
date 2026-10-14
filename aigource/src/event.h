@@ -28,6 +28,7 @@ typedef struct {
     int add, del;     /* diff lines */
     int lines;        /* file length after the event, -1 = unknown */
     int turn;
+    double t0;        /* start of the tool call that did it (0 = ts); not dumped */
 } Event;
 
 const char *ev_kind_name(EvKind k);
