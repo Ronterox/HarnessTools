@@ -1,0 +1,23 @@
+{"ts":1791972001.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":1,"text":"Build the thing"}
+{"ts":1791972002.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":1,"text":"Build the thing (edited)"}
+{"ts":1791972004.000,"kind":"read","actor":"s1","name":"claude·s1","path":"src/a.py","lines":40,"turn":1}
+{"ts":1791972006.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"src/a.py","add":2,"del":1,"lines":4,"turn":1}
+{"ts":1791972008.000,"kind":"create","actor":"s1","name":"claude·s1","path":"src/new/b.py","add":2,"del":0,"lines":2,"turn":1}
+{"ts":1791972010.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"README.md","add":3,"del":1,"lines":3,"turn":1}
+{"ts":1791972016.000,"kind":"search","actor":"s1","name":"claude·s1","path":"src","turn":1,"text":"def main"}
+{"ts":1791972018.000,"kind":"search","actor":"s1","name":"claude·s1","path":"","turn":1,"text":"**/*.md"}
+{"ts":1791972019.000,"kind":"bash","actor":"s1","name":"claude·s1","turn":1,"text":"make gen && rm old.txt"}
+{"ts":1791972020.000,"kind":"delete","actor":"s1","name":"claude·s1","path":"old.txt","add":0,"del":2,"lines":0,"turn":1}
+{"ts":1791972020.000,"kind":"create","actor":"s1","name":"claude·s1","path":"gen/out.c","add":3,"del":0,"lines":3,"turn":1}
+{"ts":1791972020.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"src/a.py","add":1,"del":0,"turn":1}
+{"ts":1791972020.000,"kind":"touch","actor":"s1","name":"claude·s1","path":"gen/out.o","turn":1}
+{"ts":1791972023.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":2,"text":"/review"}
+{"ts":1791972026.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":3,"text":"(task-notification)"}
+{"ts":1791972027.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":4,"text":"pasted prompt"}
+{"ts":1791972031.000,"kind":"read","actor":"s1","name":"claude·s1","path":"src/a.py","turn":4}
+{"ts":1791972031.000,"kind":"read","actor":"s1","name":"claude·s1","path":"src/c.py","turn":4}
+{"ts":1791972033.000,"kind":"read","actor":"s1","name":"claude·s1","path":"src/d.py","lines":3,"turn":4}
+{"ts":1791972035.000,"kind":"read","actor":"s1","name":"claude·s1","path":"pkg/sub.py","lines":1,"turn":4}
+{"ts":1791972038.000,"kind":"turn","actor":"abc123def","name":"executor·abc123","turn":1,"text":"You are a helper. Fix tests."}
+{"ts":1791972040.000,"kind":"edit","actor":"abc123def","name":"executor·abc123","path":"tests/t.py","add":1,"del":0,"lines":2,"turn":1}
+{"ts":1791972060.000,"kind":"turn","actor":"s1","name":"claude·s1","turn":5,"text":"bad � text"}
