@@ -1,0 +1,3 @@
+{"type": "user", "timestamp": "2026-10-14T10:00:38.000Z", "message": {"role": "user", "content": "You are a helper. Fix tests."}}
+{"type": "assistant", "timestamp": "2026-10-14T10:00:39.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "s1", "name": "Edit", "input": {"file_path": "/proj/tests/t.py"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:00:40.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "s1", "is_error": false, "content": "x"}]}, "toolUseResult": {"originalFile": "a\n", "structuredPatch": [{"lines": ["+b"]}]}}
