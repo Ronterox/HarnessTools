@@ -6,7 +6,7 @@ CPPFLAGS += -D_GNU_SOURCE -I$(RAYLIB)/include -I$(YYJSON)
 LDLIBS  := $(RAYLIB)/lib/libraylib.a -lGL -lX11 -lm -lpthread -ldl -lrt
 
 STAMP   := $(RAYLIB)/lib/libraylib.a $(YYJSON)/yyjson.c
-SRC := src/main.c src/util.c src/event.c src/transcript.c src/ingest.c src/model.c src/render.c src/timeline.c
+SRC := src/main.c src/util.c src/event.c src/transcript.c src/ingest.c src/model.c src/render.c src/timeline.c src/watch.c
 OBJ := $(SRC:src/%.c=build/%.o) build/yyjson.o
 
 build/aigource: $(OBJ)
@@ -30,7 +30,10 @@ build:
 test: build/aigource
 	./tests/run.sh
 
+test-watch: build/aigource
+	./tests/watch_test.sh
+
 clean:
 	rm -rf build
 
-.PHONY: test clean release
+.PHONY: test test-watch clean release

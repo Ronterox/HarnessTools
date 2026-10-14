@@ -11,6 +11,7 @@ typedef struct {
     double since;        /* select sessions written to after this epoch; 0 = all */
     const char **files;  /* explicit transcript files (overrides discovery) */
     int nfiles;
+    int watch;           /* also watch the filesystem (live only) */
 } IngestOpts;
 
 Ingest *ingest_new(const IngestOpts *o, EvQueue *q);

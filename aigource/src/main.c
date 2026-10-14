@@ -18,27 +18,38 @@ static void usage(void) {
           "  -a, --all          every session of the repo\n"
           "  -x, --speed N      replay speed multiplier (default 60)\n"
           "  -l, --live         skip the replay animation, start at now\n"
+          "  -w, --watch        also show filesystem changes (yours, other tools), live\n"
+          "                     only; agent commands' changes go to that agent\n"
           "  -W, --size WxH     window size (default 1600x900)\n"
           "  --dump             print the normalized event stream as NDJSON and exit\n"
+          "  --follow SECS      with --dump: keep printing new events for SECS seconds\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
           "  --mouse X,Y        fake mouse position for --shot (hover testing)\n"
+          "  --turn ID          open the turn window of the actor whose id starts with ID\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
-          "      F fullscreen, Q quit. Click or drag the timeline to jump.\n",
+          "      F fullscreen, Q quit, Esc close window. Click or drag the timeline\n"
+          "      to jump; click an actor to see its current turn.\n",
           stderr);
 }
 
-static int dump(Ingest *in, EvQueue *q) {
-    ingest_poll(in);
-    Event *evs;
-    size_t n = evq_drain(q, &evs);
-    qsort(evs, n, sizeof *evs, ev_cmp);
-    for (size_t i = 0; i < n; i++) {
-        ev_print_json(stdout, &evs[i]);
-        ev_free(&evs[i]);
-    }
-    free(evs);
+/* History as sorted NDJSON; with follow > 0, then new events as they come. */
+static int dump(Ingest *in, EvQueue *q, double follow) {
+    double until = now_wall() + follow;
+    do {
+        ingest_poll(in);
+        Event *evs;
+        size_t n = evq_drain(q, &evs);
+        if (n) qsort(evs, n, sizeof *evs, ev_cmp);
+        for (size_t i = 0; i < n; i++) {
+            ev_print_json(stdout, &evs[i]);
+            ev_free(&evs[i]);
+        }
+        free(evs);
+        fflush(stdout);
+        if (follow > 0) usleep(100000);
+    } while (now_wall() < until);
     return 0;
 }
 
@@ -46,7 +57,8 @@ int main(int argc, char **argv) {
     char root[PATH_MAX];
     const char *root_arg = ".";
     double since_h = 2;
-    int all = 0, want_dump = 0;
+    int all = 0, want_dump = 0, watch = 0;
+    double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
                   .mouse_x = -1, .mouse_y = -1};
     const char **files = xcalloc((size_t)argc, sizeof *files);
@@ -64,8 +76,11 @@ int main(int argc, char **argv) {
         else if (TAKES("--frames", "--frames")) vo.frames = atoi(v);
         else if (TAKES("--seek", "--seek")) vo.seek = atof(v);
         else if (TAKES("--mouse", "--mouse")) sscanf(v, "%f,%f", &vo.mouse_x, &vo.mouse_y);
+        else if (TAKES("--turn", "--turn")) vo.turn = v;
+        else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
+        else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;
         else if (!strcmp(a, "--dump")) want_dump = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else if (*a == '-') { fprintf(stderr, "aigource: unknown option %s\n", a); usage(); return 2; }
@@ -81,9 +96,9 @@ int main(int argc, char **argv) {
     EvQueue q;
     evq_init(&q);
     IngestOpts io = {.root = root, .since = all ? 0 : now_wall() - since_h * 3600,
-                     .files = files, .nfiles = nfiles};
+                     .files = files, .nfiles = nfiles, .watch = watch};
     Ingest *in = ingest_new(&io, &q);
-    if (want_dump) return dump(in, &q);
+    if (want_dump) return dump(in, &q, follow);
 
     vo.root = root;
     ingest_poll(in); /* load history before the first frame */

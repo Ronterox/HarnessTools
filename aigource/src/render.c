@@ -27,6 +27,8 @@
 #define LEGEND_W 230.0f
 #define BACKLOG_SECS 10.0  /* live: events older than this arrive as backlog, no effects */
 #define SEEK_THROTTLE 0.08 /* seconds between rebuilds while dragging the timeline */
+#define WIN_ROW 22.0f      /* turn window row height */
+#define DIM_OTHERS 0.15f   /* alpha of everything outside an open turn */
 
 /* ---- text helpers ------------------------------------------------------- */
 
@@ -40,11 +42,11 @@ static void load_font(void) {
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         NULL,
     };
-    int cps[95 + 8];
+    int cps[95 + 10];
     int n = 0;
     for (int c = 32; c < 127; c++) cps[n++] = c;
-    int extra[] = {0x2026, 0x00B7, 0x2212, 0x2192, 0x25B6, 0x2016, 0x2190, 0xFFFD}; /* … · − → ▶ ‖ ← � */
-    for (int i = 0; i < 8; i++) cps[n++] = extra[i];
+    int extra[] = {0x2026, 0x00B7, 0x2212, 0x2192, 0x25B6, 0x2016, 0x2190, 0xFFFD, 0x2715, 0x00D7}; /* … · − → ▶ ‖ ← � ✕ × */
+    for (int i = 0; i < 10; i++) cps[n++] = extra[i];
     for (int i = 0; paths[i]; i++) {
         if (!FileExists(paths[i])) continue;
         g_font = LoadFontEx(paths[i], 64, cps, n);
@@ -68,6 +70,28 @@ static float dist2d(Vector2 a, Vector2 b) { return hypotf(a.x - b.x, a.y - b.y);
 static Color fade(Color c, float a) {
     c.a = (unsigned char)(fmaxf(0, fminf(1, a)) * c.a);
     return c;
+}
+
+/* s cut to fit maxw pixels at size, with "…". */
+static void fit(char *out, size_t n, const char *s, float size, float maxw) {
+    snprintf(out, n, "%s", s);
+    if (text_w(out, size) <= maxw) return;
+    size_t len = strlen(out);
+    while (len > 0) {
+        do len--; while (len > 0 && ((unsigned char)out[len] & 0xC0) == 0x80);
+        if (len + 4 > n) continue;
+        memcpy(out + len, "\xE2\x80\xA6", 4);
+        if (text_w(out, size) <= maxw) return;
+    }
+}
+
+/* Heat: the hue of the last thing done to the file, brighter the more often it
+ * changed. Read-only files stay dim. */
+static Color heat_color(const Node *n) {
+    Color base = kind_color(n->act_kind);
+    float k = n->churn ? 0.45f + 0.55f * fminf(1, log2f(1.0f + (float)n->churn) / log2f(21.0f)) : 0.32f;
+    return (Color){(unsigned char)(BG.r + (base.r - BG.r) * k), (unsigned char)(BG.g + (base.g - BG.g) * k),
+                   (unsigned char)(BG.b + (base.b - BG.b) * k), 255};
 }
 
 static void fmt_count(char *buf, size_t n, long v) {
@@ -142,6 +166,22 @@ typedef struct {
     int hover_i;
     int drag; /* 0 none, 1 pan, 2 scrub */
     double scrub_t, last_seek;
+    /* Turn window: one actor's one turn, its files highlighted. */
+    bool turn_open, turn_stick;
+    char *turn_actor;
+    int turn_no;
+    float turn_scroll;
+    size_t *steps, nsteps, capsteps;
+    bool *hl, *hl_dir;
+    int hl_cap, hl_count; /* files touched by the open turn */
+    Rectangle win, win_close;
+    int win_first, win_vis;
+    bool hover_from_win;
+    Vector2 press_at;
+    bool press_outside;
+    /* Actor panel rows, for clicks. */
+    Rectangle row_rect[PANEL_MAX];
+    int row_actor[PANEL_MAX], nrows;
     /* Timeline density cache. */
     float *bin_w, *bin_r;
     int nbins;
@@ -192,7 +232,99 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
     free(in);
 }
 
+/* ---- turn window: data ------------------------------------------------- */
+
+static int actor_index(Scene *m, const char *id) {
+    for (int i = 0; i < m->nactors; i++)
+        if (!strcmp(m->actors[i].id, id)) return i;
+    return -1;
+}
+
+static void turn_open(Viz *v, int actor) {
+    free(v->turn_actor);
+    v->turn_actor = xstrdup(v->m->actors[actor].id);
+    v->turn_no = v->m->actors[actor].turn;
+    v->turn_open = true;
+    v->turn_stick = true; /* follow new steps while scrolled to the bottom */
+    v->turn_scroll = 0;
+}
+
+static void turn_close(Viz *v) {
+    v->turn_open = false;
+    v->hover = HOVER_NONE;
+}
+
+static bool is_step(EvKind k) { return k != EV_TURN; }
+static bool touches_file(EvKind k) {
+    return k == EV_READ || k == EV_CREATE || k == EV_EDIT || k == EV_DELETE || k == EV_TOUCH;
+}
+
+/* Steps of the open turn that already happened (applied), and the files they
+ * touched marked in hl[] (dirs holding them in hl_dir[]). Recomputed per frame:
+ * a seek rebuilds the scene and renumbers nodes. */
+static void turn_update(Viz *v) {
+    v->nsteps = 0;
+    v->hl_count = 0;
+    if (!v->turn_open) return;
+    Scene *m = v->m;
+    if (m->nnodes > v->hl_cap) {
+        v->hl_cap = m->nnodes * 2;
+        v->hl = xrealloc(v->hl, (size_t)v->hl_cap * sizeof *v->hl);
+        v->hl_dir = xrealloc(v->hl_dir, (size_t)v->hl_cap * sizeof *v->hl_dir);
+    }
+    memset(v->hl, 0, (size_t)m->nnodes * sizeof *v->hl);
+    memset(v->hl_dir, 0, (size_t)m->nnodes * sizeof *v->hl_dir);
+    for (size_t i = 0; i < v->h.applied; i++) {
+        const Event *e = &v->h.ev[i];
+        if (e->turn != v->turn_no || !is_step(e->kind) || strcmp(e->actor, v->turn_actor)) continue;
+        if (v->nsteps == v->capsteps) {
+            v->capsteps = v->capsteps ? v->capsteps * 2 : 64;
+            v->steps = xrealloc(v->steps, v->capsteps * sizeof *v->steps);
+        }
+        v->steps[v->nsteps++] = i;
+        if (!touches_file(e->kind) || !e->path) continue;
+        int ni = model_find(m, false, e->path);
+        if (ni < 0) continue;
+        v->hl_count += !v->hl[ni];
+        v->hl[ni] = true;
+        for (int d = m->nodes[ni].parent; d >= 0; d = m->nodes[d].parent) v->hl_dir[d] = true;
+    }
+}
+
+/* Alpha multiplier for a node while a turn is open: its files stand out. */
+static float hl_alpha(Viz *v, int i) {
+    if (!v->turn_open || !v->hl_count) return 1; /* nothing touched: nothing to single out */
+    return (v->m->nodes[i].is_dir ? v->hl_dir[i] : v->hl[i]) ? 1 : DIM_OTHERS;
+}
+
 /* ---- drawing: scene ----------------------------------------------------- */
+
+/* Soft area around the highlighted files of each folder, in the actor's color. */
+static void draw_turn_areas(Viz *v, float px) {
+    Scene *m = v->m;
+    int ai = actor_index(m, v->turn_actor);
+    Color c = ai >= 0 ? m->actors[ai].color : TEXT;
+    for (int d = 0; d < m->nnodes; d++) {
+        Node *dir = &m->nodes[d];
+        if (!dir->is_dir || !v->hl_dir[d]) continue;
+        Vector2 cen = {0, 0};
+        int n = 0;
+        for (int k = 0; k < dir->nkids; k++)
+            if (v->hl[dir->kids[k]]) { cen.x += m->nodes[dir->kids[k]].pos.x; cen.y += m->nodes[dir->kids[k]].pos.y; n++; }
+        if (!n) continue;
+        cen.x /= (float)n;
+        cen.y /= (float)n;
+        float r = 0;
+        for (int k = 0; k < dir->nkids; k++) {
+            Node *f = &m->nodes[dir->kids[k]];
+            if (v->hl[dir->kids[k]]) r = fmaxf(r, dist2d(cen, f->pos) + f->radius);
+        }
+        r += 12 * px;
+        DrawCircleV(cen, r + 10 * px, fade(c, 0.05f));
+        DrawCircleV(cen, r, fade(c, 0.12f));
+        DrawRing(cen, r, r + 2 * px, 0, 360, 64, fade(c, 0.5f));
+    }
+}
 
 static void draw_scene(Viz *v) {
     Scene *m = v->m;
@@ -203,9 +335,11 @@ static void draw_scene(Viz *v) {
         Node *n = &N[i];
         if (n->alpha <= 0) continue;
         Node *p = &N[n->parent];
-        if (n->is_dir) DrawLineEx(p->pos, n->pos, 1.5f * px, fade((Color){90, 100, 120, 255}, 0.6f * n->alpha));
-        else DrawLineEx(p->pos, n->pos, 1.0f * px, fade((Color){90, 100, 120, 255}, 0.25f * n->alpha));
+        float a = n->alpha * hl_alpha(v, i);
+        if (n->is_dir) DrawLineEx(p->pos, n->pos, 1.5f * px, fade((Color){90, 100, 120, 255}, 0.6f * a));
+        else DrawLineEx(p->pos, n->pos, 1.0f * px, fade((Color){90, 100, 120, 255}, 0.25f * a));
     }
+    if (v->turn_open) draw_turn_areas(v, px);
 
     BeginBlendMode(BLEND_ADDITIVE);
     for (int k = 0; k < m->fx_count; k++) { /* pulses under the nodes */
@@ -215,24 +349,26 @@ static void draw_scene(Viz *v) {
         float t = f->age / f->life;
         float r = n->radius + (12 + 90 * f->strength) * t;
         DrawRing(n->pos, r - (2 + 6 * f->strength) * px * 2, r, 0, 360, 48,
-                 fade(f->color, (1 - t) * (0.35f + 0.65f * f->strength)));
+                 fade(f->color, (1 - t) * (0.35f + 0.65f * f->strength) * hl_alpha(v, f->node)));
     }
     EndBlendMode();
 
     for (int i = 0; i < m->nnodes; i++) {
         Node *n = &N[i];
         if (n->alpha <= 0) continue;
+        float a = n->alpha * hl_alpha(v, i);
         if (n->is_dir) {
-            DrawCircleV(n->pos, 3.5f * px + 2, fade(n->color, 0.8f * n->alpha));
+            DrawCircleV(n->pos, 3.5f * px + 2, fade(n->color, 0.8f * a));
             continue;
         }
+        Color hc = heat_color(n);
         if (n->flash > 0) {
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawCircleV(n->pos, n->radius * (1.6f + n->flash), fade(n->color, 0.35f * n->flash));
+            DrawCircleV(n->pos, n->radius * (1.6f + n->flash), fade(kind_color(n->act_kind), 0.35f * n->flash * a));
             EndBlendMode();
         }
-        Color c = n->deleted ? LIVE_RED : ColorBrightness(n->color, 0.5f * n->flash);
-        DrawCircleV(n->pos, n->radius, fade(c, n->alpha));
+        Color c = n->deleted ? LIVE_RED : ColorBrightness(hc, 0.5f * n->flash);
+        DrawCircleV(n->pos, n->radius, fade(c, a));
     }
 
     BeginBlendMode(BLEND_ADDITIVE);
@@ -243,13 +379,15 @@ static void draw_scene(Viz *v) {
         if (actor_alpha(a, v->sim) <= 0) continue;
         float t = f->age / f->life;
         float w = (1.0f + 9.0f * f->strength) * px;
-        DrawLineEx(a->pos, N[f->node].pos, w, fade(f->color, (1 - t) * 0.9f));
+        float dim = v->turn_open && strcmp(a->id, v->turn_actor) ? DIM_OTHERS : 1;
+        DrawLineEx(a->pos, N[f->node].pos, w, fade(f->color, (1 - t) * 0.9f * dim));
     }
     EndBlendMode();
 
     for (int i = 0; i < m->nactors; i++) {
         Actor *a = &m->actors[i];
         float al = actor_alpha(a, v->sim);
+        if (v->turn_open && strcmp(a->id, v->turn_actor)) al *= DIM_OTHERS;
         if (al <= 0) continue;
         DrawCircleV(a->pos, 9 * px + 3, fade(a->color, al));
         DrawCircleV(a->pos, 5 * px + 1, fade(BG, al));
@@ -274,10 +412,12 @@ static void draw_labels(Viz *v) {
         Vector2 s = GetWorldToScreen2D(n->pos, v->cam);
         if (s.x < -200 || s.y < -50 || s.x > GetScreenWidth() + 200 || s.y > GetScreenHeight() + 50) continue;
         if (n->is_dir) {
-            text(n->name, s.x + 6, s.y - 18, 15, fade(DIM, 0.85f * n->alpha));
+            text(n->name, s.x + 6, s.y - 18, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
+        } else if (v->turn_open && v->hl[i]) { /* the open turn's files stay labeled */
+            text(n->name, s.x + n->radius * v->cam.zoom + 4, s.y - 8, 15, fade(TEXT, n->alpha));
         } else {
             double age = v->sim - n->last_touch;
-            if (age < LABEL_SECS && age >= 0) {
+            if (age < LABEL_SECS && age >= 0 && !v->turn_open) {
                 float a = (float)(1 - age / LABEL_SECS);
                 text(n->name, s.x + n->radius * v->cam.zoom + 4, s.y - 8, 15, fade(TEXT, a * n->alpha));
             }
@@ -288,6 +428,7 @@ static void draw_labels(Viz *v) {
         Vector2 s = GetWorldToScreen2D(a->pos, v->cam);
         float al = actor_alpha(a, v->sim);
         if (al < 1) continue; /* idle actors stay unlabeled */
+        if (v->turn_open && strcmp(a->id, v->turn_actor)) continue;
         text(a->name, s.x + 14, s.y - 9, 16, fade(a->color, al));
         if (a->bubble && a->bubble_t > 0) {
             float ba = fminf(1, a->bubble_t);
@@ -333,43 +474,16 @@ static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 
 static void draw_legend(Viz *v) {
     int W = GetScreenWidth();
     float x = (float)W - LEGEND_W - 16, y = 84;
+    if (v->turn_open) return; /* the turn window explains the screen; give the graph room */
     if (!v->legend) {
         text("H  legend", (float)W - text_w("H  legend", 14) - 24, y, 14, fade(DIM, 0.7f));
         return;
     }
-    /* File types present, most common first. */
-    typedef struct { char ext[16]; Color c; int n; } FileType;
-    FileType types[32];
-    int nt = 0;
-    Scene *m = v->m;
-    for (int i = 0; i < m->nnodes; i++) {
-        Node *n = &m->nodes[i];
-        if (n->is_dir || n->alpha <= 0) continue;
-        const char *dot = strrchr(n->name, '.');
-        const char *ext = dot && dot != n->name ? dot : n->name;
-        int k = 0;
-        while (k < nt && strcmp(types[k].ext, ext)) k++;
-        if (k == nt) {
-            if (nt == 32) continue;
-            snprintf(types[k].ext, sizeof types[k].ext, "%s", ext);
-            types[k].c = n->color;
-            types[k].n = 0;
-            nt++;
-        }
-        types[k].n++;
-    }
-    for (int i = 1; i < nt; i++) /* insertion sort by count */
-        for (int j = i; j > 0 && types[j].n > types[j - 1].n; j--) {
-            FileType t = types[j];
-            types[j] = types[j - 1];
-            types[j - 1] = t;
-        }
-    int shown_types = nt < 8 ? nt : 8;
-    float h = 22 + 6 * 20 + 26 + 2 * 20 + 26 + (float)((shown_types + 1) / 2) * 20 + 26 + 4 * 17 + 10;
+    float h = 22 + 6 * 20 + 26 + 2 * 20 + 26 + 20 + 20 + 26 + 5 * 17 + 10;
     DrawRectangleRounded((Rectangle){x, y, LEGEND_W, h}, 0.04f, 6, PANEL);
     float cx = x + 12, cy = y + 8;
 
-    text("ACTIONS  (beam / flash)", cx, cy, 13, DIM);
+    text("ACTIONS  (beam / file color)", cx, cy, 13, DIM);
     cy += 22;
     static const EvKind kinds[] = {EV_READ, EV_SEARCH, EV_CREATE, EV_EDIT, EV_DELETE, EV_TOUCH};
     static const char *names[] = {"read", "search", "create", "edit", "delete", "changed by a command"};
@@ -386,24 +500,35 @@ static void draw_legend(Viz *v) {
     DrawRing((Vector2){cx + 6, cy + 8}, 3, 6, 0, 360, 24, kind_color(EV_DELETE));
     text("lines removed", cx + 20, cy, 15, TEXT);
     cy += 26;
-    text("FILES  (color = type, size = lines)", cx, cy, 13, DIM);
+    text("FILES  (color = last action)", cx, cy, 13, DIM);
     cy += 20;
-    for (int i = 0; i < shown_types; i++) {
-        float tx = cx + (i % 2) * (LEGEND_W / 2 - 6);
-        swatch(tx, cy, types[i].c);
-        text(types[i].ext, tx + 20, cy, 15, TEXT);
-        if (i % 2 == 1 || i == shown_types - 1) cy += 20;
+    /* Brightness scale: an edited file at 1, 5 and 20 changes. */
+    Node sample = {.act_kind = EV_EDIT};
+    static const int churns[] = {1, 5, 20};
+    static const char *cl[] = {"1\xC3\x97", "5\xC3\x97", "20\xC3\x97 changed"};
+    float sx = cx;
+    for (int i = 0; i < 3; i++) {
+        sample.churn = churns[i];
+        swatch(sx, cy, heat_color(&sample));
+        text(cl[i], sx + 16, cy, 14, TEXT);
+        sx += 16 + text_w(cl[i], 14) + 12;
     }
-    cy += 6;
+    cy += 20;
+    sample.churn = 0;
+    sample.act_kind = EV_READ;
+    swatch(cx, cy, heat_color(&sample));
+    text("only read", cx + 20, cy, 15, TEXT);
+    cy += 26;
     text("KEYS", cx, cy, 13, DIM);
     cy += 18;
     static const char *keys[] = {
+        "click actor: its turn    Esc close",
         "space pause    \xE2\x86\x90/\xE2\x86\x92 seek",
         "+/- speed    L live    H legend",
         "drag pan    wheel zoom    C camera",
         "F fullscreen    Q quit",
     };
-    for (int i = 0; i < 4; i++, cy += 17) text(keys[i], cx, cy, 13, fade(TEXT, 0.8f));
+    for (int i = 0; i < 5; i++, cy += 17) text(keys[i], cx, cy, 13, fade(TEXT, 0.8f));
 }
 
 static void draw_panel(Viz *v) {
@@ -424,14 +549,18 @@ static void draw_panel(Viz *v) {
     int shown = n < PANEL_MAX ? n : PANEL_MAX;
     idle += n - shown;
     float y = (float)H - TL_H - panel_height(m, v->sim) + 4;
+    v->nrows = shown;
     for (int k = 0; k < shown; k++, y += ROW_H) {
         Actor *a = &m->actors[order[k]];
+        v->row_rect[k] = (Rectangle){16, y - 4, 600, ROW_H};
+        v->row_actor[k] = order[k];
         float al = actor_alpha(a, v->sim);
         DrawCircle(30, (int)y + 9, 6, fade(a->color, al));
         char sa[32], sd[32];
         fmt_count(sa, sizeof sa, a->add);
         fmt_count(sd, sizeof sd, a->del);
-        text(a->name, 44, y, 17, fade(TEXT, al));
+        bool sel = v->turn_open && !strcmp(a->id, v->turn_actor);
+        text(a->name, 44, y, 17, fade(sel ? a->color : TEXT, al));
         float nx = 44 + text_w(a->name, 17) + 14;
         snprintf(line, sizeof line, "+%s", sa);
         text(line, nx, y, 17, fade(kind_color(EV_CREATE), al));
@@ -448,6 +577,105 @@ static void draw_panel(Viz *v) {
         snprintf(line, sizeof line, "+%d idle", idle);
         text(line, 44, y, 15, fade(DIM, 0.7f));
     }
+}
+
+/* ---- turn window: drawing ----------------------------------------------- */
+
+static void draw_turn_window(Viz *v, Vector2 mouse) {
+    if (!v->turn_open) { v->win = (Rectangle){0}; return; }
+    Scene *m = v->m;
+    int W = GetScreenWidth(), H = GetScreenHeight();
+    int ai = actor_index(m, v->turn_actor);
+    Color ac = ai >= 0 ? m->actors[ai].color : TEXT;
+    const char *aname = ai >= 0 ? m->actors[ai].name : v->turn_actor;
+
+    /* Prompt + totals of the turn. */
+    const char *prompt = "";
+    int add = 0, del = 0, files = 0;
+    for (size_t i = 0; i < v->h.applied; i++) {
+        const Event *e = &v->h.ev[i];
+        if (e->kind == EV_TURN && e->turn == v->turn_no && !strcmp(e->actor, v->turn_actor)) prompt = e->text ? e->text : "";
+    }
+    for (size_t k = 0; k < v->nsteps; k++) {
+        const Event *e = &v->h.ev[v->steps[k]];
+        add += e->add;
+        del += e->del;
+    }
+    files = v->hl_count;
+
+    float w = fminf(560, (float)W * 0.48f), x = 16, y = HUD_TOP;
+    float list_h = (float)H - TL_H - y - 110;
+    int rows_fit = (int)(list_h / WIN_ROW);
+    if (rows_fit < 3) rows_fit = 3;
+    int nrows = (int)v->nsteps;
+    int vis = nrows < rows_fit ? nrows : rows_fit;
+    float h = 74 + (float)(vis ? vis : 1) * WIN_ROW + 30;
+    v->win = (Rectangle){x, y, w, h};
+    DrawRectangleRounded(v->win, 0.03f, 6, (Color){22, 27, 34, 245});
+    DrawRectangleRoundedLinesEx(v->win, 0.03f, 6, 1.5f, fade(ac, 0.6f));
+
+    char line[512], fitbuf[512];
+    snprintf(line, sizeof line, "%s  \xC2\xB7  turn %d", aname, v->turn_no);
+    text(line, x + 14, y + 10, 17, ac);
+    v->win_close = (Rectangle){x + w - 34, y + 6, 26, 26};
+    bool hot_close = CheckCollisionPointRec(mouse, v->win_close);
+    text("\xE2\x9C\x95", v->win_close.x + 6, v->win_close.y + 3, 18, hot_close ? TEXT : DIM);
+    fit(fitbuf, sizeof fitbuf, prompt, 15, w - 28);
+    text(fitbuf, x + 14, y + 36, 15, TEXT);
+    DrawLine((int)x + 10, (int)(y + 62), (int)(x + w - 10), (int)(y + 62), fade(DIM, 0.3f));
+
+    /* Steps, scrollable; sticks to the bottom while new steps arrive. */
+    int max_scroll = nrows - vis > 0 ? nrows - vis : 0;
+    if (v->turn_scroll >= max_scroll) v->turn_stick = true;
+    if (v->turn_stick) v->turn_scroll = (float)max_scroll;
+    if (v->turn_scroll > max_scroll) v->turn_scroll = (float)max_scroll;
+    if (v->turn_scroll < 0) v->turn_scroll = 0;
+    int first = (int)v->turn_scroll;
+    float ry = y + 68;
+    v->win_first = first;
+    v->win_vis = vis;
+    for (int r = 0; r < vis && first + r < nrows; r++, ry += WIN_ROW) {
+        const Event *e = &v->h.ev[v->steps[first + r]];
+        Rectangle rr = {x + 6, ry, w - 12, WIN_ROW};
+        if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, fade(TEXT, 0.06f));
+        char tm[16];
+        fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
+        text(tm, x + 14, ry + 3, 13, DIM);
+        float cx = x + 14 + text_w("00:00:00", 13) + 10;
+        Color kc = e->kind == EV_BASH ? DIM : kind_color(e->kind);
+        DrawCircle((int)cx + 4, (int)(ry + 11), 4, kc);
+        cx += 14;
+        char pa[16], pd[24];
+        snprintf(pa, sizeof pa, "+%d", e->add);
+        snprintf(pd, sizeof pd, "\xE2\x88\x92%d", e->del);
+        bool has_diff = e->add || e->del;
+        float dw = has_diff ? text_w(pa, 13) + 6 + text_w(pd, 13) + 8 : 0;
+        if (e->kind == EV_BASH) snprintf(line, sizeof line, "$ %s", e->text ? e->text : "");
+        else if (e->kind == EV_SEARCH)
+            snprintf(line, sizeof line, "Search  %s%s%s", e->text ? e->text : "", e->path && *e->path ? "  in " : "",
+                     e->path ? e->path : "");
+        else snprintf(line, sizeof line, "%s  %s", kind_verb(e->kind), e->path ? e->path : "");
+        fit(fitbuf, sizeof fitbuf, line, 14, x + w - 14 - dw - cx);
+        text(fitbuf, cx, ry + 3, 14, e->kind == EV_BASH ? fade(TEXT, 0.75f) : TEXT);
+        if (has_diff) {
+            float dx = x + w - 14 - text_w(pd, 13) - 6 - text_w(pa, 13);
+            text(pa, dx, ry + 4, 13, kind_color(EV_CREATE));
+            text(pd, dx + text_w(pa, 13) + 6, ry + 4, 13, kind_color(EV_DELETE));
+        }
+    }
+    if (!nrows) text("no steps yet", x + 14, ry + 3, 14, DIM);
+    if (max_scroll) { /* scrollbar */
+        float track_h = (float)vis * WIN_ROW;
+        float bh = fmaxf(16, track_h * (float)vis / (float)nrows);
+        float by = y + 68 + (track_h - bh) * (v->turn_scroll / (float)max_scroll);
+        DrawRectangleRounded((Rectangle){x + w - 6, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
+    }
+    char sa[32], sd[32];
+    fmt_count(sa, sizeof sa, add);
+    fmt_count(sd, sizeof sd, del);
+    snprintf(line, sizeof line, "%zu steps  \xC2\xB7  +%s \xE2\x88\x92%s lines  \xC2\xB7  %d files touched", v->nsteps,
+             sa, sd, files);
+    text(line, x + 14, y + h - 24, 13, DIM);
 }
 
 /* ---- timeline ----------------------------------------------------------- */
@@ -592,8 +820,19 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
 
 static void update_hover(Viz *v, Vector2 mouse) {
     v->hover = HOVER_NONE;
-    if (in_timeline(mouse) || v->drag) return;
+    v->hover_from_win = false;
+    if (in_timeline(mouse) || v->drag == 1 || v->drag == 2) return;
     Scene *m = v->m;
+    if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+        /* A step row: ring its file in the graph (no card over the list). */
+        int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
+        if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps) {
+            const Event *e = &v->h.ev[v->steps[v->win_first + r]];
+            int ni = e->path && touches_file(e->kind) ? model_find(m, false, e->path) : -1;
+            if (ni >= 0) { v->hover = HOVER_NODE; v->hover_i = ni; v->hover_from_win = true; }
+        }
+        return;
+    }
     float best = 1e9f;
     for (int i = 0; i < m->nactors; i++) {
         if (actor_alpha(&m->actors[i], v->sim) <= 0) continue;
@@ -613,7 +852,7 @@ static void update_hover(Viz *v, Vector2 mouse) {
 }
 
 static void draw_hover(Viz *v, Vector2 mouse) {
-    if (!v->hover) return;
+    if (!v->hover || v->hover_from_win) return;
     Scene *m = v->m;
     char l[4][256];
     Color c[4] = {TEXT, DIM, DIM, DIM};
@@ -671,9 +910,12 @@ static void draw_hover(Viz *v, Vector2 mouse) {
 static void auto_camera(Viz *v, float dt) {
     Scene *m = v->m;
     float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
+    /* An open turn frames just its files, beside the window. */
+    bool focus = v->turn_open && v->hl_count;
     for (int i = 0; i < m->nnodes; i++) {
         Node *n = &m->nodes[i];
         if (n->alpha <= 0 && i) continue;
+        if (focus && !v->hl[i]) continue;
         minx = fminf(minx, n->pos.x - n->radius);
         maxx = fmaxf(maxx, n->pos.x + n->radius);
         miny = fminf(miny, n->pos.y - n->radius);
@@ -681,14 +923,16 @@ static void auto_camera(Viz *v, float dt) {
     }
     for (int i = 0; i < m->nactors; i++) {
         if (actor_alpha(&m->actors[i], v->sim) <= 0) continue;
+        if (focus && strcmp(m->actors[i].id, v->turn_actor)) continue;
         minx = fminf(minx, m->actors[i].pos.x);
         maxx = fmaxf(maxx, m->actors[i].pos.x);
         miny = fminf(miny, m->actors[i].pos.y);
         maxy = fmaxf(maxy, m->actors[i].pos.y);
     }
     float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
-    float right = v->legend ? LEGEND_W + 24 : 0;
-    float availw = fmaxf(W - right, W * 0.5f);
+    float right = v->legend && !v->turn_open ? LEGEND_W + 24 : 0;
+    float left = v->turn_open && v->win.width > 0 ? v->win.x + v->win.width + 8 : 0;
+    float availw = fmaxf(W - right - left, W * 0.3f);
     float bw = fmaxf(maxx - minx, 200) + 160, bh = fmaxf(maxy - miny, 200) + 160;
     float bottom = panel_height(m, v->sim) + TL_H;
     float avail = fmaxf(H - HUD_TOP - bottom, H * 0.35f);
@@ -699,7 +943,7 @@ static void auto_camera(Viz *v, float dt) {
     v->cam.zoom += (zoom - v->cam.zoom) * e;
     v->cam.target.x += (c.x - v->cam.target.x) * e;
     v->cam.target.y += (c.y - v->cam.target.y) * e;
-    v->cam.offset = (Vector2){availw / 2, HUD_TOP + avail / 2};
+    v->cam.offset = (Vector2){left + availw / 2, HUD_TOP + avail / 2};
 }
 
 /* ---- main loop ---------------------------------------------------------- */
@@ -725,7 +969,10 @@ static void handle_input(Viz *v, float dt) {
     }
 
     float wheel = GetMouseWheelMove();
-    if (wheel != 0 && !in_timeline(mouse)) {
+    if (wheel != 0 && v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+        v->turn_scroll -= wheel * 3;
+        v->turn_stick = false; /* re-sticks when scrolled back to the bottom */
+    } else if (wheel != 0 && !in_timeline(mouse)) {
         v->auto_cam = false;
         Vector2 mw = GetScreenToWorld2D(mouse, v->cam);
         v->cam.offset = mouse;
@@ -735,15 +982,33 @@ static void handle_input(Viz *v, float dt) {
 
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Track tr = track();
-        if (in_timeline(mouse) && mouse.x > tr.x1 - text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
+        int row = -1;
+        for (int k = 0; k < v->nrows; k++)
+            if (CheckCollisionPointRec(mouse, v->row_rect[k])) row = v->row_actor[k];
+        v->press_outside = false;
+        if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
+            if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
+            v->drag = 3; /* consumed by the window */
+        } else if (in_timeline(mouse) && mouse.x > tr.x1 - text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             seek(v, now_wall()); /* "go live" label */
         } else if (in_timeline(mouse)) {
             v->drag = 2;
             v->scrub_t = x_to_time(v, mouse.x);
+        } else if (v->hover == HOVER_ACTOR && !v->hover_from_win) {
+            turn_open(v, v->hover_i);
+            v->drag = 3;
+        } else if (row >= 0) {
+            turn_open(v, row);
+            v->drag = 3;
         } else {
             v->drag = 1;
+            v->press_at = mouse;
+            v->press_outside = v->turn_open; /* a click (not a pan) outside closes */
         }
     }
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && v->drag == 1 && v->press_outside &&
+        dist2d(mouse, v->press_at) < 4)
+        turn_close(v);
     if (v->drag == 1 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Vector2 d = GetMouseDelta();
         if (d.x || d.y) {
@@ -807,11 +1072,20 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
-        if (IsKeyPressed(KEY_Q) || IsKeyPressed(KEY_ESCAPE)) break;
+        if (IsKeyPressed(KEY_Q)) break;
+        if (IsKeyPressed(KEY_ESCAPE)) {
+            if (!v.turn_open) break;
+            turn_close(&v);
+        }
         ingest_new_events(&v, q);
         handle_input(&v, dt);
         advance_clock(&v, dt);
         model_update(v.m, v.paused ? 0 : dt, v.sim);
+        if (o->turn && !v.turn_open && frame == 0) { /* test hook: open an actor's turn */
+            for (int i = 0; i < v.m->nactors; i++)
+                if (!strncmp(v.m->actors[i].id, o->turn, strlen(o->turn))) { turn_open(&v, i); break; }
+        }
+        turn_update(&v); /* before anything reads hl[]: input may have just opened a turn */
         if (v.auto_cam) auto_camera(&v, dt);
 
         Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
@@ -827,6 +1101,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         draw_legend(&v);
         draw_panel(&v);
         draw_timeline(&v, mouse);
+        draw_turn_window(&v, mouse);
         draw_hover(&v, mouse);
         EndDrawing();
 

@@ -11,6 +11,7 @@
 typedef struct {
     char *id, *name, *path, *pattern;
     int turn;
+    double ts;
 } Pending; /* tool_use waiting for its tool_result */
 
 struct Transcript {
@@ -25,6 +26,27 @@ struct Transcript {
     char *last_prompt_parent;
     char *cwd; /* of the latest record: relative tool paths resolve against it */
 };
+
+const char *tr_actor(const Transcript *t) { return t->actor; }
+
+int tr_writing(const Transcript *t, const char *abs_path) {
+    for (int i = 0; i < t->npend; i++)
+        if (t->pend[i].path && strcmp(t->pend[i].name, "Read") && strcmp(t->pend[i].name, "Bash") &&
+            strcmp(t->pend[i].name, "Grep") && strcmp(t->pend[i].name, "Glob") && !strcmp(t->pend[i].path, abs_path))
+            return 1;
+    return 0;
+}
+const char *tr_actor_name(const Transcript *t) { return t->actor_name; }
+
+int tr_bash_running(const Transcript *t, double *start) {
+    int found = 0;
+    for (int i = 0; i < t->npend; i++) {
+        if (strcmp(t->pend[i].name, "Bash")) continue;
+        if (!found || t->pend[i].ts < *start) *start = t->pend[i].ts;
+        found = 1;
+    }
+    return found;
+}
 
 Transcript *tr_new(const char *root, const char *actor, const char *actor_name,
                    EmitFn emit, void *ud) {
@@ -199,6 +221,7 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     p->path = path ? xstrdup(path) : NULL;
     p->pattern = jstr(in, "pattern") ? xstrdup(jstr(in, "pattern")) : NULL;
     p->turn = t->turn;
+    p->ts = ts;
     if (!strcmp(name, "Bash")) {
         const char *cmd = jstr(in, "command");
         emit(t, EV_BASH, ts, NULL, first_line(cmd ? cmd : "", MAX_TEXT), 0, 0, -1);
