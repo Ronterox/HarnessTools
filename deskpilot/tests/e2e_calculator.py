@@ -1,8 +1,9 @@
 """End-to-end smoke test over MCP stdio: drives gnome-calculator via the a11y tree.
 
-Run: .venv/bin/python tests/e2e_calculator.py   (opens and closes a Calculator window)
+Run: .venv/bin/python tests/e2e_calculator.py [--sandbox]   (opens and closes a Calculator window)
 """
 import asyncio
+import os
 import re
 import sys
 
@@ -15,9 +16,16 @@ def text_of(res) -> str:
 
 
 async def main():
-    params = StdioServerParameters(command=sys.executable, args=["-m", "deskpilot.server"])
+    # The client starts servers with a minimal env: pass ours, so this checkout's code is the one tested.
+    env = {**os.environ, "PYTHONPATH": os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")}
+    params = StdioServerParameters(command=sys.executable, args=["-m", "deskpilot.server"], env=env)
     async with stdio_client(params) as (r, w), ClientSession(r, w) as s:
         await s.initialize()
+        if "--sandbox" in sys.argv:  # on a private X display: nothing touches the desktop
+            res = await s.call_tool("display", {"action": "sandbox"})
+            print(text_of(res))
+            if res.is_error:  # never fall through to driving the real desktop
+                raise SystemExit("no sandbox: " + text_of(res))
         tools = (await s.list_tools()).tools
         print("tools:", [t.name for t in tools])
 
@@ -43,6 +51,8 @@ async def main():
         print("screenshot:", [c.type for c in shot.content], text_of(shot).splitlines()[0])
         print(await call("window", action="close", target="calculator"))
         assert "42" in found, "result not found in a11y tree"
+        if "--sandbox" in sys.argv:
+            print(await call("display", action="stop"))
         print("PASS")
 
 

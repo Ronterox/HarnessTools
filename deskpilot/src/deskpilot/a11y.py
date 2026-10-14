@@ -194,7 +194,9 @@ def find_frame(win: xutil.Win):
         except Exception:
             return ""
 
-    for same_pid in (True, False):
+    # On a sandbox display, a title match without the pid could be an app on the real desktop
+    # (both register on the same accessibility bus): trust pid matches only.
+    for same_pid in ((True,) if xutil.current_display() else (True, False)):
         pool = [f for p, f in candidates if p == same_pid]
         for f in pool:
             if name(f) == title:
