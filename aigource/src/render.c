@@ -214,6 +214,7 @@ static void seek(Viz *v, double t) {
         v->m = nm;
         v->h.applied = k;
         v->hover = HOVER_NONE;
+        v->nrows = 0; /* panel rows index the old scene's actors */
     }
     v->sim = t;
 }
@@ -241,6 +242,7 @@ static int actor_index(Scene *m, const char *id) {
 }
 
 static void turn_open(Viz *v, int actor) {
+    if (actor < 0 || actor >= v->m->nactors) return;
     free(v->turn_actor);
     v->turn_actor = xstrdup(v->m->actors[actor].id);
     v->turn_no = v->m->actors[actor].turn;
@@ -471,15 +473,24 @@ static void draw_counters(Viz *v) {
 
 static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 8, 5, c); }
 
+#define LEGEND_Y 84
+#define LEGEND_H (22 + 6 * 20 + 26 + 2 * 20 + 26 + 20 + 20 + 26 + 5 * 17 + 10)
+
+/* Shown, and room for it above the panel. The turn window replaces it. */
+static bool legend_shown(Viz *v) {
+    return v->legend && !v->turn_open &&
+           LEGEND_Y + LEGEND_H <= (float)GetScreenHeight() - TL_H - panel_height(v->m, v->sim);
+}
+
 static void draw_legend(Viz *v) {
     int W = GetScreenWidth();
-    float x = (float)W - LEGEND_W - 16, y = 84;
+    float x = (float)W - LEGEND_W - 16, y = LEGEND_Y;
     if (v->turn_open) return; /* the turn window explains the screen; give the graph room */
-    if (!v->legend) {
+    if (!legend_shown(v)) {
         text("H  legend", (float)W - text_w("H  legend", 14) - 24, y, 14, fade(DIM, 0.7f));
         return;
     }
-    float h = 22 + 6 * 20 + 26 + 2 * 20 + 26 + 20 + 20 + 26 + 5 * 17 + 10;
+    float h = LEGEND_H;
     DrawRectangleRounded((Rectangle){x, y, LEGEND_W, h}, 0.04f, 6, PANEL);
     float cx = x + 12, cy = y + 8;
 
@@ -604,7 +615,8 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     files = v->hl_count;
 
     float w = fminf(560, (float)W * 0.48f), x = 16, y = HUD_TOP;
-    float list_h = (float)H - TL_H - y - 110;
+    /* Stop above the actor panel so its rows stay clickable. */
+    float list_h = (float)H - TL_H - panel_height(m, v->sim) - 8 - y - 104;
     int rows_fit = (int)(list_h / WIN_ROW);
     if (rows_fit < 3) rows_fit = 3;
     int nrows = (int)v->nsteps;
@@ -912,6 +924,7 @@ static void auto_camera(Viz *v, float dt) {
     float minx = 1e9f, miny = 1e9f, maxx = -1e9f, maxy = -1e9f;
     /* An open turn frames just its files, beside the window. */
     bool focus = v->turn_open && v->hl_count;
+again:
     for (int i = 0; i < m->nnodes; i++) {
         Node *n = &m->nodes[i];
         if (n->alpha <= 0 && i) continue;
@@ -929,8 +942,9 @@ static void auto_camera(Viz *v, float dt) {
         miny = fminf(miny, m->actors[i].pos.y);
         maxy = fmaxf(maxy, m->actors[i].pos.y);
     }
+    if (focus && minx > maxx) { focus = false; goto again; } /* its files all faded: frame everything */
     float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
-    float right = v->legend && !v->turn_open ? LEGEND_W + 24 : 0;
+    float right = legend_shown(v) ? LEGEND_W + 24 : 0;
     float left = v->turn_open && v->win.width > 0 ? v->win.x + v->win.width + 8 : 0;
     float availw = fmaxf(W - right - left, W * 0.3f);
     float bw = fmaxf(maxx - minx, 200) + 160, bh = fmaxf(maxy - miny, 200) + 160;

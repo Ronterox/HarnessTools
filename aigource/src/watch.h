@@ -16,6 +16,7 @@ typedef struct {
     WatchKind kind;
     int lines;    /* now, -1 unknown (0 for deletes) */
     int add, del; /* from the line-count change; 0/0 when the old count was unknown */
+    bool before_unknown;
 } WatchChange;
 
 Watch *watch_new(const char *root); /* NULL (with a message) when inotify fails */

@@ -18,8 +18,9 @@
 #define PROJDIR_SECS 10.0  /* new project dirs (sessions in new subdirs) */
 #define META_WAIT_SECS 5.0 /* a subagent's .meta.json can lag its transcript */
 #define SETTLE_SECS 2.5    /* a file quiet this long is one change */
-#define DUP_SECS 15.0      /* agent recorded the same file this close: not a separate change */
+#define DUP_SLACK 3.0      /* clock slack around the agent call that recorded a file */
 #define DEFER_MAX 600.0    /* stop waiting on a running command after this */
+#define BASH_MAX 620.0     /* Bash times out at 10 min: older unanswered calls are dead sessions */
 #define RECENT 512
 #define POLL_USECS 100000
 
@@ -43,13 +44,15 @@ struct Ingest {
     Tail *tails;
     int ntails, captails;
     StrMap tracked; /* path -> tail index */
+    StrMap rejected; /* prefix-matching project dir -> its mtime when found foreign */
     EvQueue *q;
     unsigned long seq;
     double last_scan, last_projscan;
     /* Filesystem watcher and what it needs for attribution. */
     Watch *watch;
-    struct { char *path; double ts; } recent[RECENT]; /* agent file events */
+    struct { char *path; double start, end; } recent[RECENT]; /* agent file events, call span */
     int recent_head;
+    int meta_waiting; /* a subagent transcript exists but isn't tracked yet */
     pthread_t th;
     int started;
     atomic_int stop;
@@ -68,7 +71,8 @@ static void on_event(void *ud, Event *e) {
         int k = in->recent_head++ % RECENT;
         free(in->recent[k].path);
         in->recent[k].path = xstrdup(e->path);
-        in->recent[k].ts = e->ts;
+        in->recent[k].start = e->t0 > 0 && e->t0 < e->ts ? e->t0 : e->ts;
+        in->recent[k].end = e->ts;
     }
     push(in, e);
 }
@@ -183,6 +187,9 @@ static void find_projdirs(Ingest *in) {
         char *dir = path_join(base, de->d_name);
         if (known_projdir(in, dir)) { free(dir); continue; }
         int ok = !de->d_name[wn];
+        struct stat dst;
+        int mt = stat(dir, &dst) ? -1 : (int)dst.st_mtim.tv_sec;
+        if (!ok && mt >= 0 && strmap_get(&in->rejected, dir) == mt) { free(dir); continue; } /* unchanged */
         if (!ok) { /* prefix match: confirm with a transcript's real cwd */
             DIR *sd = opendir(dir);
             struct dirent *se;
@@ -201,6 +208,7 @@ static void find_projdirs(Ingest *in) {
             in->projdirs = xrealloc(in->projdirs, (in->nproj + 1) * sizeof *in->projdirs);
             in->projdirs[in->nproj++] = dir;
         } else {
+            strmap_put(&in->rejected, dir, mt);
             free(dir);
         }
     }
@@ -227,6 +235,7 @@ static void scan_subagents(Ingest *in, const char *projdir, const char *sid) {
                         (!stat(f, &st) && now_wall() - st.st_mtim.tv_sec > META_WAIT_SECS);
             free(meta);
             if (ready) track(in, f);
+            else in->meta_waiting = 1;
         }
         free(f);
     }
@@ -235,6 +244,7 @@ static void scan_subagents(Ingest *in, const char *projdir, const char *sid) {
 }
 
 static void rescan(Ingest *in) {
+    in->meta_waiting = 0;
     char *newest = NULL;
     double newest_mt = 0;
     for (int p = 0; p < in->nproj; p++) {
@@ -326,19 +336,17 @@ static void read_tail(Ingest *in, Tail *t) {
  * may still report it is open, and attribute the rest to "you".
  * Returns 0 to wait, -1 dropped, 1 emitted. */
 static int attribute(Ingest *in, WatchChange *c, double now) {
-    for (int i = 0; i < RECENT; i++) /* the transcript already has it */
+    /* The transcript already has it: changed while the call that recorded it ran. */
+    for (int i = 0; i < RECENT; i++)
         if (in->recent[i].path && !strcmp(in->recent[i].path, c->path) &&
-            in->recent[i].ts > c->ts - DUP_SECS && in->recent[i].ts < c->ts + DUP_SECS)
+            c->ts >= in->recent[i].start - DUP_SLACK && c->ts <= in->recent[i].end + DUP_SLACK)
             return -1;
-    char *abs = xmalloc(strlen(in->root) + strlen(c->path) + 2);
-    sprintf(abs, "%s/%s", in->root, c->path);
-    int wait = 0;
+    int wait = in->meta_waiting; /* an agent we can't read yet */
     for (int i = 0; i < in->ntails && !wait; i++) {
         double start;
-        wait = tr_writing(in->tails[i].tr, abs) ||
-               (tr_bash_running(in->tails[i].tr, &start) && start <= c->ts + 1);
+        wait = tr_writing(in->tails[i].tr, c->path) ||
+               (tr_bash_running(in->tails[i].tr, now - BASH_MAX, &start) && start <= c->ts + 1);
     }
-    free(abs);
     if (wait && now - c->ts < DEFER_MAX) return 0;
 
     const char *actor = "you", *name = "you";
@@ -353,6 +361,15 @@ static void poll_watch(Ingest *in, double now) {
     watch_poll(in->watch, now);
     WatchChange *cs;
     int n = watch_take(in->watch, now, SETTLE_SECS, &cs);
+    if (n && !in->explicit_files) { /* a session that just started may have made it: look first */
+        if (now - in->last_projscan >= SETTLE_SECS) {
+            find_projdirs(in);
+            in->last_projscan = now;
+        }
+        rescan(in);
+        in->last_scan = now;
+        for (int i = 0; i < in->ntails; i++) read_tail(in, &in->tails[i]);
+    }
     for (int i = 0; i < n; i++) {
         if (attribute(in, &cs[i], now) == 0) watch_defer(in->watch, &cs[i]);
         else free(cs[i].path);
