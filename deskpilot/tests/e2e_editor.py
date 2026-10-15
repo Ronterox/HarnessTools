@@ -10,8 +10,8 @@ procs.install_exit_cleanup()  # as server.main() does: a crash mid-test still st
 sandbox = "--sandbox" in sys.argv  # on a private X display: nothing touches the desktop
 if sandbox:
     print(s.display("sandbox"))
-# --standalone: gedit is single-instance over D-Bus and would otherwise open in a running gedit
-print(s.window("launch", "gedit --standalone" if sandbox else "gedit --new-window"))
+# gedit is single-instance over D-Bus; in the sandbox its own session bus keeps it off a running gedit
+print(s.window("launch", "gedit" if sandbox else "gedit --new-window"))
 w = "gedit"
 q = s.ui(w, query="textbox")
 print("query:", q)
