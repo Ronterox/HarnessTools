@@ -3,16 +3,21 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <sys/stat.h>
+
+#include "cmdguess.h"
 #include "util.h"
 #include "yyjson.h"
 
 #define MAX_TEXT 120
 
 typedef struct {
-    char *id, *name, *path, *pattern;
+    char *id, *name, *path, *pattern, *cmd, *cwd; /* cmd, cwd: Bash, for guessing */
     int turn;
     double ts;
     long off; /* of the line holding the tool_use */
+    long note_off;
+    int notes;
 } Pending; /* tool_use waiting for its tool_result */
 
 struct Transcript {
@@ -31,7 +36,37 @@ struct Transcript {
     long line_off;     /* offset of the line being fed */
     long ev_off;       /* tool_use line + id of the call events come from now */
     const char *ev_id;
+    long ev_note_off;  /* ...and its comments */
+    int ev_notes;
+    int ev_via;        /* VIA_* of the events emitted now */
+    long note_off;     /* text blocks since the last tool result or prompt */
+    int notes;
+    struct Failed { /* recent failed Bash calls, for the watcher */
+        char *id;
+        double start, end;
+        long off, note_off;
+        int notes, turn;
+    } failed[16];
+    int failed_head;
 };
+
+int tr_failed_call(const Transcript *t, double ts, double slack, Event *e) {
+    const struct Failed *best = NULL;
+    for (int i = 0; i < 16; i++) {
+        const struct Failed *f = &t->failed[i];
+        if (f->id && ts >= f->start - slack && ts <= f->end + slack && (!best || f->start > best->start)) best = f;
+    }
+    if (!best) return 0;
+    e->src = t->src;
+    e->src_off = best->off;
+    e->tool_id = xstrdup(best->id);
+    e->note_off = best->note_off;
+    e->notes = best->notes;
+    e->turn = best->turn;
+    e->t0 = best->start;
+    e->ts = best->end;
+    return 1;
+}
 
 const char *tr_actor(const Transcript *t) { return t->actor; }
 
@@ -81,12 +116,15 @@ static void pending_free(Pending *p) {
     free(p->name);
     free(p->path);
     free(p->pattern);
+    free(p->cmd);
+    free(p->cwd);
 }
 
 void tr_free(Transcript *t) {
     if (!t) return;
     for (int i = 0; i < t->npend; i++) pending_free(&t->pend[i]);
     free(t->pend);
+    for (int i = 0; i < 16; i++) free(t->failed[i].id);
     free(t->root);
     free(t->actor);
     free(t->actor_name);
@@ -164,7 +202,9 @@ static void emit(Transcript *t, EvKind kind, double ts, char *path, char *text,
                .actor_name = xstrdup(t->actor_name), .path = path, .text = text,
                .add = add, .del = del, .lines = lines, .turn = t->turn, .t0 = t->t0,
                .src = t->ev_id ? t->src : NULL, .src_off = t->ev_off,
-               .tool_id = t->ev_id ? xstrdup(t->ev_id) : NULL};
+               .tool_id = t->ev_id ? xstrdup(t->ev_id) : NULL,
+               .note_off = t->ev_id ? t->ev_note_off : 0, .notes = t->ev_id ? t->ev_notes : 0,
+               .via = t->ev_via};
     t->emit(t->ud, &e);
 }
 
@@ -256,6 +296,8 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
         free(gist);
         t->ev_off = t->line_off;
         t->ev_id = id;
+        t->ev_note_off = t->note_off;
+        t->ev_notes = t->notes;
         emit(t, EV_TOOL, ts, NULL, text, 0, 0, -1);
         t->ev_id = NULL;
         return;
@@ -272,13 +314,19 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     p->name = xstrdup(name);
     p->path = path ? xstrdup(path) : NULL;
     p->pattern = jstr(in, "pattern") ? xstrdup(jstr(in, "pattern")) : NULL;
+    p->cmd = !strcmp(name, "Bash") && jstr(in, "command") ? xstrdup(jstr(in, "command")) : NULL;
+    p->cwd = p->cmd && t->cwd ? xstrdup(t->cwd) : NULL; /* the result's record has the cwd after it */
     p->turn = t->turn;
     p->ts = ts;
     p->off = t->line_off;
+    p->note_off = t->note_off;
+    p->notes = t->notes;
     if (!strcmp(name, "Bash")) {
         const char *cmd = jstr(in, "command");
         t->ev_off = t->line_off;
         t->ev_id = id;
+        t->ev_note_off = t->note_off;
+        t->ev_notes = t->notes;
         emit(t, EV_BASH, ts, NULL, first_line(cmd ? cmd : "", MAX_TEXT), 0, 0, -1);
         t->ev_id = NULL;
     }
@@ -313,6 +361,98 @@ static void bash_files(Transcript *t, yyjson_val *diff, double ts) {
     strmap_free(&seen);
 }
 
+/* ---- failed commands ---------------------------------------------------- */
+
+typedef struct {
+    Transcript *t;
+    const char *cwd;
+    double ts;
+    StrMap seen; /* repo path -> index in rel/kind: the last action on a file wins */
+    char **rel;
+    GuessKind *kind;
+    int n, cap;
+} GuessCtx;
+
+static char *cat3(const char *a, const char *b, const char *c) {
+    char *s = xmalloc(strlen(a) + strlen(b) + strlen(c) + 1);
+    sprintf(s, "%s%s%s", a, b, c);
+    return s;
+}
+
+/* A file a failed command probably wrote or removed: resolved like the shell
+ * would from the session's cwd and the command's own cds; kept when in the repo. */
+static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind, const char *into) {
+    GuessCtx *g = ud;
+    Transcript *t = g->t;
+    const char *home = getenv("HOME");
+    const char *cwd = g->cwd ? g->cwd : t->root;
+    char *base, *abs;
+    if (!dir) base = xstrdup(cwd);
+    else if (dir[0] == '~' && home) base = cat3(home, "", dir + 1);
+    else if (dir[0] == '/') base = xstrdup(dir);
+    else base = cat3(cwd, "/", dir);
+    if (path[0] == '~' && (path[1] == '/' || !path[1]) && home) abs = cat3(home, "", path + 1);
+    else if (path[0] == '/') abs = xstrdup(path);
+    else abs = cat3(base, "/", path);
+    free(base);
+    struct stat st;
+    bool is_dir = !stat(abs, &st) && S_ISDIR(st.st_mode);
+    if (into && (is_dir || abs[strlen(abs) - 1] == '/')) { /* mv/cp into a directory */
+        char *in_dir = cat3(abs, abs[strlen(abs) - 1] == '/' ? "" : "/", into);
+        free(abs);
+        abs = in_dir;
+        is_dir = !stat(abs, &st) && S_ISDIR(st.st_mode);
+    }
+    char *rel = is_dir ? NULL : rel_path(t, abs); /* a directory: a tree, not a file */
+    free(abs);
+    if (!rel || !*rel) { free(rel); return; }
+    int k = strmap_get(&g->seen, rel);
+    if (k >= 0) { /* touch x && rm x: it ends deleted */
+        g->kind[k] = kind;
+        free(rel);
+        return;
+    }
+    if (g->n == g->cap) {
+        g->cap = g->cap ? g->cap * 2 : 8;
+        g->rel = xrealloc(g->rel, (size_t)g->cap * sizeof *g->rel);
+        g->kind = xrealloc(g->kind, (size_t)g->cap * sizeof *g->kind);
+    }
+    strmap_put(&g->seen, rel, g->n);
+    g->rel[g->n] = rel;
+    g->kind[g->n++] = kind;
+}
+
+static void emit_guesses(GuessCtx *g) {
+    Transcript *t = g->t;
+    t->ev_via = VIA_GUESS;
+    for (int i = 0; i < g->n; i++)
+        emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : EV_TOUCH, g->ts, g->rel[i], NULL, 0, 0,
+             g->kind[i] == GUESS_DELETE ? 0 : -1);
+    t->ev_via = 0;
+    free(g->rel);
+    free(g->kind);
+    strmap_free(&g->seen);
+}
+
+/* Claude Code records what a command changed only when it succeeds. For one
+ * that ran and failed: flag the call, remember it for the watcher, guess its
+ * files from its text. Rejected or hook-blocked calls never ran: left alone. */
+static void bash_failed(Transcript *t, const Pending *p, yyjson_val *block, double ts) {
+    yyjson_val *c = yyjson_obj_get(block, "content");
+    const char *msg = yyjson_is_str(c) ? yyjson_get_str(c) : jstr(yyjson_arr_get_first(c), "text");
+    if (!msg) return;
+    if (!strncmp(msg, "Error: ", 7)) msg += 7;
+    if (strncmp(msg, "Exit code ", 10) && strncmp(msg, "Command timed out", 17)) return;
+    struct Failed *f = &t->failed[t->failed_head++ % 16];
+    free(f->id);
+    *f = (struct Failed){xstrdup(p->id), p->ts, ts, p->off, p->note_off, p->notes, p->turn};
+    emit(t, EV_FAILED, ts, NULL, first_line(msg, MAX_TEXT), 0, 0, -1);
+    if (!p->cmd) return;
+    GuessCtx g = {.t = t, .cwd = p->cwd, .ts = ts};
+    cmd_guess(p->cmd, on_guess, &g);
+    emit_guesses(&g);
+}
+
 /* A file tool call with no effect on the graph (failed, or outside the repo):
  * listed as a plain step, e.g. "Edit failed  /proj/a.py". */
 static void plain_step(Transcript *t, const Pending *p, double ts, const char *note) {
@@ -337,11 +477,14 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     t->t0 = p.ts;
     t->ev_off = p.off;
     t->ev_id = p.id;
+    t->ev_note_off = p.note_off;
+    t->ev_notes = p.notes;
 
     if (!strcmp(name, "Bash")) {
         /* A failing command may still have changed files: no error check. */
         yyjson_val *diff = yyjson_obj_get(res, "bashEditDiff");
         if (yyjson_is_obj(diff)) bash_files(t, diff, ts);
+        else if (err) bash_failed(t, &p, block, ts);
     } else if (err) { /* no effect, but still a step to look at */
         plain_step(t, &p, ts, " failed");
     } else {
@@ -441,6 +584,13 @@ static yyjson_doc *parse_line(const char *line, size_t len) {
     return doc;
 }
 
+/* A text block worth showing as a comment: not just whitespace. */
+static bool is_note(const char *s) {
+    if (!s) return false;
+    while (*s == ' ' || *s == '\n' || *s == '\t' || *s == '\r') s++;
+    return *s;
+}
+
 void tr_feed(Transcript *t, const char *line, size_t len, long off) {
     t->line_off = off;
     yyjson_doc *doc = parse_line(line, len);
@@ -455,6 +605,9 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
     }
     double ts = parse_iso8601(jstr(rec, "timestamp"));
     yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
+    /* A result or a prompt: what came before is about earlier calls (tr_notes
+     * stops at any user record too, timestamp or not). */
+    if (type && !strcmp(type, "user")) t->notes = 0;
     if (!type || !ts) goto done;
 
     if (!strcmp(type, "assistant") && yyjson_is_arr(content)) {
@@ -463,6 +616,9 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
         yyjson_arr_foreach(content, i, n, c) {
             const char *ct = jstr(c, "type");
             if (ct && !strcmp(ct, "tool_use")) tool_start(t, c, ts);
+            else if (ct && !strcmp(ct, "text") && is_note(jstr(c, "text"))) {
+                if (!t->notes++) t->note_off = t->line_off; /* comments on the calls that follow */
+            }
         }
     } else if (!strcmp(type, "user")) {
         int nresults = 0;
@@ -634,6 +790,10 @@ static void detail_body(Detail *d, const char *name, yyjson_val *in, yyjson_val 
             dl_hunks(d, yyjson_obj_get(f, "hunks"));
             dl_gap(d);
         }
+        if (err && path && !yyjson_is_obj(yyjson_obj_get(res, "bashEditDiff"))) {
+            dl_fmt(d, DL_ERR, "the command failed, so Claude Code didn't record its changes to %s", path);
+            dl_gap(d);
+        }
         const char *cmd = jstr(in, "command");
         char *pre = xmalloc(strlen(cmd ? cmd : "") + 3);
         sprintf(pre, "$ %s", cmd ? cmd : "");
@@ -788,6 +948,57 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
     yyjson_doc_free(use_doc);
     yyjson_doc_free(res_doc);
     return d;
+}
+
+#define NOTES_SCAN (64L << 20) /* bytes read looking for a call's comments */
+#define NOTE_MAX (64 << 10)     /* bytes kept of one comment */
+
+Notes tr_notes(const char *src, long off, int n, const char *id) {
+    Notes ns = {0};
+    FILE *f = src && id && n > 0 ? fopen(src, "r") : NULL;
+    if (!f) return ns;
+    if (fseeko(f, off, SEEK_SET)) { fclose(f); return ns; }
+    ns.s = xcalloc((size_t)n, sizeof *ns.s);
+    long scanned = 0;
+    bool done = false;
+    char *line;
+    size_t len;
+    while (!done && ns.n < n && scanned < NOTES_SCAN && (line = read_line(f, &len))) {
+        scanned += (long)len + 1;
+        yyjson_doc *doc = parse_line(line, len);
+        free(line);
+        yyjson_val *rec = doc ? yyjson_doc_get_root(doc) : NULL;
+        const char *type = jstr(rec, "type");
+        if (type && !strcmp(type, "user")) done = true; /* past the call: the transcript changed */
+        yyjson_val *content = type && !strcmp(type, "assistant")
+                                  ? yyjson_obj_get(yyjson_obj_get(rec, "message"), "content") : NULL;
+        size_t i, m;
+        yyjson_val *c;
+        yyjson_arr_foreach(content, i, m, c) {
+            const char *ct = jstr(c, "type");
+            if (done || ns.n == n) break;
+            if (!ct) continue;
+            if (!strcmp(ct, "tool_use") && jstr(c, "id") && !strcmp(jstr(c, "id"), id)) done = true;
+            else if (!strcmp(ct, "text") && is_note(jstr(c, "text"))) {
+                const char *txt = jstr(c, "text");
+                size_t tl = yyjson_get_len(yyjson_obj_get(c, "text"));
+                if (tl > NOTE_MAX) { /* cut on a character boundary */
+                    tl = NOTE_MAX;
+                    while (tl && ((unsigned char)txt[tl] & 0xC0) == 0x80) tl--;
+                }
+                ns.s[ns.n++] = xstrndup(txt, tl);
+            }
+        }
+        yyjson_doc_free(doc);
+    }
+    fclose(f);
+    return ns;
+}
+
+void notes_free(Notes *ns) {
+    for (int i = 0; i < ns->n; i++) free(ns->s[i]);
+    free(ns->s);
+    *ns = (Notes){0};
 }
 
 Detail *detail_new(const char *tool) {

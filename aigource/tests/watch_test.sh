@@ -30,7 +30,7 @@ rec '{"type":"user","timestamp":"'$(iso)'","cwd":"'$repo'","message":{"content":
 rec '{"type":"assistant","timestamp":"'$(iso '-700 seconds')'","message":{"content":[{"type":"tool_use","id":"b0","name":"Bash","input":{"command":"sleep 9999"}}]}}'
 
 out=$tmp/out.ndjson
-CLAUDE_CONFIG_DIR=$tmp/cfg "$BIN" --dump --all --watch --root "$repo" --follow 36 > "$out" &
+CLAUDE_CONFIG_DIR=$tmp/cfg "$BIN" --dump --all --watch --root "$repo" --follow 48 > "$out" &
 pid=$!
 sleep 1.5
 S=3 # > settle time
@@ -63,6 +63,17 @@ rec '{"type":"user","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_r
 rec '{"type":"assistant","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"gen && make test"}}]}}'
 sleep 1; printf 'l\n' > long.out; sleep $S
 rec '{"type":"user","timestamp":"'$(iso '+20 seconds')'","message":{"content":[{"type":"tool_result","tool_use_id":"b2","content":"ok"}]},"toolUseResult":{"stdout":"","bashEditDiff":{"files":[{"filePath":"'$repo'/long.out","hunks":[{"lines":["+l"]}],"created":true}],"changedFiles":[]}}}'
+# 5) A failed command records no changes. Its guess (sed -i tracked.txt), once
+# the watcher sees the change, is a real edit; a guess the watcher doesn't see
+# (nochange.txt) is dropped; a change nothing guessed (script.out) is still the
+# agent's, not yours.
+rec '{"type":"assistant","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_use","id":"b3","name":"Bash","input":{"command":"sed -i 1d tracked.txt && false"}}]}}'
+sleep 1; printf '2\n3\n' > tracked.txt; sleep 0.5
+rec '{"type":"user","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_result","tool_use_id":"b3","is_error":true,"content":"Error: Exit code 1"}]},"toolUseResult":"Error: Exit code 1"}'
+sleep $S
+rec '{"type":"assistant","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_use","id":"b4","name":"Bash","input":{"command":"sed -i 1d nochange.txt; ./gen.sh"}}]}}'
+sleep 1; printf 'q\n' > script.out; sleep 0.5
+rec '{"type":"user","timestamp":"'$(iso)'","message":{"content":[{"type":"tool_result","tool_use_id":"b4","is_error":true,"content":"Error: Exit code 1"}]},"toolUseResult":"Error: Exit code 1"}'
 wait $pid
 
 # File events from both sources: the agent's (transcript) and yours (watcher).
@@ -70,7 +81,7 @@ got=$(python3 - "$out" <<'PY'
 import json, sys
 for l in open(sys.argv[1]):
     e = json.loads(l)
-    if e["kind"] in ("turn", "bash"): continue
+    if e["kind"] in ("turn", "bash", "failed"): continue
     print(e["actor"], e["kind"], e["path"].replace("\n", "\\n"), "+%d-%d" % (e.get("add", 0), e.get("del", 0)))
 PY
 )
@@ -84,6 +95,8 @@ you delete mine.txt +0-5
 s1 edit agent.txt +1-0
 s1 create gen.out +2-0
 you create notes.txt +1-0
-s1 create long.out +1-0"
+s1 create long.out +1-0
+s1 edit tracked.txt +0-1
+s1 create script.out +1-0"
 if [ "$got" = "$want" ]; then echo "ok   watch"; else
     echo "FAIL watch"; echo "--- want"; echo "$want"; echo "--- got"; echo "$got"; exit 1; fi

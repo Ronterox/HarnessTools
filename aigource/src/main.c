@@ -25,6 +25,7 @@ static void usage(void) {
           "  --dump             print the normalized event stream as NDJSON and exit\n"
           "  --follow SECS      with --dump: keep printing new events for SECS seconds\n"
           "  --detail           with --dump: after each step, what the detail window shows\n"
+          "                     and the agent's comments on it\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
@@ -50,7 +51,14 @@ static void print_detail(const Event *e) {
         json_str(stdout, d->lines[i].s);
         putchar(']');
     }
+    fputs("],\"notes\":[", stdout);
+    Notes ns = tr_notes(e->src, e->note_off, e->notes, e->tool_id);
+    for (int i = 0; i < ns.n; i++) {
+        if (i) putchar(',');
+        json_str(stdout, ns.s[i]);
+    }
     puts("]}");
+    notes_free(&ns);
     detail_free(d);
 }
 

@@ -45,11 +45,14 @@ static void load_font(void) {
         "/usr/share/fonts/dejavu/DejaVuSans.ttf",
         NULL,
     };
-    int cps[95 + 10];
-    int n = 0;
-    for (int c = 32; c < 127; c++) cps[n++] = c;
-    int extra[] = {0x2026, 0x00B7, 0x2212, 0x2192, 0x25B6, 0x2016, 0x2190, 0xFFFD, 0x2715, 0x00D7}; /* … · − → ▶ ‖ ← � ✕ × */
-    for (int i = 0; i < 10; i++) cps[n++] = extra[i];
+    /* ASCII, Latin-1 + Extended-A, punctuation (— “ ” • …), arrows, math, checks: the
+     * agents' comments are prose. */
+    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2190, 0x21FF},
+                                    {0x2212, 0x2212}, {0x2260, 0x2265}, {0x25B6, 0x25B6}, {0x2713, 0x2717},
+                                    {0xFFFD, 0xFFFD}};
+    int cps[600], n = 0;
+    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
+        for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
     for (int i = 0; paths[i]; i++) {
         if (!FileExists(paths[i])) continue;
         g_font = LoadFontEx(paths[i], 64, cps, n);
@@ -182,6 +185,138 @@ static float panel_height(Scene *m, double sim) {
     return rows ? ROW_H * (float)rows + 16 : 0;
 }
 
+/* ---- comments: an agent's text before a step, as message boxes ---------- */
+
+#define NOTE_FONT 14.0f
+#define NOTE_ROW 19.0f
+#define NOTE_PAD 8.0f  /* inside a box */
+#define NOTE_GAP 8.0f  /* between boxes */
+#define NOTE_HEAD 36.0f
+
+typedef struct {
+    Notes ns;
+    float w; /* text width the rows are wrapped for; 0 = rewrap */
+    struct NoteRow { int note, start, len; } *rows;
+    int nrows, cap;
+} NoteView;
+
+static void nv_clear(NoteView *nv) {
+    notes_free(&nv->ns);
+    nv->w = 0;
+    nv->nrows = 0;
+}
+
+/* The comments of step e; markdown emphasis markers dropped, ends trimmed. */
+static void nv_load(NoteView *nv, const Event *e) {
+    nv_clear(nv);
+    nv->ns = tr_notes(e->src, e->note_off, e->notes, e->tool_id);
+    for (int i = 0; i < nv->ns.n; i++) {
+        char *t = nv->ns.s[i], *o = t;
+        for (const char *p = t; *p; p++) {
+            if (p[0] == '*' && p[1] == '*') { p++; continue; }
+            if (*p != '\r') *o++ = *p;
+        }
+        while (o > t && (o[-1] == '\n' || o[-1] == ' ')) o--;
+        *o = 0;
+        size_t lead = strspn(t, "\n");
+        memmove(t, t + lead, strlen(t + lead) + 1);
+    }
+}
+
+static void nv_row(NoteView *nv, int note, int start, int len) {
+    if (nv->nrows == nv->cap) {
+        nv->cap = nv->cap ? nv->cap * 2 : 64;
+        nv->rows = xrealloc(nv->rows, (size_t)nv->cap * sizeof *nv->rows);
+    }
+    nv->rows[nv->nrows++] = (struct NoteRow){note, start, len};
+}
+
+static bool note_fits(const char *s, int len, float w) {
+    char buf[1024];
+    if (len >= (int)sizeof buf) return false;
+    memcpy(buf, s, (size_t)len);
+    buf[len] = 0;
+    return text_w(buf, NOTE_FONT) <= w;
+}
+
+/* Word-wrap every comment at w pixels; words wider than that are cut. */
+static void nv_wrap(NoteView *nv, float w) {
+    nv->w = w;
+    nv->nrows = 0;
+    for (int i = 0; i < nv->ns.n; i++) {
+        const char *s = nv->ns.s[i];
+        for (int k = 0;;) {
+            int end = k;
+            while (s[end] && s[end] != '\n') end++;
+            if (end == k) nv_row(nv, i, k, 0); /* blank line: paragraph break */
+            for (int start = k; start < end;) {
+                int to = -1;
+                for (int q = start; q < end;) {
+                    while (q < end && s[q] == ' ') q++;
+                    while (q < end && s[q] != ' ' && q - start < 1024) q++; /* note_fits caps there */
+                    if (!note_fits(s + start, q - start, w)) break;
+                    to = q;
+                }
+                if (to < 0) { /* one word wider than the box */
+                    int c = start;
+                    while (c < end) {
+                        int nx = c + 1;
+                        while (nx < end && ((unsigned char)s[nx] & 0xC0) == 0x80) nx++;
+                        if (c > start && !note_fits(s + start, nx - start, w)) break;
+                        c = nx;
+                    }
+                    to = c;
+                }
+                nv_row(nv, i, start, to - start);
+                start = to;
+                while (start < end && s[start] == ' ') start++;
+            }
+            if (!s[end]) break;
+            k = end + 1;
+        }
+    }
+}
+
+/* Height of the boxes stacked, once wrapped. */
+static float nv_height(const NoteView *nv) {
+    return nv->ns.n ? (float)nv->nrows * NOTE_ROW + (float)nv->ns.n * (2 * NOTE_PAD + NOTE_GAP) - NOTE_GAP : 0;
+}
+
+/* The boxes from `scroll` pixels down, clipped to r. */
+static void nv_draw(const NoteView *nv, Rectangle r, float scroll, Color accent) {
+    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
+    float y = r.y - scroll;
+    char buf[1024];
+    for (int k = 0; k < nv->nrows;) {
+        int note = nv->rows[k].note, nr = 0;
+        while (k + nr < nv->nrows && nv->rows[k + nr].note == note) nr++;
+        float bh = (float)nr * NOTE_ROW + 2 * NOTE_PAD;
+        if (y + bh >= r.y && y <= r.y + r.height) {
+            Rectangle box = {r.x, y, r.width, bh};
+            DrawRectangleRounded(box, fminf(0.5f, 16 / bh), 6, (Color){32, 39, 50, 255});
+            DrawRectangle((int)r.x, (int)(y + 5), 3, (int)(bh - 10), fade(accent, 0.8f));
+            for (int j = 0; j < nr; j++) {
+                const struct NoteRow *row = &nv->rows[k + j];
+                float ry = y + NOTE_PAD + (float)j * NOTE_ROW;
+                if (!row->len || ry + NOTE_ROW < r.y || ry > r.y + r.height) continue;
+                int len = row->len < (int)sizeof buf - 1 ? row->len : (int)sizeof buf - 1;
+                memcpy(buf, nv->ns.s[note] + row->start, (size_t)len);
+                buf[len] = 0;
+                text(buf, r.x + 14, ry + 1, NOTE_FONT, TEXT);
+            }
+        }
+        y += bh + NOTE_GAP;
+        k += nr;
+    }
+    EndScissorMode();
+}
+
+/* A small speech bubble: the step has comments. */
+static void bubble_icon(float x, float y, Color c) {
+    DrawRectangleRounded((Rectangle){x, y, 13, 9}, 0.5f, 4, c);
+    DrawTriangle((Vector2){x + 3, y + 8}, (Vector2){x + 3, y + 12}, (Vector2){x + 7, y + 8}, c);
+}
+
 /* ---- viewer state ------------------------------------------------------- */
 
 typedef enum { HOVER_NONE, HOVER_NODE, HOVER_ACTOR } HoverKind;
@@ -226,6 +361,18 @@ typedef struct {
     Rectangle det_win, det_close;
     struct DetRow { int line, start, len; } *det_rows; /* wrapped */
     int det_nrows, det_caprows, det_cols, det_vis;
+    /* Comments panel beside the detail: what the agent wrote before the step.
+     * The hover preview shows a turn step's comments before it is opened. */
+    NoteView det_nv, hov_nv;
+    char *det_actor;
+    long det_note_off; /* for Ctrl+C: the comments as written, re-read */
+    int det_notes;
+    float note_scroll;
+    Rectangle note_win;
+    const char *hov_src; /* identity of hov_nv's notes */
+    long hov_off;
+    int hov_n;
+    char *hov_id;
     /* Actor panel rows, for clicks. */
     Rectangle row_rect[PANEL_MAX];
     int row_actor[PANEL_MAX], nrows;
@@ -266,11 +413,39 @@ static void seek(Viz *v, double t) {
     v->sim = t;
 }
 
+/* A failed-call marker: flag its command's BASH event (in this batch or the
+ * history). The marker itself goes nowhere. */
+static void mark_failed(Viz *v, Event *in, size_t n, const Event *f) {
+    for (size_t i = n; i-- > 0;)
+        if (in[i].kind == EV_BASH && in[i].tool_id && f->tool_id && !strcmp(in[i].tool_id, f->tool_id)) {
+            in[i].failed = 1;
+            return;
+        }
+    for (size_t i = v->h.n; i-- > 0;) {
+        Event *e = &v->h.ev[i];
+        if (e->kind == EV_BASH && e->tool_id && f->tool_id && !strcmp(e->tool_id, f->tool_id)) {
+            e->failed = 1;
+            return;
+        }
+    }
+}
+
 static void ingest_new_events(Viz *v, EvQueue *q) {
     Event *in;
     size_t n = evq_drain(q, &in);
     if (!n) { free(in); return; }
     qsort(in, n, sizeof *in, ev_cmp);
+    size_t kept = 0;
+    for (size_t i = 0; i < n; i++) {
+        if (in[i].kind == EV_FAILED) {
+            mark_failed(v, in, kept, &in[i]);
+            ev_free(&in[i]);
+        } else {
+            in[kept++] = in[i];
+        }
+    }
+    n = kept;
+    if (!n) { free(in); return; }
     size_t k = 0; /* events already in the past get applied now */
     while (k < n && in[k].ts <= v->sim) {
         model_apply(v->m, &in[k], v->live && in[k].ts > v->sim - BACKLOG_SECS);
@@ -660,7 +835,20 @@ static void step_label(char *line, size_t n, const Event *e) {
     else if (e->kind == EV_SEARCH)
         snprintf(line, n, "Search  %s%s%s", e->text ? e->text : "", e->path && *e->path ? "  in " : "",
                  e->path ? e->path : "");
-    else snprintf(line, n, "%s  %s", kind_verb(e->kind), e->path ? e->path : "");
+    else snprintf(line, n, "%s  %s%s", kind_verb(e->kind), e->path ? e->path : "",
+                  e->via == VIA_GUESS ? "  \xC2\xB7  guessed"
+                  : e->via == VIA_WATCH && e->src ? "  \xC2\xB7  seen by --watch" : "");
+}
+
+/* A failed command with nothing to show for it: no file it touched is known
+ * (guessed or seen by the watcher). Shown in red. */
+static bool failed_bare(Viz *v, const Event *e) {
+    if (e->kind != EV_BASH || !e->failed) return false;
+    for (size_t k = 0; k < v->nsteps; k++) {
+        const Event *o = &v->h.ev[v->steps[k]];
+        if (o != e && o->path && o->tool_id && !strcmp(o->tool_id, e->tool_id)) return false;
+    }
+    return true;
 }
 
 static Color step_color(EvKind k) { return k == EV_BASH ? DIM : kind_color(k); }
@@ -673,8 +861,11 @@ static void detail_close(Viz *v) {
     free(v->det_label);
     free(v->det_id);
     free(v->det_path);
-    v->det_label = v->det_id = v->det_path = NULL;
+    free(v->det_actor);
+    v->det_label = v->det_id = v->det_path = v->det_actor = NULL;
     v->det_nrows = 0;
+    nv_clear(&v->det_nv);
+    v->note_win = (Rectangle){0};
 }
 
 static void detail_load(Viz *v) {
@@ -721,6 +912,11 @@ static void detail_open(Viz *v, const Event *e, bool from_turn) {
     v->det_add = e->add;
     v->det_del = e->del;
     v->det_scroll = 0;
+    v->det_actor = xstrdup(e->actor);
+    v->det_note_off = e->note_off;
+    v->det_notes = e->notes;
+    nv_load(&v->det_nv, e); /* written before the call: never changes */
+    v->note_scroll = 0;
     detail_load(v);
 }
 
@@ -786,16 +982,82 @@ static void detail_copy(Viz *v) {
 #define DET_ROW_BYTES 2048
 #define DET_TOP 58.0f /* header height */
 
+static float note_panel_w(void) { return fminf(400, fmaxf(280, (float)GetScreenWidth() * 0.24f)); }
+
+/* Height of a comments panel w wide: its boxes, up to maxh. */
+static float note_panel_h(NoteView *nv, float w, float maxh) {
+    if (nv->w != w - 44) nv_wrap(nv, w - 44);
+    return fminf(maxh, NOTE_HEAD + nv_height(nv) + 10);
+}
+
+static Color actor_color_by_id(Viz *v, const char *id) {
+    int ai = id ? actor_index(v->m, id) : -1;
+    return ai >= 0 ? v->m->actors[ai].color : TEXT;
+}
+
+/* The comments panel at r (height from note_panel_h). A preview doesn't scroll:
+ * what doesn't fit fades out. */
+static void draw_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool preview) {
+    Color bg = {16, 20, 26, 250};
+    float round = 10 / fminf(r.width, r.height);
+    DrawRectangleRounded(r, round, 6, bg);
+    DrawRectangleRoundedLinesEx(r, round, 6, 1.5f, fade(ac, preview ? 0.35f : 0.55f));
+    bubble_icon(r.x + 14, r.y + 14, ac);
+    char title[64];
+    snprintf(title, sizeof title, nv->ns.n == 1 ? "Comment" : "Comments  \xC2\xB7  %d", nv->ns.n);
+    text(title, r.x + 34, r.y + 10, 15, ac);
+    Rectangle body = {r.x + 10, r.y + NOTE_HEAD, r.width - 20, r.height - NOTE_HEAD - 10};
+    float max_scroll = fmaxf(0, nv_height(nv) - body.height);
+    const char *hint = preview ? "before this step  \xC2\xB7  click to open"
+                     : max_scroll > 0 ? "wheel scroll  \xC2\xB7  Ctrl+C copy" : "Ctrl+C copy";
+    char fitbuf[128];
+    fit(fitbuf, sizeof fitbuf, hint, 12, r.width - 44 - text_w(title, 15) - 20);
+    text(fitbuf, r.x + r.width - 12 - text_w(fitbuf, 12), r.y + 13, 12, DIM);
+    DrawLine((int)r.x + 10, (int)(r.y + NOTE_HEAD - 6), (int)(r.x + r.width - 10), (int)(r.y + NOTE_HEAD - 6), fade(DIM, 0.3f));
+    if (*scroll > max_scroll) *scroll = max_scroll;
+    if (*scroll < 0) *scroll = 0;
+    if (body.height <= 0) return; /* window too small for any of it */
+    nv_draw(nv, body, *scroll, ac);
+    if (max_scroll <= 0) return;
+    if (preview) {
+        DrawRectangleGradientV((int)body.x, (int)(body.y + body.height - 28), (int)body.width, 28, fade(bg, 0), bg);
+        return;
+    }
+    float bh = fmaxf(20, body.height * body.height / nv_height(nv));
+    float by = body.y + (body.height - bh) * (*scroll / max_scroll);
+    DrawRectangleRounded((Rectangle){r.x + r.width - 7, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
+}
+
 static void draw_detail(Viz *v, Vector2 mouse) {
+    v->note_win = (Rectangle){0};
     if (!v->det) { v->det_win = (Rectangle){0}; return; }
     Detail *d = v->det;
     int W = GetScreenWidth(), H = GetScreenHeight();
     float x = v->win.width > 0 ? v->win.x + v->win.width + 10 : 16;
     if (W - x < 420) x = 16; /* too narrow beside it: over it */
     float y = HUD_TOP, w = (float)W - x - 16;
-    if (v->win.width <= 0) w = fminf(w, fmaxf(560, (float)W * 0.5f)); /* alone: leave the graph beside it */
     float h = (float)H - TL_H - panel_height(v->m, v->sim) - 8 - y;
     if (h < 200) h = (float)H - TL_H - 8 - y;
+    /* The agent's comments first (it wrote them first), the step beside them;
+     * above it when there's no room. */
+    if (v->det_nv.ns.n) {
+        Color ac = actor_color_by_id(v, v->det_actor);
+        float nw = note_panel_w();
+        if (w - nw - 10 >= 420) {
+            v->note_win = (Rectangle){x, y, nw, note_panel_h(&v->det_nv, nw, h)};
+            x += nw + 10;
+            w -= nw + 10;
+        } else {
+            v->note_win = (Rectangle){x, y, w, note_panel_h(&v->det_nv, w, h * 0.4f)};
+            y += v->note_win.height + 8;
+            h -= v->note_win.height + 8;
+        }
+        draw_note_panel(&v->det_nv, v->note_win, &v->note_scroll, ac, false);
+    }
+    if (v->win.width <= 0) { /* alone: leave the graph beside it (the comments count) */
+        float beside = v->note_win.width > 0 && v->note_win.y == y ? v->note_win.width + 10 : 0;
+        w = fminf(w, fmaxf(420, fmaxf(560, (float)W * 0.5f) - beside));
+    }
     v->det_win = (Rectangle){x, y, w, h};
     Color kc = step_color(v->det_kind);
     DrawRectangleRounded(v->det_win, 0.015f, 6, (Color){16, 20, 26, 250});
@@ -932,7 +1194,8 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
         text(tm, x + 14, ry + 3, 13, DIM);
         float cx = x + 14 + text_w("00:00:00", 13) + 10;
-        Color kc = step_color(e->kind);
+        bool failed = failed_bare(v, e);
+        Color kc = failed ? LIVE_RED : step_color(e->kind);
         DrawCircle((int)cx + 4, (int)(ry + 11), 4, kc);
         cx += 14;
         char pa[16], pd[24];
@@ -940,9 +1203,18 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         snprintf(pd, sizeof pd, "\xE2\x88\x92%d", e->del);
         bool has_diff = e->add || e->del;
         float dw = has_diff ? text_w(pa, 13) + 6 + text_w(pd, 13) + 8 : 0;
+        if (e->notes) { /* it has comments: hover for them */
+            bubble_icon(x + w - 14 - dw - 14, ry + 6, fade(TEXT, 0.45f));
+            dw += 20;
+        }
         step_label(line, sizeof line, e);
+        if (failed) {
+            float fw = text_w("failed", 12) + 10;
+            text("failed", x + w - 14 - dw - fw + 10, ry + 4, 12, LIVE_RED);
+            dw += fw;
+        }
         fit(fitbuf, sizeof fitbuf, line, 14, x + w - 14 - dw - cx);
-        text(fitbuf, cx, ry + 3, 14, e->kind == EV_BASH ? fade(TEXT, 0.75f) : TEXT);
+        text(fitbuf, cx, ry + 3, 14, failed ? (Color){255, 150, 150, 255} : e->kind == EV_BASH ? fade(TEXT, 0.75f) : TEXT);
         if (has_diff) {
             float dx = x + w - 14 - text_w(pd, 13) - 6 - text_w(pa, 13);
             text(pa, dx, ry + 4, 13, kind_color(EV_CREATE));
@@ -962,6 +1234,55 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     snprintf(line, sizeof line, "%zu steps  \xC2\xB7  +%s \xE2\x88\x92%s lines  \xC2\xB7  %d files touched", v->nsteps,
              sa, sd, files);
     text(line, x + 14, y + h - 24, 13, DIM);
+}
+
+/* The turn step under the mouse, or NULL. */
+static const Event *turn_row_at(Viz *v, Vector2 mouse) {
+    if (!v->turn_open || !CheckCollisionPointRec(mouse, v->win)) return NULL;
+    int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
+    if (r < 0 || r >= v->win_vis || (size_t)(v->win_first + r) >= v->nsteps) return NULL;
+    return &v->h.ev[v->steps[v->win_first + r]];
+}
+
+/* Hovering a turn step shows its comments beside the row, as the panel will. */
+static void draw_note_preview(Viz *v, Vector2 mouse) {
+    if (v->det && (CheckCollisionPointRec(mouse, v->det_win) || CheckCollisionPointRec(mouse, v->note_win)))
+        return; /* over the windows covering the turn window, not its rows */
+    const Event *e = v->drag ? NULL : turn_row_at(v, mouse);
+    if (!e || !e->notes || !e->tool_id || is_detail_of(v, e)) return;
+    if (v->hov_src != e->src || v->hov_off != e->note_off || v->hov_n != e->notes || !v->hov_id ||
+        strcmp(v->hov_id, e->tool_id)) { /* another step: read its comments */
+        nv_load(&v->hov_nv, e);
+        v->hov_src = e->src;
+        v->hov_off = e->note_off;
+        v->hov_n = e->notes;
+        free(v->hov_id);
+        v->hov_id = xstrdup(e->tool_id);
+    }
+    if (!v->hov_nv.ns.n) return;
+    float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
+    float pw = note_panel_w(), x = v->win.x + v->win.width + 10;
+    if (x + pw > W - 16) x = fmaxf(16, W - 16 - pw);
+    float ph = note_panel_h(&v->hov_nv, pw, (H - TL_H - 8 - HUD_TOP) * 0.6f);
+    int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
+    float y = v->win.y + 68 + (float)r * WIN_ROW - 8;
+    if (y + ph > H - TL_H - 8) y = H - TL_H - 8 - ph;
+    if (y < 8) y = 8;
+    float scroll = 0;
+    draw_note_panel(&v->hov_nv, (Rectangle){x, y, pw, ph}, &scroll, actor_color_by_id(v, v->turn_actor), true);
+}
+
+/* The comments as the agent wrote them (the panel drops markdown markers). */
+static void notes_copy(Viz *v) {
+    Notes ns = tr_notes(v->det_src, v->det_note_off, v->det_notes, v->det_id);
+    size_t n = 1;
+    for (int i = 0; i < ns.n; i++) n += strlen(ns.s[i]) + 2;
+    char *buf = xmalloc(n), *p = buf;
+    *p = 0;
+    for (int i = 0; i < ns.n; i++) p += sprintf(p, "%s%s", i ? "\n\n" : "", ns.s[i]);
+    SetClipboardText(buf);
+    free(buf);
+    notes_free(&ns);
 }
 
 /* ---- timeline ----------------------------------------------------------- */
@@ -1109,7 +1430,7 @@ static void update_hover(Viz *v, Vector2 mouse) {
     v->hover_from_win = false;
     if (in_timeline(mouse) || v->drag == 1 || v->drag == 2) return;
     Scene *m = v->m;
-    if (v->det && CheckCollisionPointRec(mouse, v->det_win)) return;
+    if (v->det && (CheckCollisionPointRec(mouse, v->det_win) || CheckCollisionPointRec(mouse, v->note_win))) return;
     if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
         /* A step row: ring its file in the graph (no card over the list). */
         int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
@@ -1264,9 +1585,14 @@ static void handle_input(Viz *v, float dt) {
     if (v->det) {
         if (IsKeyPressed(KEY_PAGE_DOWN)) v->det_scroll += (float)(v->det_vis - 1);
         if (IsKeyPressed(KEY_PAGE_UP)) v->det_scroll -= (float)(v->det_vis - 1);
-        if ((IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) && IsKeyPressed(KEY_C)) detail_copy(v);
+        if ((IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL)) && IsKeyPressed(KEY_C)) {
+            if (CheckCollisionPointRec(mouse, v->note_win)) notes_copy(v); /* the panel under the mouse */
+            else detail_copy(v);
+        }
     }
-    if (wheel != 0 && v->det && CheckCollisionPointRec(mouse, v->det_win)) {
+    if (wheel != 0 && v->det && CheckCollisionPointRec(mouse, v->note_win)) {
+        v->note_scroll -= wheel * NOTE_ROW * 3;
+    } else if (wheel != 0 && v->det && CheckCollisionPointRec(mouse, v->det_win)) {
         v->det_scroll -= wheel * 3;
     } else if (wheel != 0 && v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
         v->turn_scroll -= wheel * 3;
@@ -1288,6 +1614,8 @@ static void handle_input(Viz *v, float dt) {
         if (v->det && CheckCollisionPointRec(mouse, v->det_win)) {
             if (CheckCollisionPointRec(mouse, v->det_close)) detail_close(v);
             v->drag = 3;
+        } else if (v->det && CheckCollisionPointRec(mouse, v->note_win)) {
+            v->drag = 3; /* consumed by the comments panel */
         } else if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
             int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
             if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
@@ -1426,6 +1754,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         draw_timeline(&v, mouse);
         draw_turn_window(&v, mouse);
         draw_detail(&v, mouse);
+        draw_note_preview(&v, mouse);
         draw_hover(&v, mouse);
         EndDrawing();
 
@@ -1439,6 +1768,10 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     }
     detail_close(&v);
     free(v.det_rows);
+    nv_clear(&v.hov_nv);
+    free(v.det_nv.rows);
+    free(v.hov_nv.rows);
+    free(v.hov_id);
     free(v.press_file);
     CloseWindow();
     return 0;

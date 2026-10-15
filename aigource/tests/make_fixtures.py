@@ -120,6 +120,44 @@ detail = [
         {"type": "tool_use", "id": "x10", "name": "WebFetch", "input": {"url": "http://ten"}}]}},
     user([{"type": "tool_result", "tool_use_id": "x10", "content": "ten"}]),
     user([{"type": "tool_result", "tool_use_id": "x1", "content": "one"}]),
+    # Comments as Claude Code writes them: one block per record. n1 gets the text
+    # before it; n2 also the text between the calls; n3 none (after a result).
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "text", "text": "Checking two things.\n\nFirst the **config**."}]}},
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [{"type": "thinking", "thinking": ""}]}},
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "tool_use", "id": "n1", "name": "WebFetch", "input": {"url": "http://cfg"}}]}},
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [{"type": "text", "text": "  \n"}]}},
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [{"type": "text", "text": "Then the docs."}]}},
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "tool_use", "id": "n2", "name": "WebFetch", "input": {"url": "http://docs"}}]}},
+    user([{"type": "tool_result", "tool_use_id": "n1", "content": "cfg"}]),
+    user([{"type": "tool_result", "tool_use_id": "n2", "content": "docs"}]),
+    {"type": "assistant", "timestamp": ts(), "message": {"content": [
+        {"type": "tool_use", "id": "n3", "name": "WebFetch", "input": {"url": "http://more"}}]}},
+    user([{"type": "tool_result", "tool_use_id": "n3", "content": "more"}]),
+    # A failed command records no changes: the call is flagged and its files
+    # guessed from the text (cd followed, /dev/null and here-doc bodies skipped).
+    use("f1", "Bash", {"command": "cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py "
+                                  "2>/dev/null && cat <<EOF > gen.h\necho no > nope\nEOF\nfalse"}),
+    user([{"type": "tool_result", "tool_use_id": "f1", "is_error": True, "content": "Error: Exit code 1"}],
+         toolUseResult="Error: Exit code 1"),
+    # Nothing to guess: just flagged.
+    use("f2", "Bash", {"command": "make test"}),
+    user([{"type": "tool_result", "tool_use_id": "f2", "is_error": True, "content": "Error: Exit code 2\nFAIL"}],
+         toolUseResult="Error: Exit code 2"),
+    # A relative cd: the result's record carries the cwd after the command, so the
+    # guess resolves against the call's own (src/c.py, not src/src/c.py).
+    dict(use("f3", "Bash", {"command": "cd src && sed -i 1d c.py && false"}), cwd="/proj"),
+    user([{"type": "tool_result", "tool_use_id": "f3", "is_error": True, "content": "Exit code 1"}],
+         toolUseResult="Error: Exit code 1", cwd="/proj/src"),
+    # Rejected or blocked by a hook: it never ran. Not flagged, nothing guessed.
+    use("f4", "Bash", {"command": "rm keep.py"}),
+    user([{"type": "tool_result", "tool_use_id": "f4", "is_error": True,
+           "content": "The user doesn't want to proceed with this tool use."}], toolUseResult="User rejected tool use"),
+    use("f5", "Bash", {"command": "rm keep2.py"}),
+    user([{"type": "tool_result", "tool_use_id": "f5", "is_error": True,
+           "content": "PreToolUse:Bash hook error: blocked"}]),
 ]
 
 def write(path, recs):
