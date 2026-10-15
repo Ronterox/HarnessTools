@@ -103,7 +103,14 @@ def window(action: str, target: str | None = None, x: int | None = None, y: int 
       optional cwd, env (extra variables). Returns its pid and the window it opened (found by pid, so
       target it as 'pid:N' afterwards); stdout+stderr go to a log, see process(). display='sandbox' runs
       it on a private X display (started on demand, see display()) and switches all tools there;
-      display='desktop' the real one. Default: whichever display is current."""
+      display='desktop' the real one. Default: whichever display is current. Sandbox launches get the
+      sandbox's own D-Bus session bus (D-Bus single-instance apps such as gedit or nautilus can't hand
+      off to a copy on the desktop), X11 forced, no portals, software GL, no input method, no HiDPI
+      scaling. A plain 'firefox …', 'google-chrome …'/'chromium …' or 'soffice …'/'libreoffice …' gets
+      a throwaway profile; other apps that hand off through a socket or lock (VS Code, Electron apps)
+      still can: give them their own profile (e.g. code --user-data-dir /tmp/x). GSettings writes reach
+      your real settings (env GSETTINGS_BACKEND=memory keeps them in the app). env overrides any of
+      these defaults."""
     a = action.lower()
     if a == "launch":
         if not target:
@@ -112,7 +119,7 @@ def window(action: str, target: str | None = None, x: int | None = None, y: int 
             _switch_display(display)
         before = {w.id for w in xutil.list_windows()}
         p = procs.launch(target, cwd=cwd, env=env)
-        where = f" on sandbox {p.display}" if p.display else ""
+        where = (f" on sandbox {p.display}" if p.display else "") + (f" (warning: {p.warning})" if p.warning else "")
         deadline = time.time() + timeout
         while time.time() < deadline:
             time.sleep(0.3)
@@ -357,7 +364,7 @@ def _switch_display(display: str) -> str:
     if d == "sandbox":
         sb = procs.start_sandbox()
         xutil.use_display(sb.display)
-        return f"sandbox {sb.display} ({sb.server}, {sb.size})"
+        return f"sandbox {sb.describe()}"
     if d in ("desktop", "real", "host"):
         xutil.use_display(None)
         return "desktop"
@@ -370,8 +377,10 @@ def display(action: str = "status", size: str | None = None, visible: bool = Fal
     status | sandbox (start a private X display if needed and drive it: apps launched there and all
       input/OCR/screenshots stay off the user's desktop; size WxH, default 1600x900 or the running
       sandbox's; visible=True shows it as a window on the desktop, needs Xephyr) | desktop (back to the user's screen; the sandbox keeps running) |
-      stop (kill the sandbox and the apps launched in it).
-    A sandbox has no window manager: windows get no frames, minimize/maximize aren't available."""
+      stop (kill the sandbox, its private D-Bus session bus and the apps launched in it).
+    A sandbox has no window manager: windows get no frames, minimize/maximize aren't available. Apps
+    launched there get their own D-Bus session bus and X11-only settings (see window(launch)); ui()/act()
+    still work. The result says so if the private bus couldn't start."""
     a = action.lower()
     if a == "stop":
         return procs.stop_sandbox()
@@ -382,7 +391,7 @@ def display(action: str = "status", size: str | None = None, visible: bool = Fal
             procs.stop_sandbox()  # asked for a different one: restart it
         sb = procs.start_sandbox(size or "1600x900", visible)
         xutil.use_display(sb.display)
-        return f"driving sandbox {sb.display} ({sb.server}, {sb.size}); launch apps with window(launch, ...)"
+        return f"driving sandbox {sb.describe()}; launch apps with window(launch, ...)"
     if a == "desktop":
         return "driving the " + _switch_display("desktop")
     if a != "status":
@@ -390,7 +399,7 @@ def display(action: str = "status", size: str | None = None, visible: bool = Fal
     sb = procs.SANDBOX
     cur = xutil.current_display()
     return (f"driving {'sandbox ' + cur if cur else 'the desktop'}; sandbox: "
-            + (f"{sb.display} ({sb.server}, {sb.size})" if sb and sb.popen.poll() is None else "none"))
+            + (sb.describe() if sb and sb.popen.poll() is None else "none"))
 
 
 @tool

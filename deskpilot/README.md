@@ -43,9 +43,26 @@ display(action="stop")                            # kills the sandbox and what r
   right away (`visible=True` to watch it), though GNOME may focus it for a moment when it appears.
   Apps you start yourself join it with `DISPLAY=:91 ./app` (the number `display()` reports). It has no window manager: windows have no frames and can't be
   minimized; `window(close)` asks the app politely (it may still prompt about unsaved changes). It stops
-  when deskpilot exits. Single-instance apps (GApplication, D-Bus activated) may hand off to an
-  instance already running on your desktop: launch them standalone (`gedit --standalone`).
-  For a fully invisible sandbox: `sudo apt install xvfb`.
+  when deskpilot exits. For a fully invisible sandbox: `sudo apt install xvfb`.
+- **Sandbox launches are kept off your session** as far as the environment allows:
+  - a private D-Bus session bus per sandbox, so D-Bus single-instance apps (gedit, nautilus, most
+    GNOME apps) can't hand off to a copy running on your desktop. Only dconf can be activated on it,
+    so no portals. If it can't start, `display()` and each launch say why;
+  - X11 forced (`WAYLAND_DISPLAY` unset, `GDK_BACKEND=x11`, `QT_QPA_PLATFORM=xcb`, SDL/Firefox/Electron
+    likewise), `GTK_USE_PORTAL=0`, software GL (`LIBGL_ALWAYS_SOFTWARE=1`, Mesa's GLX), no input
+    method, no HiDPI scaling;
+  - a plain `firefox …`, `google-chrome …`/`chromium …` or `soffice …`/`libreoffice …` gets a
+    throwaway profile, since those hand off through (or stop at) the profile your desktop copy holds.
+    Firefox's skips its welcome dialog; Chrome also gets `--force-renderer-accessibility` for `ui()`.
+
+  Not covered: other apps that hand off through a socket or lock file rather than D-Bus (VS Code,
+  Electron apps, Chrome started via a wrapper script) can still open in your desktop copy: give them
+  their own profile (`code --user-data-dir /tmp/x`). GSettings writes go to your real dconf database,
+  as on the desktop (pass `env={"GSETTINGS_BACKEND": "memory"}` to keep them in the app, at the cost
+  of seeing schema defaults instead of your settings). `env=` overrides any of these. The
+  accessibility bus stays yours, so `ui()`/`act()` see sandbox apps. Every launch, desktop too, gets
+  `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1` and no `NO_AT_BRIDGE`. Apps you start yourself with
+  `DISPLAY=:91` get none of this.
 
 Works via AT-SPI for GTK/GNOME apps, Firefox, Electron/Chromium (Discord, VS Code, Chrome), LibreOffice,
 Qt apps with accessibility. Anything else (games, canvas UIs, remote desktops) falls back to OCR / screenshots.
@@ -81,6 +98,7 @@ Both open a throwaway window, drive it, and close it:
 .venv/bin/python tests/e2e_sandbox.py                # held clicks/keys, find=, pid:, sequence, wait, process
 .venv/bin/python tests/e2e_calculator.py [--sandbox] # over MCP stdio: 7 × 6 = 42 via a11y clicks, OCR, screenshot
 .venv/bin/python tests/e2e_editor.py [--sandbox]     # gedit: set_text, keys, typing, clipboard, save-dialog
+.venv/bin/python -m pytest tests/test_launch_env.py  # unit: sandbox launch env, profile rewrite, bus (no X)
 ```
 
 `--sandbox` (and `e2e_sandbox.py` always) runs on a private X display, so your desktop isn't touched.
