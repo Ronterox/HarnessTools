@@ -13,6 +13,7 @@ typedef struct {
     float mouse_x, mouse_y; /* test hook: mouse position for --shot (<0 = real mouse) */
     const char *turn;      /* test hook: open this actor's turn window (id prefix) */
     const char *step;      /* test hook: then open its step N's detail (negative: from the end) */
+    const char *file;      /* test hook: open this file's last change, as a click on it does */
 } VizOpts;
 
 int viz_run(const VizOpts *o, EvQueue *q);

@@ -216,6 +216,8 @@ typedef struct {
     EvKind det_kind;
     double det_ts, det_reload;
     long det_size; /* transcript size when loaded: reload only after it grows */
+    bool det_from_turn; /* opened from a turn step (closes when the turn moves on) */
+    char *press_file;   /* file node under a press: a click (not a pan) opens its last change */
     char *det_label, *det_id, *det_path;
     const char *det_src;
     long det_off;
@@ -291,7 +293,7 @@ static void detail_close(Viz *v);
 static void turn_open(Viz *v, int actor) {
     if (actor < 0 || actor >= v->m->nactors) return;
     if (!v->turn_actor || strcmp(v->turn_actor, v->m->actors[actor].id) || v->turn_no != v->m->actors[actor].turn)
-        detail_close(v); /* another turn: its step no longer belongs */
+        if (v->det_from_turn) detail_close(v); /* another turn: its step no longer belongs */
     free(v->turn_actor);
     v->turn_actor = xstrdup(v->m->actors[actor].id);
     v->turn_no = v->m->actors[actor].turn;
@@ -319,6 +321,15 @@ static void turn_update(Viz *v) {
     v->hl_count = 0;
     if (!v->turn_open) return;
     Scene *m = v->m;
+    /* Follow the actor: its turn at the timeline position (live or after a seek). */
+    int ai = actor_index(m, v->turn_actor);
+    if (ai < 0 && v->det_from_turn) detail_close(v); /* sought back before the actor: its step is ahead */
+    if (ai >= 0 && m->actors[ai].turn != v->turn_no) {
+        v->turn_no = m->actors[ai].turn;
+        v->turn_scroll = 0;
+        v->turn_stick = true;
+        if (v->det_from_turn) detail_close(v); /* its step belongs to the old turn */
+    }
     if (m->nnodes > v->hl_cap) {
         v->hl_cap = m->nnodes * 2;
         v->hl = xrealloc(v->hl, (size_t)v->hl_cap * sizeof *v->hl);
@@ -528,14 +539,14 @@ static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 
 
 /* Shown, and room for it above the panel. The turn window replaces it. */
 static bool legend_shown(Viz *v) {
-    return v->legend && !v->turn_open &&
+    return v->legend && !v->turn_open && !v->det &&
            LEGEND_Y + LEGEND_H <= (float)GetScreenHeight() - TL_H - panel_height(v->m, v->sim);
 }
 
 static void draw_legend(Viz *v) {
     int W = GetScreenWidth();
     float x = (float)W - LEGEND_W - 16, y = LEGEND_Y;
-    if (v->turn_open) return; /* the turn window explains the screen; give the graph room */
+    if (v->turn_open || v->det) return; /* the open window explains the screen; give the graph room */
     if (!legend_shown(v)) {
         text("H  legend", (float)W - text_w("H  legend", 14) - 24, y, 14, fade(DIM, 0.7f));
         return;
@@ -583,11 +594,11 @@ static void draw_legend(Viz *v) {
     text("KEYS", cx, cy, 13, DIM);
     cy += 18;
     static const char *keys[] = {
-        "click actor: its turn    Esc close",
+        "click actor: turn    file: last change",
         "space pause    \xE2\x86\x90/\xE2\x86\x92 seek",
         "+/- speed    L live    H legend",
         "drag pan    wheel zoom    C camera",
-        "F fullscreen    Q quit",
+        "F fullscreen    Esc close    Q quit",
     };
     for (int i = 0; i < 5; i++, cy += 17) text(keys[i], cx, cy, 13, fade(TEXT, 0.8f));
 }
@@ -694,9 +705,10 @@ static bool is_detail_of(Viz *v, const Event *e) {
     return e->ts == v->det_ts && e->kind == v->det_kind && !strcmp(e->path ? e->path : "", v->det_path ? v->det_path : "");
 }
 
-static void detail_open(Viz *v, const Event *e) {
+static void detail_open(Viz *v, const Event *e, bool from_turn) {
     if (is_detail_of(v, e)) { detail_close(v); return; } /* click again: close */
     detail_close(v);
+    v->det_from_turn = from_turn;
     char line[512];
     step_label(line, sizeof line, e);
     v->det_label = xstrdup(line);
@@ -710,6 +722,24 @@ static void detail_open(Viz *v, const Event *e) {
     v->det_del = e->del;
     v->det_scroll = 0;
     detail_load(v);
+}
+
+/* A file clicked in the graph: its last change up to the timeline position
+ * (create, edit, delete, changed by a command), or its last read if never
+ * changed. */
+static bool file_detail(Viz *v, const char *path) {
+    const Event *last_read = NULL;
+    for (size_t i = v->h.applied; i-- > 0;) {
+        const Event *e = &v->h.ev[i];
+        if (!e->path || strcmp(e->path, path)) continue;
+        if (e->kind == EV_CREATE || e->kind == EV_EDIT || e->kind == EV_DELETE || e->kind == EV_TOUCH) {
+            detail_open(v, e, false);
+            return true;
+        }
+        if (e->kind == EV_READ && !last_read) last_read = e;
+    }
+    if (last_read) detail_open(v, last_read, false);
+    return last_read != NULL;
 }
 
 /* Wrap every line at `cols` characters (UTF-8 aware). */
@@ -763,6 +793,7 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     float x = v->win.width > 0 ? v->win.x + v->win.width + 10 : 16;
     if (W - x < 420) x = 16; /* too narrow beside it: over it */
     float y = HUD_TOP, w = (float)W - x - 16;
+    if (v->win.width <= 0) w = fminf(w, fmaxf(560, (float)W * 0.5f)); /* alone: leave the graph beside it */
     float h = (float)H - TL_H - panel_height(v->m, v->sim) - 8 - y;
     if (h < 200) h = (float)H - TL_H - 8 - y;
     v->det_win = (Rectangle){x, y, w, h};
@@ -1190,6 +1221,8 @@ again:
     float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
     float right = legend_shown(v) ? LEGEND_W + 24 : 0;
     float left = v->turn_open && v->win.width > 0 ? v->win.x + v->win.width + 8 : 0;
+    if (v->det && v->det_win.width > 0 && W - (v->det_win.x + v->det_win.width) > W * 0.3f)
+        left = fmaxf(left, v->det_win.x + v->det_win.width + 8); /* only when the graph fits beside it */
     float availw = fmaxf(W - right - left, W * 0.3f);
     float bw = fmaxf(maxx - minx, 200) + 160, bh = fmaxf(maxy - miny, 200) + 160;
     float bottom = panel_height(m, v->sim) + TL_H;
@@ -1212,7 +1245,8 @@ static void handle_input(Viz *v, float dt) {
     if (IsKeyPressed(KEY_SPACE)) v->paused = !v->paused;
     if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD) || IsKeyPressed(KEY_UP)) v->speed *= 2;
     if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT) || IsKeyPressed(KEY_DOWN))
-        v->speed = fmax(1, v->speed / 2);
+        /* Stop at real time on the way down, then x0.5 and x0.25. */
+        v->speed = v->speed > 1 && v->speed / 2 < 1 ? 1 : fmax(0.25, v->speed / 2);
     if (IsKeyPressed(KEY_C) && !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL)) v->auto_cam = true;
     if (IsKeyPressed(KEY_H)) v->legend = !v->legend;
     if (IsKeyPressed(KEY_F)) ToggleFullscreen();
@@ -1258,7 +1292,7 @@ static void handle_input(Viz *v, float dt) {
             int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
             if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
             else if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps)
-                detail_open(v, &v->h.ev[v->steps[v->win_first + r]]); /* a step: show it in full */
+                detail_open(v, &v->h.ev[v->steps[v->win_first + r]], true); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
         } else if (in_timeline(mouse) && mouse.x > tr.x1 - text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             seek(v, now_wall()); /* "go live" label */
@@ -1274,13 +1308,16 @@ static void handle_input(Viz *v, float dt) {
         } else {
             v->drag = 1;
             v->press_at = mouse;
-            v->press_outside = v->turn_open; /* a click (not a pan) outside closes */
+            v->press_outside = v->turn_open || v->det; /* a click (not a pan) outside closes */
+            free(v->press_file);
+            v->press_file = v->hover == HOVER_NODE && !v->hover_from_win && !v->m->nodes[v->hover_i].is_dir
+                                ? xstrdup(v->m->nodes[v->hover_i].path) : NULL;
         }
     }
-    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && v->drag == 1 && v->press_outside &&
-        dist2d(mouse, v->press_at) < 4) {
-        if (v->det) detail_close(v); /* one layer at a time */
-        else turn_close(v);
+    if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && v->drag == 1 && dist2d(mouse, v->press_at) < 4) {
+        bool opened = v->press_file && file_detail(v, v->press_file); /* a file: its last change in full */
+        if (!opened && v->press_outside && v->det) detail_close(v); /* one layer at a time */
+        else if (!opened && v->press_outside) turn_close(v);
     }
     if (v->drag == 1 && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
         Vector2 d = GetMouseDelta();
@@ -1364,8 +1401,9 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         if (o->step && v.turn_open && !v.det && frame == 0 && v.nsteps) { /* test hook: a step's detail */
             long k = strtol(o->step, NULL, 10);
             if (k < 0) k += (long)v.nsteps;
-            if (k >= 0 && (size_t)k < v.nsteps) detail_open(&v, &v.h.ev[v.steps[k]]);
+            if (k >= 0 && (size_t)k < v.nsteps) detail_open(&v, &v.h.ev[v.steps[k]], true);
         }
+        if (o->file && frame == 0) file_detail(&v, o->file); /* test hook: a click on a file */
         if (v.det && v.det->state == 1 && GetTime() - v.det_reload > 1) { /* still running */
             struct stat st;
             v.det_reload = GetTime();
@@ -1401,6 +1439,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     }
     detail_close(&v);
     free(v.det_rows);
+    free(v.press_file);
     CloseWindow();
     return 0;
 }

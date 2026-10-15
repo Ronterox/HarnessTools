@@ -31,6 +31,7 @@ static void usage(void) {
           "  --mouse X,Y        fake mouse position for --shot (hover testing)\n"
           "  --turn ID          open the turn window of the actor whose id starts with ID\n"
           "  --step N           with --turn: open its step N in full (negative: from the end)\n"
+          "  --file PATH        open the last change of this file, as a click on it does\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
           "      F fullscreen, Q quit, Esc close window. Click or drag the timeline\n"
           "      to jump; click an actor to see its current turn.\n",
@@ -98,6 +99,7 @@ int main(int argc, char **argv) {
         else if (TAKES("--mouse", "--mouse")) sscanf(v, "%f,%f", &vo.mouse_x, &vo.mouse_y);
         else if (TAKES("--turn", "--turn")) vo.turn = v;
         else if (TAKES("--step", "--step")) vo.step = v;
+        else if (TAKES("--file", "--file")) vo.file = v;
         else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
