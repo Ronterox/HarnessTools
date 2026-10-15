@@ -24,6 +24,11 @@ int tr_bash_running(const Transcript *t, double since, double *start);
 /* An Edit/Write/MultiEdit/NotebookEdit on this repo-relative path awaits its result. */
 int tr_writing(Transcript *t, const char *rel);
 const char *tr_actor(const Transcript *t);
+/* A failed Bash call running at `ts` (within `slack` seconds of its span): Claude
+ * Code records no file changes for those, so the watcher attributes what changed
+ * meanwhile to it. Fills the call's identity into *e (src, tool_id copy, notes,
+ * turn, t0, ts = its end); returns 0 when none. */
+int tr_failed_call(const Transcript *t, double ts, double slack, Event *e);
 
 /* Detail view of one tool call: everything it did, as display lines (a diff,
  * a created file, a command and its output, a tool's input and result).
@@ -44,6 +49,15 @@ typedef struct {
  * (repo-relative, may be NULL) picks one file out of a command's changes. */
 Detail *tr_detail(const char *src, long off, const char *id, const char *path);
 void detail_free(Detail *d);
+/* The agent's comments on a call: the text blocks it wrote before it (since the
+ * last tool result or prompt), oldest first. Up to `n` of them from the line at
+ * `off`, stopping at the tool_use `id`. Re-read on demand like the detail. */
+typedef struct {
+    char **s;
+    int n;
+} Notes;
+Notes tr_notes(const char *src, long off, int n, const char *id);
+void notes_free(Notes *ns);
 Detail *detail_new(const char *tool);
 void detail_line(Detail *d, DlKind kind, const char *s); /* s may hold newlines */
 const char *tr_actor_name(const Transcript *t);

@@ -6,7 +6,7 @@
 #include "util.h"
 
 static const char *KIND_NAMES[EV_KIND_COUNT] = {
-    "turn", "read", "search", "create", "edit", "delete", "touch", "bash", "tool",
+    "turn", "read", "search", "create", "edit", "delete", "touch", "bash", "tool", "failed",
 };
 
 const char *ev_kind_name(EvKind k) { return k < EV_KIND_COUNT ? KIND_NAMES[k] : "?"; }
@@ -35,6 +35,7 @@ void ev_print_json(FILE *f, const Event *e) {
     if (e->lines >= 0) fprintf(f, ",\"lines\":%d", e->lines);
     fprintf(f, ",\"turn\":%d", e->turn);
     if (e->text) { fputs(",\"text\":", f); json_str(f, e->text); }
+    if (e->via) fprintf(f, ",\"via\":\"%s\"", e->via == VIA_GUESS ? "guess" : "watch");
     fputs("}\n", f);
 }
 

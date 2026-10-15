@@ -22,6 +22,9 @@
 #define DEFER_MAX 600.0    /* stop waiting on a running command after this */
 #define BASH_MAX 620.0     /* Bash times out at 10 min: older unanswered calls are dead sessions */
 #define RECENT 512
+#define GUESS_WAIT (SETTLE_SECS + 2) /* --watch: how long a guess waits for the watcher to confirm it */
+#define FAILED_SPAN 60.0 /* a failed command claims unguessed changes only if it ran this briefly */
+#define BACKLOG 10.0 /* events older than this are history: nothing live to confirm them */
 #define POLL_USECS 100000
 
 typedef struct {
@@ -52,6 +55,10 @@ struct Ingest {
     Watch *watch;
     struct { char *path; double start, end; } recent[RECENT]; /* agent file events, call span */
     int recent_head;
+    /* --watch: files guessed from a failed command, held until the watcher
+     * confirms them (then they're real edits) or the wait runs out (no change). */
+    struct { Event e; double until; } *held;
+    int nheld, capheld;
     int meta_waiting; /* a subagent transcript exists but isn't tracked yet */
     pthread_t th;
     int started;
@@ -67,6 +74,17 @@ static void push(Ingest *in, Event *e) {
  * agent's own writes from other changes. */
 static void on_event(void *ud, Event *e) {
     Ingest *in = ud;
+    if (e->via == VIA_GUESS) { /* not a record: the watcher must still see the change */
+        double now = now_wall();
+        if (!in->watch || e->ts < now - BACKLOG) { push(in, e); return; }
+        if (in->nheld == in->capheld) {
+            in->capheld = in->capheld ? in->capheld * 2 : 16;
+            in->held = xrealloc(in->held, (size_t)in->capheld * sizeof *in->held);
+        }
+        in->held[in->nheld].e = *e;
+        in->held[in->nheld++].until = now + GUESS_WAIT;
+        return;
+    }
     if (e->path && (e->kind == EV_CREATE || e->kind == EV_EDIT || e->kind == EV_DELETE || e->kind == EV_TOUCH)) {
         int k = in->recent_head++ % RECENT;
         free(in->recent[k].path);
@@ -337,11 +355,35 @@ static void read_tail(Ingest *in, Tail *t) {
  * may still report it is open, and attribute the rest to "you".
  * Returns 0 to wait, -1 dropped, 1 emitted. */
 static int attribute(Ingest *in, WatchChange *c, double now) {
-    /* The transcript already has it: changed while the call that recorded it ran. */
-    for (int i = 0; i < RECENT; i++)
-        if (in->recent[i].path && !strcmp(in->recent[i].path, c->path) &&
-            c->ts >= in->recent[i].start - DUP_SLACK && c->ts <= in->recent[i].end + DUP_SLACK)
-            return -1;
+    static const EvKind kinds[] = {[WC_CREATE] = EV_CREATE, [WC_EDIT] = EV_EDIT, [WC_DELETE] = EV_DELETE};
+    /* The transcript already has it: changed while the call that recorded it ran.
+     * A failed command's guess for the same file adds nothing. */
+    for (int i = 0; i < RECENT; i++) {
+        if (!in->recent[i].path || strcmp(in->recent[i].path, c->path) ||
+            c->ts < in->recent[i].start - DUP_SLACK || c->ts > in->recent[i].end + DUP_SLACK)
+            continue;
+        for (int j = 0; j < in->nheld;) {
+            if (strcmp(in->held[j].e.path, c->path)) { j++; continue; }
+            ev_free(&in->held[j].e);
+            in->held[j] = in->held[--in->nheld];
+        }
+        return -1;
+    }
+    /* A failed command's guess, confirmed: a real change, with what the watcher saw. */
+    for (int i = 0; i < in->nheld; i++) {
+        Event *h = &in->held[i].e;
+        double start = h->t0 > 0 && h->t0 < h->ts ? h->t0 : h->ts;
+        if (strcmp(h->path, c->path) || c->ts < start - DUP_SLACK || c->ts > h->ts + DUP_SLACK) continue;
+        Event e = *h;
+        in->held[i] = in->held[--in->nheld];
+        e.kind = kinds[c->kind];
+        e.add = c->add;
+        e.del = c->del;
+        e.lines = c->lines;
+        e.via = VIA_WATCH;
+        push(in, &e);
+        return 1;
+    }
     int wait = in->meta_waiting; /* an agent we can't read yet */
     for (int i = 0; i < in->ntails && !wait; i++) {
         double start;
@@ -350,8 +392,23 @@ static int attribute(Ingest *in, WatchChange *c, double now) {
     }
     if (wait && now - c->ts < DEFER_MAX) return 0;
 
+    /* Changed while a brief agent command ran that failed (so recorded nothing):
+     * the agent's. A long one (a failing test suite) doesn't claim your saves. */
+    for (int i = 0; i < in->ntails; i++) {
+        Event e = {.kind = kinds[c->kind], .path = xstrdup(c->path), .add = c->add, .del = c->del,
+                   .lines = c->lines, .via = VIA_WATCH};
+        if (!tr_failed_call(in->tails[i].tr, c->ts, DUP_SLACK, &e) || e.ts - e.t0 > FAILED_SPAN) {
+            free(e.path);
+            free(e.tool_id);
+            continue;
+        }
+        e.actor = xstrdup(in->tails[i].actor);
+        e.actor_name = xstrdup(in->tails[i].actor_name);
+        push(in, &e);
+        return 1;
+    }
+
     const char *actor = "you", *name = "you";
-    static const EvKind kinds[] = {[WC_CREATE] = EV_CREATE, [WC_EDIT] = EV_EDIT, [WC_DELETE] = EV_DELETE};
     Event e = {.ts = c->ts, .kind = kinds[c->kind], .actor = xstrdup(actor), .actor_name = xstrdup(name),
                .path = xstrdup(c->path), .add = c->add, .del = c->del, .lines = c->lines};
     push(in, &e); /* not into `recent`: your next save of the same file is a new change */
@@ -376,6 +433,11 @@ static void poll_watch(Ingest *in, double now) {
         else free(cs[i].path);
     }
     free(cs);
+    for (int i = 0; i < in->nheld;) { /* unconfirmed: the watcher saw no such change */
+        if (now < in->held[i].until) { i++; continue; }
+        ev_free(&in->held[i].e);
+        in->held[i] = in->held[--in->nheld];
+    }
 }
 
 Ingest *ingest_new(const IngestOpts *o, EvQueue *q) {

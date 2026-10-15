@@ -32,6 +32,10 @@ mkdir -p "$cfg/projects"
 ln -s "$PWD/tests/fixtures/proj" "$cfg/projects/-proj"
 check discover env CLAUDE_CONFIG_DIR="$cfg" $BIN --dump --all --root /proj
 
+# Guessing the files a failed command touched.
+cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_cmdguess" tests/test_cmdguess.c src/cmdguess.c src/util.c -lm -lpthread
+"$OUT/test_cmdguess" || fail=1
+
 # Timeline mapping unit test.
 cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_timeline" tests/test_timeline.c src/timeline.c src/event.c src/util.c -lm -lpthread
 "$OUT/test_timeline" || fail=1

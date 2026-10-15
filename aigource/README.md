@@ -44,6 +44,21 @@ a step still running shows so and fills in when its result lands. Wheel or
 `PgUp`/`PgDn` scroll, `Ctrl+C` copies it, `✕`/`Esc`/click outside close it
 (one window at a time).
 
+**Comments.** What the agent wrote just before a step (its text since the last
+tool result) is that step's comment. Opening a step shows them in a panel left
+of it, one message box each, oldest first; parallel calls share the text that
+led to them. Steps with comments carry a bubble in the turn window, and
+hovering one previews its comments beside the row. Wheel scrolls the panel,
+`Ctrl+C` over it copies them. Read back from the transcript like the detail.
+
+**Failed commands.** Claude Code records what a command changed only when it
+succeeds. For a failed one aigource guesses the files from the command
+(`sed -i`, `perl -i`, `>`/`>>`, `tee`, `touch`, `truncate`, `rm`, `mv`, `cp`,
+following `cd`) and lists them as "guessed". With nothing to guess, the command
+is shown in red as failed. With `--watch`, a guessed change the watcher sees
+becomes a real edit (and a guess it doesn't see is dropped); changes made while
+a failed command ran go to its agent, not to you.
+
 **Click a file** in the graph to see its last change the same way: the edit's
 diff, the created file, or the command that changed it (its last read when it
 was only read).
@@ -71,6 +86,7 @@ the layout where it was. "go live →" (or `L`) returns to now.
 --dump             print the normalized event stream as NDJSON and exit
 --follow SECS      with --dump: keep printing new events for SECS seconds
 --detail           with --dump: after each step, what its detail window shows
+                   (and its comments)
 --shot FILE        render, save a PNG after --frames frames, exit
 --seek F           start paused at fraction F (0..1) of the timeline
 --mouse X,Y        fake mouse position for --shot (hover testing)
