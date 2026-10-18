@@ -18,7 +18,7 @@ function M.context()
   local line = api.nvim_win_get_cursor(0)[1]
   local trace = require('aic.trace')
   local chat = require('aic.chat')
-  local spec = require('aic.spec')
+  local doc = require('aic.doc')
   if buf == trace.buf then
     return { where = 'trace', event = trace.event_at(line) }
   end
@@ -38,8 +38,9 @@ function M.context()
   end
   local name = api.nvim_buf_get_name(buf)
   local rel = util.rel(state.root, name)
-  if spec.path() and vim.fs.normalize(name) == vim.fs.normalize(spec.path()) then
-    return { where = 'spec', file = rel, line = line, excerpt = excerpt(buf, line) }
+  local dn = doc.name_of(buf)
+  if dn then
+    return { where = 'doc', doc = dn, file = rel, line = line, excerpt = excerpt(buf, line) }
   end
   return { where = 'code', file = rel or name, line = line, excerpt = excerpt(buf, line) }
 end
@@ -58,24 +59,24 @@ function M.first_block(lines)
   return lines
 end
 
--- Append the answer's pseudocode to spec.md, save it and `aic submit` it.
+-- Append the answer's pseudocode to the current doc, save it and `aic submit` it.
 function M.submit_answer(q, answer)
-  local spec = require('aic.spec')
+  local doc = require('aic.doc')
   -- The block's own heading names it; otherwise a neutral one. Never the
   -- question: it holds instructions meant for the compiler, not the worker.
   local block = M.first_block(answer)
   local heading = not (block[1] or ''):match('^#+%s') and '## From compiler' or nil
-  local first, last = spec.append_section(heading, block, false)
+  local first, last, name = doc.append_section(heading, block, false)
   if not first then
     return
   end
-  local buf = spec.bufnr()
+  local buf = doc.bufnr(name)
   if buf then
     api.nvim_buf_call(buf, function()
       vim.cmd('silent write')
     end)
   end
-  backend.run({ 'submit', '--from', tostring(first), '--to', tostring(last) }, state.root, function(ok, out, err, code)
+  backend.run({ 'submit', '--doc', name, '--from', tostring(first), '--to', tostring(last) }, state.root, function(ok, out, err, code)
     out, err = vim.trim(out), vim.trim(err)
     if ok then
       util.notify(util.oneline(out ~= '' and out or 'aic submit: ok'))
@@ -92,7 +93,7 @@ end
 local function run(args, ctx, q, title, actions)
   actions = vim.tbl_extend('keep', actions, {
     S = {
-      'append pseudocode to spec + submit',
+      'append pseudocode to doc + submit',
       function(answer, entry)
         if entry.submitted then
           util.notify('aic: already submitted')
@@ -110,12 +111,13 @@ local function run(args, ctx, q, title, actions)
       end,
     },
   })
+  local doc_name = require('aic.doc').current() -- before the float takes focus
   local tmp = vim.fn.tempname() .. '.json'
   util.write_file(tmp, vim.json.encode(ctx))
   local buf, win = util.float({ '_thinking…_' }, { title = ' ' .. title .. ' ', filetype = 'markdown' })
   local entry = { q = q, title = title, actions = actions }
   M.attach(buf, win, entry)
-  local cmd = { 'ask', '--context-file', tmp }
+  local cmd = { 'ask', '--doc', doc_name, '--context-file', tmp }
   vim.list_extend(cmd, args)
   backend.run(cmd, state.root, function(ok, out, err, code)
     os.remove(tmp)
@@ -189,9 +191,9 @@ function M.ask()
       end
       run({ '--', q }, ctx, q, 'aic: ' .. q, {
         P = {
-          'append to spec',
+          'append to doc',
           function(answer)
-            require('aic.spec').append_section('## Notes', answer, true)
+            require('aic.doc').append_section('## Notes', answer, true)
           end,
         },
       })
@@ -209,9 +211,9 @@ function M.whatif()
       end
       run({ '--whatif', '--', q }, ctx, q, 'aic what-if: ' .. q, {
         F = {
-          'fold into spec',
+          'fold into doc',
           function(answer)
-            require('aic.spec').append_section('## What-if: ' .. q, answer, false)
+            require('aic.doc').append_section('## What-if: ' .. q, answer, false)
           end,
         },
       })

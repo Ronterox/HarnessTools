@@ -12,7 +12,7 @@ function M.update()
       if unseen > 0 then
         table.insert(parts, unseen .. '●')
       end
-      local d = state.diagnostics
+      local d = state.diagnostics[require('aic.doc').current()] -- the doc being worked on
       if type(d) == 'table' then
         if d.error then
           table.insert(parts, 'E!')

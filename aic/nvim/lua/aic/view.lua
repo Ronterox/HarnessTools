@@ -1,4 +1,4 @@
--- aic views live in the current window: history (trace), questions, spec.
+-- aic views live in the current window: history (trace), questions, docs.
 -- Switching is a buffer switch (<C-^> and <C-o> work), code opens in the same
 -- window, and aic never creates a tab or a split.
 local state = require('aic.state')
@@ -22,12 +22,12 @@ local getters = {
   questions = function()
     return mod('chat').get_buf()
   end,
-  spec = function()
-    return mod('spec').get_buf()
+  doc = function()
+    return mod('doc').get_buf()
   end,
 }
 
--- View name of `buf` ('trace' | 'questions' | 'spec'), or nil.
+-- View name of `buf` ('trace' | 'questions' | 'doc'), or nil.
 function M.name_of(buf)
   if not (buf and api.nvim_buf_is_valid(buf)) then
     return nil
@@ -37,17 +37,12 @@ function M.name_of(buf)
   elseif buf == mod('chat').buf then
     return 'questions'
   end
-  local spec = mod('spec')
-  if buf == spec.placeholder then
-    return 'spec'
-  end
-  local p = spec.path()
-  if p and vim.fs.normalize(api.nvim_buf_get_name(buf)) == vim.fs.normalize(p) then
-    return 'spec'
+  if mod('doc').name_of(buf) then
+    return 'doc'
   end
 end
 
--- Any aic buffer: a view, or a file under .aic/ (e.g. another session's spec).
+-- Any aic buffer: a view, or a file under .aic/ (e.g. an old session's spec.md).
 function M.is_aic(buf)
   if M.name_of(buf) then
     return true
@@ -161,31 +156,9 @@ function M.open_code(path, line)
   vim.cmd('normal! zvzz')
 end
 
--- A spec buffer that is not the current session's (another session's spec.md,
--- or the no-session placeholder once a session exists).
-local function stale_spec(buf, p)
-  local spec = mod('spec')
-  if buf == spec.placeholder then
-    return p ~= nil
-  end
-  local name = api.nvim_buf_get_name(buf)
-  return name:match('/%.aic/sessions/[^/]+/spec%.md$') ~= nil
-    and (not p or vim.fs.normalize(name) ~= vim.fs.normalize(p))
-end
-
--- Session changed: windows showing a stale spec switch to the new one, and
--- toggle no longer returns to it.
+-- Session changed: docs stay, their diagnostics come from the new session.
 function M.on_session()
-  local spec = mod('spec')
-  local p = spec.path()
-  for _, w in ipairs(api.nvim_list_wins()) do
-    if stale_spec(api.nvim_win_get_buf(w), p) then
-      set_buf(w, spec.get_buf())
-    end
-  end
-  if M.last_aic and api.nvim_buf_is_valid(M.last_aic) and stale_spec(M.last_aic, p) then
-    M.last_aic = spec.get_buf()
-  end
+  mod('doc').apply_all()
 end
 
 -- Track the last aic view and the last code buffer (for toggle).
