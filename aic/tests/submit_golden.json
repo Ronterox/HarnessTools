@@ -1,0 +1,50 @@
+{
+ "first": {
+  "header": "[aic] Here is my spec, please implement it:",
+  "body": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:1-2\n```\n    1| def load(path):\n    2|     return open(path).read()\n```",
+  "spec": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n",
+  "seq": 1
+ },
+ "first_hand_edits": {
+  "header": "[aic] Here is my spec, please implement it: I also edited code by hand, keep my changes (listed at the end).",
+  "body": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:1-2\n```\n    1| def load(path):\n    2|     return open(path).read()\n```\n\nMy hand edits since my last message: app.py:5-6",
+  "spec": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n",
+  "seq": 3
+ },
+ "diff": {
+  "header": "[aic] I changed my spec, please apply these changes (diff, then the full spec):",
+  "body": "```diff\n--- spec (last submit)\n+++ spec (now)\n@@ -2,3 +2,4 @@\n \n - load reads @app.py:1-2\n - save lives in @app.py\n+- save is atomic, see @app.py:save\n```\n\nFull spec now:\n\n# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:save (app.py line 5)\n```\n    2|     return open(path).read()\n    3| \n    4| \n    5| def save(path, text):\n    6|     open(path, 'w').write(text)\n```",
+  "spec": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n",
+  "seq": 1
+ },
+ "diff_hand_edits": {
+  "header": "[aic] I changed my spec, please apply these changes (diff, then the full spec): I also edited code by hand, keep my changes (listed at the end).",
+  "body": "```diff\n--- spec (last submit)\n+++ spec (now)\n@@ -2,3 +2,4 @@\n \n - load reads @app.py:1-2\n - save lives in @app.py\n+- save is atomic, see @app.py:save\n```\n\nFull spec now:\n\n# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:save (app.py line 5)\n```\n    2|     return open(path).read()\n    3| \n    4| \n    5| def save(path, text):\n    6|     open(path, 'w').write(text)\n```\n\nMy hand edits since my last message: app.py:5-6",
+  "spec": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n",
+  "seq": 3
+ },
+ "diff_after_submit": {
+  "header": "[aic] I changed my spec, please apply these changes (diff, then the full spec): I also edited code by hand, keep my changes (listed at the end).",
+  "body": "```diff\n--- spec (last submit)\n+++ spec (now)\n@@ -2,3 +2,4 @@\n \n - load reads @app.py:1-2\n - save lives in @app.py\n+- save is atomic, see @app.py:save\n```\n\nFull spec now:\n\n# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:save (app.py line 5)\n```\n    2|     return open(path).read()\n    3| \n    4| \n    5| def save(path, text):\n    6|     open(path, 'w').write(text)\n```\n\nMy hand edits since my last message: app.py:1-1",
+  "spec": "# Spec\n\n- load reads @app.py:1-2\n- save lives in @app.py\n- save is atomic, see @app.py:save\n",
+  "seq": 4
+ },
+ "range": {
+  "header": "[aic] Please implement this part of my spec:",
+  "body": "(spec lines 3-4)\n\n- load reads @app.py:1-2\n- save lives in @app.py\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:1-2\n```\n    1| def load(path):\n    2|     return open(path).read()\n```",
+  "spec": null,
+  "seq": 1
+ },
+ "range_hand_edits": {
+  "header": "[aic] Please implement this part of my spec: I also edited code by hand, keep my changes (listed at the end).",
+  "body": "(spec lines 5-5)\n\n- save is atomic, see @app.py:save\n\nReferenced context (resolved from my @anchors):\n\n### @app.py:save (app.py line 5)\n```\n    2|     return open(path).read()\n    3| \n    4| \n    5| def save(path, text):\n    6|     open(path, 'w').write(text)\n```\n\nMy hand edits since my last message: app.py:5-6",
+  "spec": null,
+  "seq": 3
+ },
+ "turn_anchor": {
+  "header": "[aic] Here is my spec, please implement it:",
+  "body": "# Spec\n\n- redo what @turn:1 did, but atomic\n\nReferenced context (resolved from my @anchors):\n\n### @turn:1 (worker activity)\n```\n\n[turn 1] USER PROMPT TO WORKER:\ngo\nWORKER TOOL: Edit app.py:5-6\n  why: add save\n  @@ line 5\n  +def save(path, text):\n  +    open(path, 'w').write(text)\n```",
+  "spec": "# Spec\n\n- redo what @turn:1 did, but atomic\n",
+  "seq": 2
+ }
+}

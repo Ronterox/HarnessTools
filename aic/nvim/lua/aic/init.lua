@@ -58,7 +58,7 @@ local function wire()
   end)
   state.on('session', function()
     mod('usage').update()
-    mod('layout').on_session()
+    mod('view').on_session()
     mod('trace').render()
     mod('chat').render()
     mod('signs').apply_all()
@@ -104,34 +104,6 @@ local function setup_autocmds()
       end
     end,
   })
-  -- Quickfix opened inside the aic tab: <CR> opens code in the origin tab and
-  -- spec items in the spec window, so the aic layout never gets clobbered.
-  api.nvim_create_autocmd('FileType', {
-    group = g,
-    pattern = 'qf',
-    callback = function(a)
-      vim.keymap.set('n', '<CR>', function()
-        local layout = mod('layout')
-        if not layout.in_aic_tab() or vim.fn.getwininfo(api.nvim_get_current_win())[1].loclist == 1 then
-          return vim.cmd([[execute "normal! \<CR>"]])
-        end
-        local idx = vim.fn.line('.')
-        local it = vim.fn.getqflist()[idx]
-        if not it or it.bufnr == 0 then
-          return
-        end
-        vim.fn.setqflist({}, 'a', { idx = idx })
-        local name = api.nvim_buf_get_name(it.bufnr)
-        if name:match('/%.aic/sessions/[^/]+/spec%.md$') and layout.wins and layout.wins.spec
-          and api.nvim_win_is_valid(layout.wins.spec) then
-          api.nvim_set_current_win(layout.wins.spec)
-          api.nvim_win_set_cursor(0, { math.max(1, math.min(it.lnum, api.nvim_buf_line_count(0))), 0 })
-        else
-          layout.open_code(name, it.lnum)
-        end
-      end, { buffer = a.buf, desc = 'aic: open entry (code in origin tab)' })
-    end,
-  })
   api.nvim_create_autocmd('BufWritePre', {
     group = g,
     callback = function(a)
@@ -168,7 +140,11 @@ local function setup_keymaps(prefix)
   local function map(modes, lhs, plug, desc)
     vim.keymap.set(modes, prefix .. lhs, plug, { remap = true, desc = 'aic: ' .. desc })
   end
-  map('n', 'z', '<Plug>(aic-toggle)', 'open/toggle tab')
+  map('n', 'z', '<Plug>(aic-toggle)', 'toggle code / last aic view')
+  map('n', 't', '<Plug>(aic-history)', 'history (trace)')
+  map('n', 'q', '<Plug>(aic-questions)', 'questions')
+  map('n', 'd', '<Plug>(aic-spec)', 'spec')
+  map('n', 'e', '<Plug>(aic-diagnostics)', 'compile diagnostics -> quickfix list')
   map({ 'n', 'x' }, 's', '<Plug>(aic-submit)', 'submit')
   map({ 'n', 'x' }, 'S', '<Plug>(aic-submit-now)', 'submit now')
   map('n', 'h', '<Plug>(aic-hold)', 'hold')
@@ -178,7 +154,6 @@ local function setup_keymaps(prefix)
   map('n', 'w', '<Plug>(aic-whatif)', 'what-if')
   map('n', 'b', '<Plug>(aic-blame)', 'blame')
   map('n', 'a', '<Plug>(aic-attach)', 'attach worker')
-  map('n', 'q', '<Plug>(aic-quickfix)', 'quickfix')
   map('n', 'u', '<Plug>(aic-next-unseen)', 'next unseen')
   map('n', 'U', '<Plug>(aic-usage)', 'usage / compact')
   map('n', 'g', '<Plug>(aic-follow)', 'follow anchor under cursor')
@@ -195,6 +170,7 @@ function M.setup(opts)
   end
   configured = true
   setup_autocmds()
+  mod('view').setup()
   if o.keymaps then
     setup_keymaps(o.prefix)
   end
@@ -258,7 +234,7 @@ end
 function M.open()
   ensure(function()
     backend.ensure_watch(state.root)
-    mod('layout').open()
+    mod('view').open()
     mod('usage').poll()
   end, true)
 end
@@ -266,7 +242,16 @@ end
 function M.toggle()
   ensure(function()
     backend.ensure_watch(state.root)
-    mod('layout').toggle()
+    mod('view').toggle()
+    mod('usage').poll()
+  end, true)
+end
+
+-- Show view `name` ('trace' | 'questions' | 'spec') in the current window.
+function M.show(name)
+  ensure(function()
+    backend.ensure_watch(state.root)
+    mod('view').show(name)
     mod('usage').poll()
   end, true)
 end
@@ -346,10 +331,12 @@ function M.next_touched(dir)
   end)
 end
 
-function M.quickfix()
+-- Load the last compile into the quickfix list. Never opens a window:
+-- :copen / ]q are yours.
+function M.diagnostics()
   ensure(function()
     if mod('spec').load_qf() then
-      vim.cmd('botright copen')
+      util.notify(('aic: %d compile diagnostics in the quickfix list'):format(#vim.fn.getqflist()))
     else
       util.notify('aic: no compile diagnostics yet')
     end
@@ -359,7 +346,7 @@ end
 function M.next_unseen(dir)
   ensure(function()
     backend.ensure_watch(state.root)
-    mod('layout').focus('trace')
+    mod('view').show('trace')
     mod('trace').next_unseen(dir or 1)
   end, true)
 end

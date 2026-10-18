@@ -16,7 +16,7 @@ lazy.nvim (local dir):
       -- bin = '/path/to/aic/bin/aic', -- default: <aic>/bin/aic next to this dir
       -- prefix = '<leader>z',         -- default prefix
       -- keymaps = true,               -- install the default keys below
-      -- chat_height = 12,
+      -- winbar = true,               -- usage winbar on the aic views
     })
   end,
 }
@@ -33,22 +33,32 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 - **Project root**: the nearest ancestor that contains `.aic/`. The session dir
   comes from `aic status --json` (`dir`), and is re-resolved when
   `.aic/` or `.aic/workers/` changes, after `:AicAttach`, and on `R`.
-- **`:Aic`** opens a dedicated tab: spec (left) | trace (right), chat (bottom).
-  Jumps to code (`<CR>` in trace, `gd` on anchors) open in the **origin
-  tab's** current window, so the aic tab stays intact. If `.aic/` is missing it
-  offers to run `aic init`. It starts `aic watch` for the project root unless
+- **One window, one tab.** aic's views are buffers shown in the current
+  window: **history** (`aic://trace`), **questions** (`aic://questions`) and the
+  **spec** (`spec.md`). aic never creates a tab or a split and never opens the
+  quickfix window. Jumps to code (`<CR>`/`gf` in the history, `gd` on anchors)
+  open in the same window; `<C-o>` / `<C-^>` bring you back. Window options a
+  view needs (folds, wrap, winbar) are set buffer-locally, so code buffers
+  shown in that window keep their own. Floats (answers, usage, blame) are the
+  only extra windows; jumping from a float closes it and uses the window under it.
+- **`:Aic`** shows the last aic view (default: history) in the current window.
+  `<prefix>z` toggles between it and the last code buffer. If `.aic/` is
+  missing it offers to run `aic init`. It starts `aic watch` for the project root unless
   `.aic/watch.pid` is a live process (one watcher per root, so opening `:Aic`
   in another project starts one there too). Every watcher it started is
   stopped on exit.
 - **Watching**: `vim.uv` fs_event on the session dir (falls back to 500 ms
   polling), debounced 150 ms. Changes reload the trace, seen state, signs,
-  statusline, chat, usage winbars, and (when `diagnostics.json` changes) the quickfix list.
+  statusline, questions, usage winbars, and (when `diagnostics.json` changes) the quickfix list.
 
 ## Keymaps (default prefix `<leader>z`)
 
 | key | command | `<Plug>` |
 |---|---|---|
-| `<prefix>z` | `:AicToggle`: open the aic tab, or toggle between it and the origin tab | `(aic-toggle)` |
+| `<prefix>z` | `:AicToggle`: in an aic buffer, back to the last code buffer; elsewhere, the last aic view | `(aic-toggle)` |
+| `<prefix>t` | `:AicHistory`: the history (trace) in this window | `(aic-history)` |
+| `<prefix>q` | `:AicQuestions`: the questions (compiler chat) in this window | `(aic-questions)` |
+| `<prefix>d` | `:AicSpec`: the spec in this window | `(aic-spec)` |
 | `<prefix>s` (n, x) | `:AicSubmit`: full spec diff; with a visual range, `--from/--to` | `(aic-submit)` |
 | `<prefix>S` (n, x) | `:AicSubmitNow`: same with `--now` | `(aic-submit-now)` |
 | `<prefix>h` | `:AicHold` | `(aic-hold)` |
@@ -57,13 +67,13 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>w` | `:AicWhatIf` | `(aic-whatif)` |
 | `<prefix>b` | `:AicBlame`: trace event for the touched range under the cursor | `(aic-blame)` |
 | `<prefix>a` | `:AicAttach`: pick the worker session (or auto) | `(aic-attach)` |
-| `<prefix>q` | `:AicQuickfix`: load the last compile into quickfix and open it | `(aic-quickfix)` |
-| `<prefix>u` | `:AicNextUnseen`: open the trace and go to the next unseen node | `(aic-next-unseen)` |
+| `<prefix>e` | `:AicDiagnostics`: load the last compile into the quickfix list (no window: `:copen`/`]q` are yours) | `(aic-diagnostics)` |
+| `<prefix>u` | `:AicNextUnseen`: show the history and go to the next unseen node | `(aic-next-unseen)` |
 | `<prefix>U` | `:AicUsage`: context/cost per session, account quota, compact/reset (see [Usage](#usage)) | `(aic-usage)` |
 | `<prefix>]` / `<prefix>[` | `:AicNextTouched` / `:AicPrevTouched` | `(aic-next-touched)` / `(aic-prev-touched)` |
 | `<prefix>g` | follow the anchor under the cursor, in any buffer (see [Anchors](#anchors)) | `(aic-follow)` |
 
-Other commands: `:Aic` (open/switch to the tab), `:AicCompile`,
+Other commands: `:Aic` (show the last aic view here), `:AicCompile`,
 `:AicChat <text>`, `:AicPrevUnseen`, `:AicRefresh`, `:AicCompact compile|ask|worker`,
 `:AicReset compile|ask`. `<Plug>(aic-open)`,
 `(aic-compile)` and `(aic-prev-unseen)` also exist.
@@ -97,7 +107,7 @@ finishes, quickfix (title `aic compile`) and inline `vim.diagnostic`
 highlighted, `gd` follows them and `<C-x><C-o>` completes them (see
 [Anchors](#anchors)).
 
-**Chat** (`aic://chat`): shows `chat.md` followed by a `## You` line. Type
+**Questions** (`aic://questions`): shows `chat.md` followed by a `## You` line. Type
 below it and press `<CR>` in normal mode to send with `aic ask`. The plugin never
 writes `chat.md`; the view reloads when the backend appends to it, and keeps
 what you've typed. Anchors in your input are sent as-is (the backend resolves
@@ -135,7 +145,7 @@ root; a path anchor only counts if the path exists.
 
 | anchor | `gd` / `<prefix>g` |
 |---|---|
-| `@path/file.ext` | open it (origin tab) |
+| `@path/file.ext` | open it (in the current window) |
 | `@path/file.ext:42` | open at line 42 |
 | `@path/file.ext:10-20` | open at 10, visually select 10-20 (`'<` `'>` set) |
 | `@path/file.ext:symbol` | open at the first definition-ish match (`function symbol`, `def`, `class`, `const`, `let`, `symbol =`, `symbol(`), else any word match |
@@ -147,14 +157,14 @@ root; a path anchor only counts if the path exists.
 | `@show:REV` | same (`git show REV`) |
 | `@turn:N` / `@turn:last` | open the trace on that turn's header |
 
-- `gd` is buffer-local in the spec, chat and answer float; off an anchor it
+- `gd` is buffer-local in the spec, questions and answer float; off an anchor it
   calls the `gd` mapping that was there before (e.g. an LSP one), else the
   normal `gd`. `<prefix>g` works in any buffer.
 - Valid anchors are highlighted with `AicAnchor` (default link `Underlined`),
   refreshed on edits and scrolling (debounced): the whole buffer under 2000
-  lines, else the visible lines. The chat buffer always highlights only the
+  lines, else the visible lines. The questions buffer always highlights only the
   visible lines ±50.
-- `omnifunc` (spec and chat) completes after `@` with `<C-x><C-o>`: project files and
+- `omnifunc` (spec and questions) completes after `@` with `<C-x><C-o>`: project files and
   directories (`git ls-files -co --exclude-standard`, else a walk capped at
   5000 entries skipping `.git` `.aic` `node_modules`), `diff`, `diff:<path>`,
   `staged`, `log`, `log:<path>`, `show:HEAD`, `show:HEAD~1`, `turn:last` and
@@ -164,24 +174,25 @@ root; a path anchor only counts if the path exists.
 
 Reads `<session>/usage.json` (watched with the other session files) and the
 account quota from `aic usage --json` (PROTOCOL.md "Usage"). The quota is
-fetched asynchronously at most once a minute while the aic tab is visible, plus
+fetched asynchronously at most once a minute while an aic view is visible, plus
 shortly after `usage.json` changes; a `null` quota is simply not shown.
 
-**Winbars** (window-local; cached strings, no IO while drawing). Each aic window
-shows the session behind it:
+**Winbars** (set buffer-locally when a view is shown, so they go away with it;
+cached strings, no IO while drawing; `winbar = false` turns them off). Each
+view shows the session behind it:
 
-| window | example |
+| view | example |
 |---|---|
 | spec | `compile · sonnet  ctx:[####------] 82k/200k (41%)  12 runs  $1.20` |
 | trace | `worker · sonnet  ctx:[##--------] 36k/200k (18%)  turn 21` (window unknown: `worker · sonnet  ctx 107k (?%)  turn 21`) |
-| chat | `ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85   5h:57% wk:15%` |
+| questions | `ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85   5h:57% wk:15%` |
 
 - Model names drop `claude-` and the version (`claude-opus-5-5` → `opus`).
 - The bar is 10 cells, followed by tokens used / window size and the percent;
   all of it uses `AicUsageOk` (< 70%), `AicUsageWarn` (≥ 70%) or
   `AicUsageHot` (≥ 85%). Until the window size is known (learned on the
   session's next call) only the tokens show, with `(?%)`.
-- The chat winbar appends the account quota: `5h`, `wk`, then scoped buckets
+- The questions winbar appends the account quota: `5h`, `wk`, then scoped buckets
   (`fable:3%`) only when above 0% or active. A quota older than 15 minutes is
   prefixed with `~` and dimmed.
 - Before a session has made a call: `compile · (no session yet)`.
@@ -254,15 +265,18 @@ cd aic/nvim
 nvim --headless -u NONE -l tests/smoke.lua
 ```
 
-This builds a temporary project with a fake `aic` executable and checks the tab
-layout, trace rendering and folds (including `compact` events), `]u`, seen
+This builds a temporary project with a fake `aic` executable and checks the
+single-window views (a sweep runs every command and `<prefix>` key and
+asserts one tab, one window, no quickfix window, no pinned window; `<C-^>`
+back from each view, `<C-o>` back to the trace line; views never take over the
+quickfix window; only aic's own floats are closed; view options never leak
+into a fresh buffer), trace rendering and folds (including `compact` events), `]u`, seen
 persistence, the watcher (one per root, all stopped on exit, no leaked
 timers), quickfix and diagnostics, signs and `]w` (bounded to the view, only
 changed buffers re-applied), human-edit hunks, the
 statusline, submit/hold/continue, compile on `:w` (and queued compiles),
 ask/what-if floats (`P` `F` `S` `Y` `gd`), chat, and usage: the three
-winbars (plus null ctx window, null quota, no leak into splits, recreated
-windows), the 80% hint, the `:AicUsage` float and its `c`/`R`/`w` actions
+winbars (plus null ctx window, null quota, gone with the view, back with it), the 80% hint, the `:AicUsage` float and its `c`/`R`/`w` actions
 (including a refused worker compact and `:AicReset worker` being rejected). The project is a git repo
 with one commit, for anchors: parsing of every form (and non-anchors, plus
 the shared fixture `../tests/anchor_cases.json`), `gd` on

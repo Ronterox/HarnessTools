@@ -178,17 +178,44 @@ local aic = require('aic')
 aic.setup({ bin = bin })
 local state = require('aic.state')
 local trace = require('aic.trace')
-local layout = require('aic.layout')
+local view = require('aic.view')
 
--- open tab
+-- One tab, one (non-floating) window, always: checked after every step below
+-- that switches views or jumps.
+local function solid_wins()
+  return vim.tbl_filter(function(w)
+    return vim.api.nvim_win_get_config(w).relative == ''
+  end, vim.api.nvim_tabpage_list_wins(0))
+end
+local function single(what)
+  ok(#vim.api.nvim_list_tabpages() == 1 and #solid_wins() == 1,
+    what .. ': one tab, one window (' .. #vim.api.nvim_list_tabpages() .. ' tabs, ' .. #solid_wins() .. ' windows)')
+end
+-- the code window's options before any aic view was shown in it
+vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+local code0 = vim.api.nvim_get_current_buf()
+local function opts_now()
+  return { vim.wo.foldmethod, vim.wo.wrap, vim.wo.number, vim.wo.winbar, vim.wo.signcolumn, vim.wo.linebreak }
+end
+local wo0 = opts_now()
+-- A buffer never shown in this window gets the window's own (global) values:
+-- the only way to see a view's options leak (a buffer shown before gets its
+-- saved values back).
+local function fresh_opts()
+  vim.cmd('enew')
+  local o = opts_now()
+  vim.cmd('bwipeout')
+  return o
+end
+
+-- open: history view in the current window
 aic.open()
 ok(wait(3000, function()
-  return layout.tab ~= nil and state.dir ~= nil
-end), 'aic tab opened and session resolved')
+  return state.dir ~= nil and vim.api.nvim_get_current_buf() == trace.buf
+end), 'history shown in the current window and session resolved')
 ok(state.dir == dir, 'session dir resolved relative to root: ' .. tostring(state.dir))
-ok(#vim.api.nvim_list_tabpages() == 2, 'two tabpages')
-ok(vim.api.nvim_get_current_tabpage() == layout.tab, 'in aic tab')
-ok(#vim.api.nvim_tabpage_list_wins(layout.tab) == 3, 'spec | trace | chat windows')
+single(':Aic')
+ok(vim.wo.foldmethod == 'expr' and not vim.wo.winfixbuf, 'trace options set, window not pinned')
 ok(wait(2000, function()
   return (read(log) or ''):find('watch', 1, true) ~= nil
 end), '`aic watch` started')
@@ -204,7 +231,6 @@ ok(text:find('    +hello', 1, true) ~= nil, 'hunk lines rendered')
 ok(vim.bo[trace.buf].filetype == 'aictrace', 'filetype aictrace')
 
 -- ]u navigation + mark seen
-vim.api.nvim_set_current_win(layout.wins.trace)
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 local l = trace.next_unseen(1)
 ok(l and vim.api.nvim_get_current_line():find('Edit src/app.js', 1, true) ~= nil, ']u moves to unseen tool node')
@@ -252,13 +278,13 @@ ok(qf[1] and qf[1].type == 'E' and qf[1].text == '[mismatch] not done', 'qf item
 ok(qf[1] and vim.api.nvim_buf_get_name(qf[1].bufnr) == dir .. '/spec.md', 'spec item points at spec.md')
 ok(qf[2] and vim.api.nvim_buf_get_name(qf[2].bufnr) == root .. '/src/app.js' and qf[2].type == 'W', 'code item points at project file')
 local spec = require('aic.spec')
-ok(#vim.diagnostic.get(spec.bufnr(), { namespace = spec.ns }) == 1, 'spec inline diagnostic set')
+ok(#vim.diagnostic.get(spec.get_buf(), { namespace = spec.ns }) == 1, 'spec inline diagnostic set (on load)')
 require('aic.status').update()
 ok(aic.status() == 'aic 1● 1E ⚙', 'status with error: ' .. aic.status())
 ok(vim.tbl_contains(notes, 'aic compile: 1E 1W 0I — Two problems'), 'compile summary notified')
 
--- jump to code from trace -> origin tab; signs placed
-vim.api.nvim_set_current_win(layout.wins.trace)
+-- jump to code from trace -> same window; signs placed
+aic.show('trace')
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
 for i, t in ipairs(vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) do
   if t:find('Edit src/app.js', 1, true) then
@@ -266,9 +292,21 @@ for i, t in ipairs(vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) do
     break
   end
 end
+local trace_line = vim.fn.line('.')
 trace.jump()
-ok(vim.api.nvim_get_current_tabpage() == layout.origin, 'jump opened code in origin tab')
+single('trace jump')
 local cbuf = vim.api.nvim_get_current_buf()
+ok(vim.deep_equal(opts_now(), wo0), 'code shown after the trace keeps its own window options: ' .. vim.inspect(opts_now()))
+vim.cmd([[execute "normal! \<C-o>"]])
+ok(vim.api.nvim_get_current_buf() == trace.buf and vim.fn.line('.') == trace_line, '<C-o> returns to the trace line')
+vim.cmd([[execute "normal! \<C-^>"]])
+ok(vim.api.nvim_get_current_buf() == cbuf, '<C-^> from the trace goes back to the code')
+do
+  aic.show('trace')
+  local o = fresh_opts()
+  ok(vim.deep_equal(o, wo0), 'trace options do not leak into a fresh buffer: ' .. vim.inspect(o))
+  vim.api.nvim_set_current_buf(cbuf)
+end
 ok(vim.api.nvim_buf_get_name(cbuf) == root .. '/src/app.js' and vim.fn.line('.') == 3, 'cursor at hunk start')
 local signs = require('aic.signs')
 local marks = vim.api.nvim_buf_get_extmarks(cbuf, signs.ns, 0, -1, { details = true })
@@ -302,11 +340,24 @@ local hl = vim.split(vim.trim(read(dir .. '/human.jsonl')), '\n')
 local ev2 = vim.json.decode(hl[2] or 'null')
 ok(ev2 and ev2.hunks[1].start == 1 and ev2.hunks[1].count == 0 and ev2.hunks[1].lines[1] == '-line 1', 'deletion hunk')
 
--- toggle back to aic tab
+-- toggle: code <-> last aic view, in this window
 aic.toggle()
-ok(vim.api.nvim_get_current_tabpage() == layout.tab, 'toggle -> aic tab')
+ok(vim.api.nvim_get_current_buf() == spec.bufnr(), 'toggle -> last aic buffer (the spec, opened for gd above)')
 aic.toggle()
-ok(vim.api.nvim_get_current_tabpage() == layout.origin, 'toggle -> origin tab')
+ok(vim.api.nvim_get_current_buf() == cbuf, 'toggle -> back to the code')
+aic.show('questions')
+ok(vim.api.nvim_get_current_buf() == require('aic.chat').buf and vim.wo.wrap and not vim.wo.number, 'questions view shown')
+single('questions view')
+do
+  local o = fresh_opts()
+  ok(vim.deep_equal(o, wo0), 'questions options do not leak into a fresh buffer: ' .. vim.inspect(o))
+  aic.show('questions')
+end
+aic.toggle()
+aic.toggle()
+ok(vim.api.nvim_get_current_buf() == require('aic.chat').buf, 'toggle returns to the questions view (last aic view)')
+vim.cmd([[execute "normal! \<C-^>"]])
+ok(vim.api.nvim_get_current_buf() == cbuf and vim.deep_equal(opts_now(), wo0), '<C-^> from questions -> code, options intact')
 
 -- submit / hold / continue reach the backend
 aic.hold()
@@ -318,8 +369,9 @@ ok(wait(3000, function()
 end), 'hold/continue/submit invoked backend')
 
 -- spec :w -> compile
-vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-vim.api.nvim_set_current_win(layout.wins.spec)
+aic.show('spec')
+single('spec view')
+ok(vim.api.nvim_get_current_buf() == spec.bufnr(), 'spec view shows spec.md')
 vim.cmd('silent write')
 ok(wait(3000, function()
   return (read(log) or ''):find('compile', 1, true) ~= nil
@@ -347,7 +399,7 @@ state.compiling = false
 state.compile_queued = false
 
 -- folds survive re-render: open the tool node, append an event, still open
-vim.api.nvim_set_current_win(layout.wins.trace)
+aic.show('trace')
 local tool_l
 for i, t in ipairs(vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) do
   if t:find('Edit src/app.js', 1, true) then
@@ -379,13 +431,13 @@ trace.enter()
 ok(vim.fn.foldclosed(tool_l) == tool_l, '<CR> on open edit node hides its details')
 trace.enter()
 ok(vim.fn.foldclosed(tool_l + 1) == -1, '<CR> on closed edit node shows its details')
-ok(vim.api.nvim_get_current_win() == layout.wins.trace, '<CR> on an edit node stays in the trace')
+ok(vim.api.nvim_get_current_buf() == trace.buf, '<CR> on an edit node stays in the trace')
 trace.enter()
 local rel_l = find_line('▶ release')
 vim.api.nvim_win_set_cursor(0, { rel_l, 0 })
 trace.enter()
 ok(vim.fn.foldclosed(1) == -1 and vim.fn.foldclosed(rel_l) == -1, '<CR> on a bullet without details leaves the turn open')
-ok(vim.api.nvim_get_current_win() == layout.wins.trace, '<CR> on a bullet without file stays in the trace')
+ok(vim.api.nvim_get_current_buf() == trace.buf, '<CR> on a bullet without file stays in the trace')
 ok(vim.fn.maparg('gf', 'n', false, true).desc == 'aic: jump to code', 'gf jumps to code')
 f = io.open(dir .. '/trace.jsonl', 'ab')
 f:write(jl({ id = 'e7', seq = 7, ts = now + 6, kind = 'tool', turn = 1, tool = 'Edit', title = 'Edit src/app.js:20-20',
@@ -424,20 +476,19 @@ vim.cmd('normal! zo')
 vim.cmd('normal! zc')
 ok(vim.fn.foldclosed(e7) == e7, 'zc from a hunk line hides the edit')
 trace.enter()
-ok(vim.fn.foldclosed(e7 + 1) == -1 and vim.api.nvim_get_current_win() == layout.wins.trace,
+ok(vim.fn.foldclosed(e7 + 1) == -1 and vim.api.nvim_get_current_buf() == trace.buf,
   '<CR> on an edit closed with zc from a hunk line opens it (no jump)')
 -- za/zo state survives re-showing the trace window without a render in between
 vim.api.nvim_win_set_cursor(0, { e7, 0 })
 vim.cmd('normal! zc')
 vim.cmd('normal! zo')
-trace.show(0)
-ok(vim.fn.foldclosed(e7 + 1) == -1, 'zo state survives trace.show()')
+view.show('trace')
+ok(vim.fn.foldclosed(e7 + 1) == -1, 're-showing the shown trace is a no-op (zo state kept)')
 -- ... and the trace leaving its window (BufWinLeave) and coming back
 local tw = vim.api.nvim_get_current_win()
-vim.wo[tw].winfixbuf = false
 local scratch = vim.api.nvim_create_buf(false, true)
 vim.api.nvim_win_set_buf(tw, scratch)
-trace.show(tw)
+view.show('trace')
 ok(vim.fn.foldclosed(e7 + 1) == -1 and vim.fn.foldclosed(tool_l) == tool_l, 'fold state survives the trace leaving its window')
 vim.api.nvim_buf_delete(scratch, { force = true })
 vim.api.nvim_win_set_cursor(0, { e7, 0 })
@@ -486,7 +537,7 @@ local sl = vim.api.nvim_buf_get_lines(spec.bufnr(), 0, -1, false)
 ok(sl[#sl] == '**answer**' and vim.tbl_contains(sl, '## Notes'), 'P appended answer under ## Notes')
 
 -- what-if -> F folds into spec
-vim.api.nvim_set_current_win(layout.wins.trace)
+aic.show('trace')
 aic.whatif()
 ok(wait(3000, function()
   return vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == '**answer**'
@@ -495,7 +546,7 @@ ok((read(log) or ''):find('ask %-%-context%-file .+ %-%-whatif %-%- is this righ
 vim.api.nvim_feedkeys('F', 'x', false)
 sl = vim.api.nvim_buf_get_lines(spec.bufnr(), 0, -1, false)
 ok(vim.tbl_contains(sl, '## What-if: is this right?'), 'F folded what-if into spec')
-vim.api.nvim_set_current_win(layout.wins.spec)
+aic.show('spec')
 vim.cmd('silent write')
 
 -- chat send
@@ -578,8 +629,7 @@ local hl_marks = vim.api.nvim_buf_get_extmarks(sb, anchors.ns, 0, -1, { details 
 ok(#hl_marks >= 2 and hl_marks[1][4].hl_group == 'AicAnchor', 'spec anchors highlighted with AicAnchor (' .. #hl_marks .. ')')
 ok(vim.bo[sb].omnifunc:find('aic.anchors', 1, true) ~= nil, 'spec omnifunc set')
 ok(vim.bo[chat.buf].omnifunc:find('aic.anchors', 1, true) ~= nil, 'chat omnifunc set')
-vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-vim.api.nvim_set_current_win(layout.wins.spec)
+aic.show('spec')
 vim.api.nvim_buf_set_lines(sb, -1, -1, false, { '- (@ser' })
 vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(sb), 7 })
 ok(anchors.omnifunc(1, '') == 3, 'omnifunc findstart at @')
@@ -595,22 +645,21 @@ ok(vim.tbl_contains(words, '@src/') and vim.tbl_contains(words, '@src/app.js') a
   and not vim.tbl_contains(words, '@.aic/'), 'omnifunc @ -> dirs, files, specials, turns; no .aic')
 vim.api.nvim_buf_set_lines(sb, -2, -1, false, {})
 
--- gd from the spec (aic tab) -> origin tab
+-- gd from the spec -> code in the same window
 local function gd_on(text, col)
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  vim.api.nvim_set_current_win(layout.wins.spec)
+  aic.show('spec')
   vim.api.nvim_buf_set_lines(sb, -1, -1, false, { '- ' .. text })
   vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(sb), col or 3 })
   vim.api.nvim_feedkeys('gd', 'x', false)
   vim.api.nvim_buf_set_lines(sb, -2, -1, false, {})
 end
 local function at(path, line)
-  return vim.api.nvim_get_current_tabpage() == layout.origin
+  return #vim.api.nvim_list_tabpages() == 1 and #solid_wins() == 1
     and vim.fs.normalize(vim.api.nvim_buf_get_name(0)) == path
     and (line == nil or vim.fn.line('.') == line)
 end
 gd_on('@server.js')
-ok(at(root .. '/server.js', 1), 'gd file -> origin tab, line 1')
+ok(at(root .. '/server.js', 1), 'gd file -> same window, line 1')
 gd_on('@src/app.js:7')
 ok(at(root .. '/src/app.js', 7), 'gd line -> line 7')
 gd_on('@src/app.js:4-6')
@@ -622,11 +671,11 @@ ok(at(root .. '/server.js', 3), 'gd symbol -> definition line 3 (not the comment
 gd_on('@src/')
 ok(at(root .. '/src'), 'gd dir -> directory buffer')
 gd_on('plain words', 4)
-ok(vim.api.nvim_get_current_tabpage() == layout.tab, 'gd off an anchor stays (default gd)')
+ok(vim.api.nvim_get_current_buf() == sb, 'gd off an anchor stays (default gd)')
 gd_on('@diff')
 ok(wait(3000, function()
   return vim.bo.filetype == 'diff'
-end) and vim.api.nvim_get_current_tabpage() == layout.origin, 'gd @diff -> diff buffer in origin tab')
+end) and #solid_wins() == 1, 'gd @diff -> diff buffer in the same window')
 local dl = table.concat(vim.api.nvim_buf_get_lines(0, 0, -1, false), '\n')
 ok(dl:find('diff --git a/src/app.js', 1, true) ~= nil and vim.bo.buftype == 'nofile', 'diff buffer has git diff HEAD')
 gd_on('@diff:server.js')
@@ -639,13 +688,12 @@ ok(wait(3000, function()
 end) and vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == 'commit abc123', 'gd @log -> aic anchor --json text in git buffer')
 ok((read(log) or ''):find('anchor --json @log', 1, true) ~= nil, 'aic anchor --json invoked')
 gd_on('@turn:1')
-ok(vim.api.nvim_get_current_win() == layout.wins.trace and vim.api.nvim_get_current_line():find('^▸ Turn 1') ~= nil, 'gd @turn:1 -> trace turn header')
+ok(vim.api.nvim_get_current_buf() == trace.buf and vim.api.nvim_get_current_line():find('^▸ Turn 1') ~= nil, 'gd @turn:1 -> trace turn header')
 gd_on('@turn:last')
 ok(vim.api.nvim_get_current_line():find('^▸ Turn 1') ~= nil, 'gd @turn:last -> last turn header')
 
 -- gd off an anchor calls a pre-existing buffer `gd` mapping
 do
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.origin))
   local hit = 0
   local b = vim.api.nvim_create_buf(false, true)
   vim.keymap.set('n', 'gd', function()
@@ -674,20 +722,18 @@ do
 end
 
 -- gd + send in chat
-vim.api.nvim_set_current_win(layout.wins.chat)
+aic.show('questions')
 vim.api.nvim_buf_set_lines(chat.buf, -2, -1, false, { '@server.js:3 why?' })
 vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(chat.buf), 2 })
 vim.api.nvim_feedkeys('gd', 'x', false)
-ok(at(root .. '/server.js', 3), 'gd in chat -> origin tab server.js:3')
-vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-vim.api.nvim_set_current_win(layout.wins.chat)
+ok(at(root .. '/server.js', 3), 'gd in questions -> server.js:3 in the same window')
+aic.show('questions')
 vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
 ok(wait(3000, function()
   return (read(log) or ''):find('ask -- @server.js:3 why?', 1, true) ~= nil
 end), 'chat <CR> sends anchors as-is')
 
 -- global <prefix>g in a plain buffer
-vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.origin))
 vim.cmd('enew')
 vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'go @src/app.js:9' })
 vim.api.nvim_win_set_cursor(0, { 1, 5 })
@@ -696,8 +742,7 @@ ok(at(root .. '/src/app.js', 9), '<prefix>g follows anchor in any buffer')
 
 -- answer float: S appends first fenced block + submits, Y yanks, gd works
 local function ask_float()
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  vim.api.nvim_set_current_win(layout.wins.spec)
+    aic.show('spec')
   vim.ui.input = function(_, cb2)
     cb2('fence it')
   end
@@ -768,8 +813,7 @@ ok(submits() == n_sub + 1, 'second S did not submit again')
 pcall(vim.api.nvim_win_close, fwin, true)
 
 -- questions starting with `-` are not parsed as options
-vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-vim.api.nvim_set_current_win(layout.wins.spec)
+aic.show('spec')
 vim.ui.input = function(_, cb2)
   cb2('-h what?')
 end
@@ -790,8 +834,10 @@ do
   local function strip(s)
     return (s:gsub('%%#[^#]*#', ''):gsub('%%%*', ''):gsub('%%%%', '%%'))
   end
+  -- show view `name` in the window, then evaluate that window's winbar
   local function bar_of(name)
-    local w = layout.wins[name]
+    aic.show(name)
+    local w = vim.api.nvim_get_current_win()
     return vim.api.nvim_eval_statusline(vim.wo[w].winbar, { winid = w, use_winbar = true, maxwidth = 300 }).str
   end
   -- the headless screen is 80 columns: check the full format here, narrow apart
@@ -800,22 +846,27 @@ do
   local W_TRACE = 'worker · sonnet  ctx 107k (?%)  turn 21'
   local W_CHAT = 'ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85   5h:57% wk:15%'
   ok(wait(3000, function()
-    return strip(usage.cache.chat) == W_CHAT
-  end), 'chat winbar (ask + quota, inactive 0% bucket omitted): ' .. strip(usage.cache.chat))
+    return strip(usage.cache.questions) == W_CHAT
+  end), 'chat winbar (ask + quota, inactive 0% bucket omitted): ' .. strip(usage.cache.questions))
   ok(strip(usage.cache.spec) == W_SPEC, 'spec winbar (compile): ' .. strip(usage.cache.spec))
   ok(strip(usage.cache.trace) == W_TRACE, 'trace winbar (worker, null ctx_window): ' .. strip(usage.cache.trace))
   ok(usage.cache.spec:find('%#AicUsageOk#[####------] 82k/200k (41%%)%*', 1, true) ~= nil, 'bar+percent colored with AicUsageOk')
-  ok(bar_of('spec') == W_SPEC and bar_of('trace') == W_TRACE and bar_of('chat') == W_CHAT,
-    'window-local winbars evaluate to the cached strings: ' .. vim.inspect({ bar_of('spec'), bar_of('trace'), bar_of('chat') }))
-  ok(vim.api.nvim_get_option_value('winbar', { win = layout.wins.spec, scope = 'local' }):find('aic.usage', 1, true) ~= nil
-    and vim.go.winbar == '', 'winbar is window-local (global empty)')
-  local origin_win = vim.api.nvim_tabpage_get_win(layout.origin)
-  ok(vim.wo[origin_win].winbar == '', 'no winbar on non-aic windows')
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  vim.api.nvim_set_current_win(layout.wins.spec)
-  vim.cmd('split')
+  ok(bar_of('spec') == W_SPEC and bar_of('trace') == W_TRACE and bar_of('questions') == W_CHAT,
+    'view winbars evaluate to the cached strings: ' .. vim.inspect({ bar_of('spec'), bar_of('trace'), bar_of('questions') }))
+  aic.show('spec')
+  ok(vim.api.nvim_get_option_value('winbar', { win = 0, scope = 'local' }):find('aic.usage', 1, true) ~= nil
+    and vim.go.winbar == '', 'winbar is local (global empty)')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  ok(vim.wo.winbar == '', 'the winbar goes away with the view (code in the same window has none)')
+  aic.show('spec')
+  ok(fresh_opts()[4] == '', 'the spec winbar does not leak into a fresh buffer')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  single('winbar checks')
+  aic.show('spec')
+  vim.cmd('split') -- the user's own split
   local split_win = vim.api.nvim_get_current_win()
-  ok(vim.wo[split_win].winbar == '' and bar_of('spec') == W_SPEC, 'a split of an aic window does not inherit the winbar')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/server.js'))
+  ok(vim.wo[split_win].winbar == '', 'code opened in a split of a view has no winbar')
   vim.api.nvim_win_close(split_win, true)
   ok(usage.short_model('claude-fable-5-1') == 'fable' and usage.short_model('claude-haiku-5-5') == 'haiku',
     'short model names')
@@ -824,12 +875,12 @@ do
   write(root .. '/quota.json', '{"sessions":{},"quota":null}')
   usage.fetch_quota()
   ok(wait(3000, function()
-    return strip(usage.cache.chat) == 'ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85'
-  end), 'quota omitted when null: ' .. strip(usage.cache.chat))
+    return strip(usage.cache.questions) == 'ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85'
+  end), 'quota omitted when null: ' .. strip(usage.cache.questions))
   write(root .. '/quota.json', quota_json)
   usage.fetch_quota()
   ok(wait(3000, function()
-    return strip(usage.cache.chat) == W_CHAT
+    return strip(usage.cache.questions) == W_CHAT
   end), 'quota back')
 
   -- 80% hint: once per session per crossing
@@ -848,9 +899,9 @@ do
   end), '80% hint notified')
   write(dir .. '/usage.json', usage_json(171000) .. ' ')
   ok(wait(3000, function()
-    return strip(usage.cache.chat):find('86%', 1, true) ~= nil
+    return strip(usage.cache.questions):find('86%', 1, true) ~= nil
   end) and hints() == 1, 'still above 80%: no second hint (' .. hints() .. ')')
-  ok(usage.cache.chat:find('%#AicUsageHot#', 1, true) ~= nil, '>= 85% uses AicUsageHot')
+  ok(usage.cache.questions:find('%#AicUsageHot#', 1, true) ~= nil, '>= 85% uses AicUsageHot')
   -- big but far from full (1M window): the token threshold hints anyway
   do
     local orig = read(dir .. '/usage.json')
@@ -870,18 +921,18 @@ do
   do
     local usage_m = require('aic.usage')
     usage_m.force_full = false
-    local w = layout.wins.spec
-    local ow = vim.api.nvim_win_get_width(w)
+    aic.show('spec')
+    vim.cmd('vsplit') -- room to make one narrow
+    local w = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_width(w, 30)
     local got = vim.api.nvim_win_call(w, function() return usage_m.winbar('spec') end)
     ok(strip(got) == 'compile · sonnet  ctx:82k/200k (41%)  12 runs  $1.20', 'narrow winbar drops the bar: ' .. strip(got))
-    vim.api.nvim_win_set_width(w, ow)
+    vim.api.nvim_win_close(w, true)
     usage_m.force_full = true
   end
 
   -- :AicUsage float
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  vim.cmd('AicUsage')
+    vim.cmd('AicUsage')
   local ub = vim.api.nvim_get_current_buf()
   local ul = vim.api.nvim_buf_get_lines(ub, 0, -1, false)
   local ut = table.concat(ul, '\n')
@@ -972,12 +1023,11 @@ do
   end), ':AicReset compile runs `aic compact compile --reset`')
   ok(vim.fn.maparg('<leader>zU', 'n') ~= '', '<prefix>U mapped')
 
-  -- winbars survive recreated windows
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  vim.api.nvim_win_close(layout.wins.chat, true)
-  aic.open()
-  ok(#vim.api.nvim_tabpage_list_wins(layout.tab) == 3 and bar_of('chat'):find('^ask · opus') ~= nil
-    and bar_of('spec') == W_SPEC, 'winbars set on recreated windows: ' .. vim.inspect({ bar_of('spec'), bar_of('chat') }))
+  -- the winbar comes back with the view
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  ok(bar_of('questions'):find('^ask · opus') ~= nil and bar_of('spec') == W_SPEC,
+    'winbars back when the views come back: ' .. vim.inspect({ bar_of('spec'), bar_of('questions') }))
+  single('winbar views')
 end
 
 ---------------------------------------------------------------------------
@@ -993,8 +1043,8 @@ do
   ok(wait(3000, function()
     return vim.api.nvim_buf_line_count(chat.buf) > 400
   end), 'big chat.md rendered')
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.tab))
-  local cw = layout.wins.chat
+  aic.show('questions')
+  local cw = vim.api.nvim_get_current_win()
   vim.api.nvim_win_set_cursor(cw, { vim.api.nvim_buf_line_count(chat.buf), 0 })
   anchors.highlight(chat.buf)
   local top, bot = unpack(vim.api.nvim_win_call(cw, function()
@@ -1029,7 +1079,6 @@ do
   ok(wait(3000, function()
     return state.touched['src/big.js'] ~= nil
   end), 'touched.json with a 3000-line range loaded')
-  vim.cmd('tabnext ' .. vim.api.nvim_tabpage_get_number(layout.origin))
   vim.cmd('silent! only')
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/big.js'))
   local bbuf = vim.api.nvim_get_current_buf()
@@ -1101,6 +1150,106 @@ do
   end
   vim.wait(400)
   ok(state.dir == dir and timers() <= before, ('no timer leak on re-activate (%d -> %d)'):format(before, timers()))
+end
+
+---------------------------------------------------------------------------
+-- sweep: no command or key ever adds a tab, a split or the quickfix window,
+-- and no view pins its window
+do
+  vim.cmd('silent! only')
+  vim.cmd('silent! tabonly')
+  vim.cmd('cclose')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  vim.ui.select = function(items, _, cb)
+    cb(items[1])
+  end
+  vim.ui.input = function(_, cb)
+    cb('sweep question')
+  end
+  local function qf_open()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.bo[vim.api.nvim_win_get_buf(w)].buftype == 'quickfix' then
+        return true
+      end
+    end
+    return false
+  end
+  local function close_floats()
+    for _, w in ipairs(vim.api.nvim_tabpage_list_wins(0)) do
+      if vim.api.nvim_win_get_config(w).relative ~= '' then
+        pcall(vim.api.nvim_win_close, w, true)
+      end
+    end
+  end
+  local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicSpec', 'AicToggle', 'AicToggle', 'AicDiagnostics',
+    'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
+    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue' }
+  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a' }
+  for _, c in ipairs(steps) do
+    pcall(vim.cmd, c)
+    vim.wait(50)
+    close_floats()
+    ok(#vim.api.nvim_list_tabpages() == 1 and #solid_wins() == 1 and not qf_open(), ':' .. c .. ' keeps one tab, one window')
+    ok(not vim.wo.winfixbuf, ':' .. c .. ' leaves the window unpinned')
+  end
+  for _, k in ipairs(keys) do
+    pcall(vim.api.nvim_feedkeys, vim.keycode('<leader>z' .. k), 'x', false)
+    vim.wait(50)
+    close_floats()
+    ok(#vim.api.nvim_list_tabpages() == 1 and #solid_wins() == 1 and not qf_open(), '<prefix>' .. k .. ' keeps one tab, one window')
+  end
+  -- views never land in special windows (quickfix, help)
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  local code_win = vim.api.nvim_get_current_win()
+  vim.cmd('copen')
+  local qf_win = vim.api.nvim_get_current_win()
+  aic.show('trace')
+  ok(vim.api.nvim_get_current_win() == code_win and vim.api.nvim_get_current_buf() == trace.buf
+    and vim.bo[vim.api.nvim_win_get_buf(qf_win)].buftype == 'quickfix', 'a view from the quickfix window shows in the code window')
+  vim.cmd('cclose')
+  -- a float that is not aic's is never closed; aic's own are
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  local fb = vim.api.nvim_create_buf(false, true)
+  local fw = vim.api.nvim_open_win(fb, true, { relative = 'editor', row = 1, col = 1, width = 20, height = 3 })
+  aic.show('questions')
+  ok(vim.api.nvim_win_is_valid(fw) and vim.api.nvim_get_current_buf() == require('aic.chat').buf
+    and vim.api.nvim_get_current_win() ~= fw, 'a foreign float stays open; the view shows under it')
+  vim.api.nvim_win_close(fw, true)
+  local _, aw = require('aic.util').float({ 'x' }, {})
+  aic.show('trace')
+  ok(not vim.api.nvim_win_is_valid(aw) and vim.api.nvim_get_current_buf() == trace.buf, "aic's own float closes when a view is shown from it")
+  -- 'nohidden' + unsaved spec: the refused switch is notified, not raised
+  aic.show('spec')
+  vim.o.hidden = false
+  vim.api.nvim_buf_set_lines(0, -1, -1, false, { 'unsaved' })
+  local n0 = #notes
+  local okk = pcall(aic.show, 'trace')
+  ok(okk and #notes > n0 and notes[#notes]:find('E37', 1, true) ~= nil and vim.api.nvim_get_current_buf() == spec.bufnr(),
+    "'nohidden': switching away from an unsaved spec is notified (E37), not raised")
+  vim.api.nvim_buf_set_lines(0, -2, -1, false, {})
+  vim.bo.modified = false
+  vim.o.hidden = true
+  -- no session: placeholder spec, an aic buffer; replaced once a session exists
+  do
+    local saved = state.dir
+    state.dir = nil
+    view.show('spec')
+    local ph = vim.api.nvim_get_current_buf()
+    ok(ph == spec.placeholder and vim.api.nvim_buf_get_name(ph) == 'aic://spec' and view.is_aic(ph),
+      'no session: the spec view is the aic://spec placeholder')
+    state.dir = saved
+    view.on_session()
+    ok(vim.api.nvim_get_current_buf() == spec.bufnr() and view.last_aic ~= ph,
+      'session attached: the placeholder window and toggle target switch to the spec')
+  end
+  for _, name in ipairs({ 'trace', 'questions', 'spec' }) do
+    vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+    aic.show(name)
+    local vb = vim.api.nvim_get_current_buf()
+    vim.cmd([[execute "normal! \<C-^>"]])
+    ok(vim.api.nvim_get_current_buf() ~= vb and vim.api.nvim_buf_get_name(0) == root .. '/src/app.js',
+      '<C-^> works from the ' .. name .. ' view')
+  end
 end
 
 ---------------------------------------------------------------------------

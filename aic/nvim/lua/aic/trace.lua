@@ -204,7 +204,7 @@ end
 local function apply_folds(win)
   api.nvim_win_call(win, function()
     local view = vim.fn.winsaveview()
-    vim.wo.foldlevel = 1 -- even after a zm/zr: turns open, details closed
+    vim.wo[0][0].foldlevel = 1 -- even after a zm/zr: turns open, details closed
     vim.cmd('silent! normal! zX')
     local turns = {}
     for lnum, node in pairs(M.map) do
@@ -359,7 +359,7 @@ function M.jump()
   if state.seenable(ev) then
     state.set_seen({ ev.id }, true)
   end
-  require('aic.layout').open_code(ev.file, n.line or 1)
+  require('aic.view').open_code(ev.file, n.line or 1)
   return true
 end
 
@@ -388,8 +388,10 @@ function M.enter()
   M.jump()
 end
 
+-- Window options are set buffer-locally (:setlocal), so they stay with the
+-- trace and never leak into the code buffer shown next in the same window.
 local function setup_window(win)
-  local wo = vim.wo[win]
+  local wo = vim.wo[win][0]
   wo.foldmethod = 'expr'
   wo.foldexpr = "v:lua.require'aic.trace'.foldexpr(v:lnum)"
   wo.foldtext = ''
@@ -404,6 +406,7 @@ local function setup_window(win)
   if api.nvim_win_get_buf(win) == M.buf then
     apply_folds(win) -- setting 'foldlevel' reset them
   end
+  require('aic.usage').set_winbar(win, 'trace')
 end
 
 function M.get_buf()
@@ -464,16 +467,6 @@ function M.get_buf()
   })
   M.render()
   return b
-end
-
-function M.show(win)
-  win = win == 0 and api.nvim_get_current_win() or win
-  if M.buf and api.nvim_win_get_buf(win) == M.buf and vim.wo[win].foldmethod == 'expr' and folds_dir == state.dir then
-    harvest(win) -- shown already: keep what za/zo/zc did before folds are reset
-  end
-  util.set_win_buf(win, M.get_buf())
-  setup_window(win)
-  util.detach_ufo(M.buf)
 end
 
 return M
