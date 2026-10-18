@@ -39,10 +39,12 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
 
 ```json
 {"session_id": "...", "transcript_path": "/abs/...jsonl", "cwd": "/abs",
- "pane": "%12" | null, "pid": 1234, "tty": "/dev/pts/3",
+ "pane": "%12" | null, "tmux_socket": "/tmp/tmux-1000/default" | null, "pid": 1234, "tty": "/dev/pts/3",
  "state": "busy" | "idle" | "held" | "asking" | "ended",
  "last_event": "PreToolUse", "updated": 1760000000.12, "prompted": 1760000000.0}
 ```
+`tmux_socket` = the server `pane` belongs to (from `$TMUX`); aic addresses
+that server only (null: written before it was recorded, the default server).
 `pid`/`tty` = the Claude Code TUI process; delivery types into `pane` only while
 that process is alive, owns the pane's terminal and is in its foreground.
 `pane` becomes null on `SessionEnd`. Auto-attach prefers live workers with the
