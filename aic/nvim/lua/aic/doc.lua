@@ -286,20 +286,56 @@ local function on_doc(it)
   return it.file == 'doc' or it.file == 'spec'
 end
 
+-- doc -> { at = compiled_at, items = { [index] = true } }: items of that
+-- compile fixed with :AicFix, hidden until the next compile.
+local resolved = {}
+
+local function hidden(name, d, i)
+  local r = resolved[name]
+  return r ~= nil and r.at == d.compiled_at and r.items[i] == true
+end
+
+-- Hide items `idx` (indexes into the compile's items) of doc `name`'s compile
+-- `at` from its diagnostics and the quickfix list; they come back only if
+-- a later compile still reports them. unhide=true: show them again.
+function M.resolve_items(name, at, idx, unhide)
+  local d = state.diagnostics[name]
+  if not (d and at ~= nil and d.compiled_at == at and #idx > 0) then
+    return
+  end
+  local r = resolved[name]
+  if not (r and r.at == at) then
+    r = { at = at, items = {} }
+    resolved[name] = r
+  end
+  for _, i in ipairs(idx) do
+    r.items[i] = not unhide or nil
+  end
+  local b = M.bufnr(name)
+  if b then
+    M.apply_diagnostics(b)
+  end
+  if vim.fn.getqflist({ title = 0 }).title == 'aic compile ' .. name then
+    M.load_qf(name)
+  end
+end
+
 local function qf_items(name, d)
   local items = {}
   local p = M.path(name)
-  for _, it in ipairs(d.items or {}) do
-    local file = on_doc(it) and p or util.abs(state.root, it.file or 'doc')
-    local lnum = on_doc(it) and (it.line or it.spec_line) or it.line
-    table.insert(items, {
-      filename = file,
-      lnum = tonumber(lnum) or 1,
-      col = 1,
-      type = sev_type[it.severity] or 'I',
-      text = ('[%s] %s'):format(it.kind or '?', it.message or ''),
-      user_data = it,
-    })
+  for i, it in ipairs(d.items or {}) do
+    if not hidden(name, d, i) then
+      local file = on_doc(it) and p or util.abs(state.root, it.file or 'doc')
+      local lnum = on_doc(it) and (it.line or it.spec_line) or it.line
+      table.insert(items, {
+        filename = file,
+        lnum = tonumber(lnum) or 1,
+        col = 1,
+        type = sev_type[it.severity] or 'I',
+        text = ('[%s] %s'):format(it.kind or '?', it.message or ''),
+        user_data = it,
+      })
+    end
   end
   return items
 end
@@ -325,10 +361,10 @@ function M.apply_diagnostics(buf)
   local d = state.diagnostics[name]
   local out = {}
   local n = api.nvim_buf_line_count(buf)
-  for _, it in ipairs((d and not d.error and d.items) or {}) do
+  for i, it in ipairs((d and not d.error and d.items) or {}) do
     local l = on_doc(it) and (it.line or it.spec_line) or it.spec_line
     l = tonumber(l)
-    if l then
+    if l and not hidden(name, d, i) then
       table.insert(out, {
         lnum = math.max(0, math.min(l, n) - 1),
         col = 0,

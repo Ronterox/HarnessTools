@@ -24,6 +24,7 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
     seen.json             {"seen": ["<event id>", ...]}  (written by editor)
     touched.json          per-file touched line ranges (written by `aic watch`)
     diagnostics.<doc>.json  last compile of doc <doc> (written by `aic compile --doc`)
+    fixes.<doc>.json      the compiler's last proposed fixes to doc <doc> (written by `aic fix --doc`)
     chat.md               compiler REPL transcript (written by `aic ask`)
     hold                  exists ⇒ worker is to be held at its next tool call (one-shot; the gate deletes it)
     control.jsonl         submit/hold/release/held/hold-expired events (appended by backend + hook)
@@ -187,6 +188,34 @@ One compiler session serves every doc: worker activity is sent once
 (`compile_upto_seq` in state.json), and each compile replaces only that
 doc's items.
 
+## fixes.\<doc\>.json
+
+`aic fix` asks the compile session for edits to a doc that resolve that doc's
+current diagnostics. The compiler still writes nothing: the edits are data,
+and the editor applies the ones the human picks to its own buffer.
+
+```json
+{"doc": "spec", "created_at": 1760000100.0, "compiled_at": 1760000000.0, "base_hash": "<sha256 of the text>",
+ "fixes": [{"id": 1, "item": 3, "title": "Name the retried exception", "why": "one sentence",
+            "kind": "incoherent", "severity": "warning", "message": "<the item's message>",
+            "edits": [{"old": "exact text", "new": "replacement", "line": 12, "end_line": 12}],
+            "conflicts": [2]}],
+ "rejected": [{"title": "...", "item": 4, "reason": "its text occurs 2 times in the doc"}],
+ "skipped": [{"item": 5, "message": "...", "reason": "the worker is wrong here, not the doc"}],
+ "cost_usd": 0.01}
+```
+- `item` = 1-based index into that compile's `items` (`compiled_at` says which
+  compile); `null` for a supporting fix that no item names.
+- Every edit's `old` occurs exactly once in the text the proposal was made
+  from. No edit touches an `<!-- aic: ... -->` marker line, and `new` has no
+  invisible or bidi characters. A fix that fails these checks is in `rejected`.
+- `conflicts`: the fixes whose edits overlap this one's; apply at most one of
+  them.
+- An editor locates each `old` again in its current text before applying, and
+  refuses fixes that are stale (`old` gone or no longer unique).
+- `skipped`: items the compiler answered without a doc change, plus every
+  item it did not answer at all (`no doc change proposed`).
+
 ## Usage
 
 `sessions/<sid>/usage.json` (written by the backend under `usage.json.lock`):
@@ -292,6 +321,7 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, prompt}]`, newest first |
 | `aic compile [--doc D]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json. Busy: queues one more run of D and prints `compile queued: …` | summary line |
 | `aic ask [--doc D] [--context-file F] [--whatif] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet); appends to chat.md | answer markdown |
+| `aic fix [--doc D] [--from N --to M] [--content-file F] [--json]` | the compile session proposes edits to doc D that fix its diagnostics (with a range: only the items about those doc lines). F = the doc's text as the editor has it, unsaved edits included (default: the saved doc). Never edits anything. Errors if there are no diagnostics to fix | `fixes.D.json` content (`--json`), else a readable list |
 | `aic prompts [--json]` | list templates (the winning one per name) | JSON `[{name, source, overrides, path, description, header, requires, input, uses_input, marks_sent}]` (`overrides`: the sources it shadows); a broken one has `error` instead |
 | `aic render --prompt P [--doc D] [--from N --to M] [--input TEXT] [--json]` | render template P for doc D: what a submit would send | `{header, body, receipt}` |
 | `aic submit [--doc D] [--prompt P] [--from N --to M] [--input TEXT] [--now]` | render **built-in** template P (default `selection` with a range, else `spec`; project/user templates are never sent unseen: render them and use `--rendered`) and send it: type the header + paste the body into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |

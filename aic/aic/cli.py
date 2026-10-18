@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import anchors, compiler, docs, hook, paths, prompts, usage, watch, worker
+from . import anchors, compiler, docs, fixes, hook, paths, prompts, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -45,6 +45,12 @@ def main(argv=None):
     p.add_argument("--context-file")
     p.add_argument("--whatif", action="store_true")
     p.add_argument("question", nargs="+")
+    p = sub.add_parser("fix", help="ask the compiler for edits to a doc that fix its diagnostics (never applied here)")
+    p.add_argument("--doc", default=docs.DEFAULT)
+    p.add_argument("--from", dest="line_from", type=int)
+    p.add_argument("--to", dest="line_to", type=int)
+    p.add_argument("--content-file", help="the doc's text as the editor has it (default: the saved doc)")
+    p.add_argument("--json", action="store_true")
     p = sub.add_parser("prompts", help="list prompt templates")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("render", help="render a prompt template (what a submit would send)")
@@ -141,6 +147,18 @@ def main(argv=None):
             docs.check_name(a.doc)  # a question needs no doc file: it may not exist yet
             docs.migrate(root, sid)
             print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc))
+        elif a.cmd == "fix":
+            sid = _sid(root)
+            docs.resolve(root, sid, a.doc)
+            content = None
+            if a.content_file:
+                try:
+                    with open(a.content_file, encoding="utf-8") as f:
+                        content = f.read()
+                except (OSError, UnicodeError) as e:
+                    raise docs.DocError("can't read %s: %s" % (a.content_file, e))
+            r = fixes.propose(root, sid, a.doc, content, a.line_from, a.line_to)
+            print(json.dumps(r) if a.json else fixes.describe(r))
         elif a.cmd == "submit":
             sid = _sid(root)
             if a.rendered:

@@ -14,7 +14,7 @@ It never writes code.
 | Role | What it is | Can do |
 |---|---|---|
 | **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs and prompt templates with its file tools (the hook refuses; Bash is not covered) |
-| **Compiler** | Persistent headless `claude -p --resume` session | Read/Grep/Glob only. Advises; **never** stops the worker |
+| **Compiler** | Persistent headless `claude -p --resume` session | Read/Grep/Glob only. Advises; **never** stops the worker. On request (`:AicFix`) it proposes doc edits as data; you pick them, and the editor applies them |
 | **Human** | You, in Neovim | Sole authority over the worker (submit / hold / redirect) |
 
 The worker is auto-attached: most recently active session in the project dir,
@@ -125,6 +125,12 @@ The daemon:
   *reconstructed* (the real alternatives aren't recorded in transcripts). One
   key folds the sketch into the spec; from there it reaches the worker only via
   a normal submit.
+- **Fixes** (opt-in, `:AicFix`): the compile session proposes edits to the doc
+  that resolve its diagnostics. A float lists them; you pick (overlapping
+  fixes are radio alternatives) and they are applied to your buffer in one
+  undo step. The compiler stays read-only: every edit is checked (exactly one
+  match, never the marker line, no invisible characters) and located again in
+  your current text before it is applied.
 
 ## Neovim UI
 
