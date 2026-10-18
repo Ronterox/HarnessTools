@@ -36,6 +36,9 @@ end
 local function jl(t)
   return vim.json.encode(t) .. '\n'
 end
+local function count(s, pat)
+  return select(2, (s or ''):gsub(pat, ''))
+end
 
 -- silence notifications but keep them for assertions
 local notes = {}
@@ -138,6 +141,18 @@ case "$1" in
   status) printf '{"root":"%s","session_id":"%s","dir":".aic/sessions/%s","worker":{"session_id":"%s","state":"busy"},"hold":false,"compiling":false,"watching":true}\n' ;;
   sessions) printf '[{"session_id":"%s","updated":%d,"state":"busy","title":"greeting","pane":null,"attached":true}]\n' ;;
   watch) cat >/dev/null ;;
+  prompts) cat <<'EOT'
+[{"name":"review","source":"built-in","path":"/x/review.md","description":"Review only","header":"Review:","requires":[],"input":null,"uses_input":false,"marks_sent":false},
+ {"name":"spec","source":"built-in","path":"/x/spec.md","description":"The doc","header":"Here:","requires":["changed"],"input":null,"uses_input":false,"marks_sent":true},
+ {"name":"message","source":"user","path":"/x/message.md","description":"A message","header":"Read:","requires":[],"input":"Message","uses_input":true,"marks_sent":false},
+ {"name":"bad","source":"project","path":"/x/bad.md","error":"template bad: unknown key"}]
+EOT
+;;
+  render) case "$*" in
+    *refuse*) echo "aic: nothing to send" >&2; exit 1 ;;
+  esac
+  printf '{"header":"[aic] Rendered by %%s","body":"body one\\nbody two","receipt":{"prompt":"%%s","doc":"%%s","marks_sent":false}}\n' "$4" "$4" "$6" ;;
+  submit) if [ "$2" = --rendered ]; then cp "$3" rendered.json; fi; echo "submitted to %%9: sent" ;;
   docs) printf '[{"name":"spec","path":".aic/docs/spec.md","mtime":%d,"compile":true,"prompt":null}]\n' ;;
   ask) case "$*" in
     *fence*) cat <<'EOT'
@@ -361,14 +376,144 @@ ok(vim.api.nvim_get_current_buf() == require('aic.chat').buf, 'toggle returns to
 vim.cmd([[execute "normal! \<C-^>"]])
 ok(vim.api.nvim_get_current_buf() == cbuf and vim.deep_equal(opts_now(), wo0), '<C-^> from questions -> code, options intact')
 
--- submit / hold / continue reach the backend
+-- hold / continue reach the backend
 aic.hold()
 aic.continue('go on')
-aic.submit({})
 ok(wait(3000, function()
   local s = read(log) or ''
-  return s:find('hold', 1, true) and s:find('continue -- go on', 1, true) and s:find('submit', 1, true)
-end), 'hold/continue/submit invoked backend')
+  return s:find('hold', 1, true) and s:find('continue -- go on', 1, true)
+end), 'hold/continue invoked backend')
+
+-- submit: template picker -> preview (current window) -> edit -> :w sends exactly that
+local pick_name = 'review'
+local picker_items
+vim.ui.select = function(items, o, cb)
+  picker_items = vim.tbl_map(function(it)
+    return o.format_item and o.format_item(it) or it
+  end, items)
+  for _, it in ipairs(items) do
+    if type(it) == 'table' and it.name == pick_name then
+      return cb(it)
+    end
+  end
+  cb(items[1])
+end
+local submit = require('aic.submit')
+local before_buf = vim.api.nvim_get_current_buf()
+aic.submit({})
+ok(wait(3000, function()
+  return vim.api.nvim_buf_get_name(0) == 'aic://preview'
+end), 'submit: picked a template, the preview shows in the current window')
+single('submit preview')
+ok((read(log) or ''):find('prompts --json', 1, true) and (read(log) or ''):find('render --json --prompt review --doc spec', 1, true),
+  'submit runs `aic prompts` then `aic render --prompt review --doc spec`')
+ok(picker_items and picker_items[4]:find('^%[project%] bad  %(broken') and picker_items[2] == '[built-in] review — Review only',
+  'picker lists templates with description and source, broken ones marked: ' .. vim.inspect(picker_items))
+ok(vim.deep_equal(vim.api.nvim_buf_get_lines(0, 0, -1, false), { '[aic] Rendered by review', 'body one', 'body two' }),
+  'preview: line 1 = typed header, then the pasted body')
+ok(vim.bo.buftype == 'acwrite' and #vim.api.nvim_buf_get_extmarks(0, -1, 0, 0, { details = true }) > 0, 'preview: acwrite, separator shown')
+vim.api.nvim_buf_set_lines(0, 2, 3, false, { 'body two, edited' })
+vim.api.nvim_buf_set_lines(0, 0, 1, false, { 'Fix item 3' }) -- a digit in the typed header
+ok(wait(1000, function()
+  return #vim.diagnostic.get(0) == 1
+end), 'a digit in the header is flagged live')
+local n_sub0 = count(read(log), 'submit %-%-rendered')
+vim.cmd('write')
+vim.wait(200)
+ok(count(read(log), 'submit %-%-rendered') == n_sub0 and vim.api.nvim_buf_get_name(0) == 'aic://preview',
+  ':w with a bad header sends nothing; the preview stays')
+vim.api.nvim_buf_set_lines(0, 0, 1, false, { 'Do it\u{E0041}\u{200B}' }) -- invisible tag + zero-width
+ok(wait(1000, function()
+  return #vim.diagnostic.get(0) == 2
+end), 'invisible characters in the header are flagged, one by one')
+ok(#vim.tbl_filter(function(m)
+  return m[4].virt_text and m[4].virt_text[1][1]:find('U+E0041', 1, true)
+end, vim.api.nvim_buf_get_extmarks(0, -1, 0, -1, { details = true })) == 1, 'an invisible character gets a visible ⟨U+…⟩ label')
+vim.api.nvim_buf_set_lines(0, 0, 1, false, { '[aic] Review only the edited part:' })
+ok(wait(1000, function()
+  return #vim.diagnostic.get(0) == 0
+end), 'fixed header: flag cleared')
+local n_already = #vim.tbl_filter(function(m) return m == 'aic: already sending this prompt' end, notes)
+vim.cmd('write')
+pcall(vim.cmd, 'write') -- a second :w while the first send runs
+ok(wait(3000, function()
+  return vim.api.nvim_get_current_buf() == before_buf
+end), ':w sent: back to the buffer before the preview')
+local sent = vim.json.decode(read(root .. '/rendered.json') or 'null')
+ok(sent and sent.header == '[aic] Review only the edited part:' and sent.body == 'body one\nbody two, edited'
+  and sent.receipt.prompt == 'review', 'what is sent is the edited preview, with its receipt: ' .. vim.inspect(sent))
+ok(submit.last_prompt.spec == 'review', 'the template is remembered for this doc')
+ok(#vim.tbl_filter(function(m) return m == 'aic: already sending this prompt' end, notes) == n_already + 1
+  and count(read(log), 'submit %-%-rendered') == n_sub0 + 1, 'a second :w while sending sends nothing')
+-- 'nohidden' + an unsaved buffer: the preview can't show; nothing is left behind, the cursor stays
+do
+  vim.cmd('enew')
+  vim.api.nvim_buf_set_lines(0, 0, -1, false, { 'a', 'b', 'c' })
+  vim.api.nvim_win_set_cursor(0, { 3, 0 })
+  vim.o.hidden = false
+  submit.preview({ header = 'h', body = 'b', receipt = { prompt = 'p', doc = 'spec' } }, {})
+  ok(vim.fn.bufexists('aic://preview') == 0 and vim.api.nvim_win_get_cursor(0)[1] == 3,
+    "'nohidden': a refused preview leaves no buffer and keeps the cursor")
+  vim.o.hidden = true
+  vim.cmd('bwipeout!')
+end
+-- next time it is offered first; leaving the preview cancels
+aic.submit({})
+ok(wait(3000, function()
+  return vim.api.nvim_buf_get_name(0) == 'aic://preview'
+end) and picker_items[1]:find('^%[built%-in%] review') ~= nil, 'the last template for the doc is offered first')
+local n_notes = #notes
+vim.cmd([[execute "normal! \<C-^>"]])
+ok(vim.fn.bufexists('aic://preview') == 0 and notes[#notes] == 'aic: preview closed, nothing sent' and #notes > n_notes,
+  'leaving the preview cancels (wiped, notified)')
+-- a template with input asks for it; a render error is reported, nothing opens
+pick_name = 'message'
+vim.ui.input = function(o, cb)
+  ok(o.prompt == 'aic message: Message: ', 'input prompt from the template: ' .. o.prompt)
+  cb('please refuse this')
+end
+aic.submit({})
+ok(wait(3000, function()
+  return (read(log) or ''):find('render --json --prompt message --doc spec --input=please refuse this', 1, true) ~= nil
+end), 'input is passed to render')
+ok(wait(3000, function()
+  return notes[#notes]:find('aic render failed', 1, true) ~= nil
+end) and vim.fn.bufexists('aic://preview') == 0, 'render error notified, no preview')
+pick_name = 'review'
+-- :AicPrompts: a built-in is copied (project or user) before editing; new ones from a skeleton
+do
+  local real_select = vim.ui.select
+  vim.ui.select = function(items, o, cb)
+    if o.prompt:find('^aic: put') then
+      return cb(items[1]) -- project
+    end
+    return real_select(items, o, cb)
+  end
+  vim.cmd('AicPrompts')
+  ok(wait(3000, function()
+    return vim.api.nvim_buf_get_name(0) == root .. '/.aic/prompts/review.md'
+  end) and (read(root .. '/.aic/prompts/review.md') or ''):find('^%-%-%-\ndescription:') ~= nil,
+    ':AicPrompts on a built-in copies it to .aic/prompts and opens it here')
+  single(':AicPrompts')
+  pick_name = 'none' -- -> the last item: + new template
+  local real_items_last = vim.ui.select
+  vim.ui.select = function(items, o, cb)
+    if o.prompt == 'aic: prompt templates' then
+      return cb(items[#items])
+    end
+    return real_items_last(items, o, cb)
+  end
+  vim.ui.input = function(_, cb)
+    cb('mine.md')
+  end
+  vim.cmd('AicPrompts')
+  ok(wait(3000, function()
+    return vim.api.nvim_buf_get_name(0) == root .. '/.aic/prompts/mine.md'
+  end) and (read(root .. '/.aic/prompts/mine.md') or ''):find('{{content}}', 1, true) ~= nil,
+    '+ new template: skeleton in .aic/prompts/mine.md, opened here')
+  vim.ui.select = real_select
+  pick_name = 'review'
+end
 
 -- spec :w -> compile
 aic.show('doc')
@@ -380,9 +525,6 @@ ok(wait(3000, function()
 end), ':w in spec runs aic compile')
 
 -- :w during a running compile still calls `aic compile`; the backend queues it
-local function count(s, pat)
-  return select(2, (s or ''):gsub(pat, ''))
-end
 wait(3000, function()
   return not state.local_compiling
 end)
@@ -531,7 +673,7 @@ ok(wait(3000, function()
 end), 'ask float shows answer')
 ok((read(log) or ''):find('ask %-%-doc spec %-%-context%-file .+%.json %-%- is this right%?') ~= nil, 'aic ask --context-file invoked')
 local float_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-ok(float_lines[#float_lines] == '_q close · P append to doc · S append pseudocode to doc + submit · Y yank pseudocode_', 'footer lists uppercase keys: ' .. float_lines[#float_lines])
+ok(float_lines[#float_lines] == '_q close · P append to doc · S append pseudocode to doc + preview submit · Y yank pseudocode_', 'footer lists uppercase keys: ' .. float_lines[#float_lines])
 ok(vim.fn.maparg('p', 'n') == '' and vim.fn.maparg('y', 'n') == '' and vim.fn.maparg('s', 'n') == '' and vim.fn.maparg('f', 'n') == '',
   'no lowercase p/y/s/f maps on the answer float')
 vim.api.nvim_feedkeys('P', 'x', false)
@@ -765,9 +907,17 @@ ok(sl[first] == '## From compiler' and sl[first + 2] == 'step one' and sl[last] 
   'S appended first fenced block under ## From compiler: heading')
 ok(not vim.bo[sb].modified and read(spec_path):find('## From compiler', 1, true) ~= nil, 'S saved spec.md')
 ok(wait(3000, function()
-  return (read(log) or ''):find(('submit --doc spec --from %d --to %d'):format(first, last), 1, true) ~= nil
-end), ('S ran aic submit --from %d --to %d'):format(first, last))
+  return (read(log) or ''):find(('render --json --prompt selection --doc spec --from %d --to %d'):format(first, last), 1, true) ~= nil
+end), ('S renders the selection template for lines %d-%d'):format(first, last))
 ok(not vim.api.nvim_win_is_valid(fwin), 'S closed the float')
+ok(wait(3000, function()
+  return vim.api.nvim_buf_get_name(0) == 'aic://preview'
+end), 'S: the preview opens in the window under the float')
+single('S preview')
+vim.cmd('write')
+ok(wait(3000, function()
+  return vim.api.nvim_buf_get_name(0) ~= 'aic://preview'
+end) and vim.json.decode(read(root .. '/rendered.json')).receipt.prompt == 'selection', 'S preview :w sends it')
 
 ok(ask_float(), 'second fenced answer float shown')
 vim.api.nvim_feedkeys('Y', 'x', false)
@@ -798,7 +948,7 @@ ok(vim.fn.getreg('"') == 'step one\nstep two\n', 'reopened float keeps its Y key
 
 -- S is one-shot per answer, also across :AicLastAnswer
 local function submits()
-  return count(read(log), 'submit %-%-doc spec %-%-from')
+  return count(read(log), 'render %-%-json %-%-prompt selection %-%-doc spec %-%-from')
 end
 local n_sub = submits()
 vim.cmd('AicLastAnswer')
@@ -809,7 +959,7 @@ end), 'S on the reopened answer submits once')
 vim.cmd('AicLastAnswer')
 fwin = vim.api.nvim_get_current_win()
 vim.api.nvim_feedkeys('S', 'x', false)
-ok(vim.tbl_contains(notes, 'aic: already submitted'), 'second S notifies "aic: already submitted"')
+ok(notes[#notes]:find('^aic: already appended to the doc') ~= nil, 'second S says the block is already in the doc')
 vim.wait(300)
 ok(submits() == n_sub + 1, 'second S did not submit again')
 pcall(vim.api.nvim_win_close, fwin, true)
@@ -1166,6 +1316,11 @@ do
     if o.prompt and o.prompt:find('when saved', 1, true) then
       return cb(answer)
     end
+    for _, it in ipairs(items) do -- the template picker: review
+      if type(it) == 'table' and it.name == 'review' then
+        return cb(it)
+      end
+    end
     cb(items[1])
   end
   vim.cmd('AicDocNew notes')
@@ -1206,13 +1361,14 @@ do
   vim.cmd('AicDoc notes')
   vim.cmd('3,3AicSubmit')
   ok(wait(3000, function()
-    return (read(log) or ''):find('submit --doc notes --from 3 --to 3', 1, true) ~= nil
-  end), 'range submit in notes -> --doc notes')
+    return (read(log) or ''):find('render --json --prompt review --doc notes --from 3 --to 3', 1, true) ~= nil
+  end), 'range submit in notes -> render --doc notes --from 3 --to 3')
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
   aic.submit({})
   ok(wait(3000, function()
-    return (read(log) or ''):find('submit --doc notes\n', 1, true) ~= nil
+    return (read(log) or ''):find('render --json --prompt review --doc notes\n', 1, true) ~= nil
   end), 'submit from code uses the last doc entered (notes)')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js')) -- (leaves the preview: cancelled)
   aic.show('questions')
   chat.ask('which doc?')
   ok(wait(3000, function()
@@ -1287,7 +1443,7 @@ do
   local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicDoc', 'AicToggle', 'AicToggle', 'AicDiagnostics',
     'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
     'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue' }
-  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a' }
+  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p' }
   for _, c in ipairs(steps) do
     pcall(vim.cmd, c)
     vim.wait(50)

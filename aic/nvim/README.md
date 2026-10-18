@@ -60,8 +60,9 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>q` | `:AicQuestions`: the questions (compiler chat) in this window | `(aic-questions)` |
 | `<prefix>d` | `:AicDocs`: pick a doc (newest first) or `+ new doc`; shown in this window | `(aic-docs)` |
 | `<prefix>D` | `:AicDocNew [name]`: new doc | `(aic-doc-new)` |
-| `<prefix>s` (n, x) | `:AicSubmit`: the current doc's diff; with a visual range (in a doc), `--from/--to` | `(aic-submit)` |
-| `<prefix>S` (n, x) | `:AicSubmitNow`: same with `--now` | `(aic-submit-now)` |
+| `<prefix>s` (n, x) | `:AicSubmit`: submit the current doc through a prompt template, with a preview (see [Submit](#submit)); with a visual range (in a doc), just those lines | `(aic-submit)` |
+| `<prefix>S` (n, x) | `:AicSubmitNow`: same, sent with `--now` (interrupts the running tool) | `(aic-submit-now)` |
+| `<prefix>p` | `:AicPrompts`: edit a prompt template (a built-in is copied to the project or user dir first) or make one | `(aic-prompts)` |
 | `<prefix>h` | `:AicHold` | `(aic-hold)` |
 | `<prefix>c` | `:AicContinue [msg]` | `(aic-continue)` |
 | `<prefix>?` | `:AicAsk`: ask about the thing under the cursor (any buffer) | `(aic-ask)` |
@@ -141,14 +142,42 @@ adds it under `## What-if: <question>` (what-if). If the doc is open, the text
 goes into the buffer and you save it yourself. In both floats:
 
 - `S` appends the answer's first fenced code block (or the whole answer if it
-  has none) under `## From compiler`, saves the doc, and runs
-  `aic submit --doc <doc> --from <heading line> --to <last line>`.
-  `S` works once per answer (also after `:AicLastAnswer`); pressing it again
-  only notifies `aic: already submitted`.
+  has none) under `## From compiler`, saves the doc, and opens the `selection`
+  template's preview of those lines in the window under the float (`:w` sends).
+  `S` appends once per answer (also after `:AicLastAnswer`); pressing it again
+  only says the block is already in the doc (select it and `<prefix>s`).
 - `Y` yanks the same block (linewise) into the unnamed register.
 - `gd` follows anchors in the answer; they are highlighted.
 
 The footer lists the keys.
+
+## Submit
+
+`<prefix>s` (`:AicSubmit`, a range in a doc for just those lines):
+
+1. Picker of prompt templates (`aic prompts --json`): `[source] name — description`
+   (source first, `overrides built-in` when a project/user template shadows
+   one; the description is capped, so it can't push the source out of view).
+   First the doc's marker `prompt=`, then the template last sent for this doc,
+   then the rest by name; broken templates last, with their error.
+2. A template that asks for input (`{{input}}`) prompts for it (`vim.ui.input`).
+3. `aic render --json` → the **preview** (`aic://preview`) opens in the current
+   window: line 1 is the header that will be **typed** as you, the rest is the
+   **pasted** body; a virtual line between them says `queued` or `send now`.
+   Edit anything. Each digit, `@`, `\` or invisible character (zero-width,
+   bidi, Unicode tags…) in the header is highlighted, non-ASCII ones get a
+   `⟨U+…⟩` label, and `:w` refuses (the backend checks again). Editing the
+   body doesn't change what is recorded as sent for the doc (a `marks_sent`
+   template records the doc as rendered).
+4. `:w` sends exactly what you see (`aic submit --rendered`) and returns to the
+   buffer you were in; on an error the preview stays. A second `:w` while
+   sending is ignored. Leaving the preview
+   (`<C-^>`, `:b`, `<prefix>z`) closes it and sends nothing. No normal-mode
+   keys are mapped there.
+
+Templates: PROTOCOL.md "Prompt templates". `:AicPrompts` lists them (+ new
+template from a skeleton); built-ins are read-only, so picking one copies it
+to `.aic/prompts/` or `~/.config/aic/prompts/` (same name overrides it).
 
 ## Anchors
 
@@ -288,7 +317,9 @@ into a fresh buffer), trace rendering and folds (including `compact` events), `]
 persistence, the watcher (one per root, all stopped on exit, no leaked
 timers), quickfix and diagnostics, signs and `]w` (bounded to the view, only
 changed buffers re-applied), human-edit hunks, the
-statusline, submit/hold/continue, docs (new doc with/without the compile
+statusline, hold/continue, submit (picker order, broken templates, input,
+preview header flag, `:w` sends the edited text with its receipt, leaving
+cancels, render errors, `:AicPrompts` copy/new), docs (new doc with/without the compile
 marker, per-doc diagnostics and statusline, picker, `--doc` on submit/ask,
 migration before the first docs dir), compile on `:w` (and queued compiles),
 ask/what-if floats (`P` `F` `S` `Y` `gd`), chat, and usage: the three

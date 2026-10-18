@@ -16,8 +16,9 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
   compilers.json          ["<sid>", ...]  claude sessions owned by aic (excluded from pickers)
   watch.pid               pid of the running `aic watch`
   docs/<name>.md          the human's docs, shared by all worker sessions (editor writes; see Docs)
+  prompts/<name>.md       project prompt templates (see Prompt templates)
   sessions/<sid>/
-    sent.<doc>.md         what this worker last received of doc <doc> (marker stripped), at its last full submit
+    sent.<doc>.md         what this worker last received of doc <doc> as work (marker stripped): set by a `marks_sent` send
     trace.jsonl           normalized events (written ONLY by `aic watch`)
     human.jsonl           human code-save events (appended ONLY by the editor)
     seen.json             {"seen": ["<event id>", ...]}  (written by editor)
@@ -93,6 +94,79 @@ Ranges are in **current** file coordinates (later edits shift earlier ranges).
   `diagnostics.json` `upto_seq` its `compile_upto_seq`. The old files are left in place.
 - Submit: range lines (`--from/--to`) are file lines, but the marker line is
   never sent; diff hunks are computed on the doc without its marker.
+
+## Prompt templates
+
+What a submit sends. Lookup, first match wins: `.aic/prompts/<name>.md`
+(project), `$XDG_CONFIG_HOME/aic/prompts/<name>.md` (user, default
+`~/.config/aic/prompts`), `aic/prompts/<name>.md` (built-in: `spec`,
+`selection`, `message`, `review`).
+
+```markdown
+---
+description: one line for the picker
+header: "Typed into the worker as your own words: ask it to act on the body"
+requires: [changed]   # refuse to render while these are empty
+marks_sent: true      # this send makes the doc the worker's diff base
+input: Message        # {{input}} is asked for (the prompt text)
+---
+the body, pasted under the header: {{doc}}, {{diff}}, … anywhere
+```
+
+- **Header** = typed as the human (one line); **body** = pasted. Claude Code
+  treats pasted text as data unless typed words ask for it, so the header must
+  ask for something. The rendered header is checked at render and again at
+  send: whitespace collapsed, `[aic] ` prepended when missing (so it can never
+  be a `/command`, `!bash` or `#memory`), at most 300 characters, and refused
+  if it holds digits of any script (a dialog could take them as menu choices),
+  `@` (opens Claude Code's file picker), `\`, or anything invisible: Unicode
+  categories Cc Cf Cs Co Cn Zl Zp (controls, zero-width, bidi, Unicode tags,
+  private use), which would type words nobody saw in the preview. The body is
+  refused if it holds Unicode tag characters or bidi overrides. A trailing `;`
+  is escaped for tmux.
+- **Front matter values**: `"double"` (with `\"`) or `'single'` quotes,
+  optionally followed by `# comment`; unquoted, ` #` starts a comment, so
+  quote a value that contains `#`. CRLF files are read as LF.
+- **Syntax** (header and body): `{{var}}`; `{{#var}}…{{/var}}` kept when var
+  is non-empty, `{{^var}}…{{/var}}` when empty (whitespace-only = empty);
+  sections nest with different names; `\{{` = literal `{{`. A line holding
+  only a section tag disappears with its newline. Values are inserted once and
+  never re-scanned. Unknown names, unclosed or mismatched sections are errors.
+  The body is trimmed of leading/trailing newlines.
+
+| var | value |
+|---|---|
+| `doc` | the doc without its marker line, stripped |
+| `doc.name` | the doc's name |
+| `selection`, `selection.lines` | the selected file lines (marker line excluded) and `N-M`; empty without a range |
+| `content` | `selection` with a range, else `doc` |
+| `previous` | what this worker last got of the doc (`sent.<doc>.md`); empty = never |
+| `changed` | `yes` when the doc differs from `previous` |
+| `diff` | unified diff `previous` → doc (empty when never sent or unchanged) |
+| `anchors` | referenced context: anchors in what is sent, resolved for the worker (see Anchors, submit) |
+| `hand_edits` | the human's code saves since the last submit (`file:N-M, …`) |
+| `diagnostics` | the doc's last compile items, one per line |
+| `input` | text asked for at submit (`--input`) |
+
+- **Anchors** are resolved from: the body's own text, `input`, the selection,
+  and the doc, except that when `diff` is sent (and non-empty) only the
+  diff's added lines count instead of the whole doc. A body that does not place
+  `{{anchors}}` gets them appended (`Referenced context (resolved from my
+  @anchors):`); one that does not place `{{hand_edits}}` gets
+  `My hand edits since my last message: …` appended. No template drops them.
+  "Placed" means actually rendered: a `{{hand_edits}}` inside a section that
+  is left out does not count.
+- **Receipt** (part of `aic render --json`): `{prompt, source, doc,
+  marks_sent, sent, previous_hash, uses_previous, edits_sent, seq}`. It comes
+  back from a file, so sending checks it first (types; `seq` an int within
+  the trace; the doc name). Sending applies it: `sent.<doc>.md` := `sent`
+  only when `marks_sent`; `submit_seq` := max(current, `seq`) only when
+  `edits_sent`. A send whose template is `marks_sent` or placed `diff`,
+  `previous` or `changed` is refused when `sent.<doc>.md` changed since
+  rendering (a stale diff): render again. Sends to one worker are serialized
+  (check, type, record under one lock). Editing the body in a preview does not
+  change what is recorded as sent: a `marks_sent` send records the doc as
+  rendered.
 
 ## diagnostics.\<doc\>.json
 
@@ -215,7 +289,10 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, prompt}]`, newest first |
 | `aic compile [--doc D]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json. Busy: queues one more run of D and prints `compile queued: …` | summary line |
 | `aic ask [--doc D] [--context-file F] [--whatif] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet); appends to chat.md | answer markdown |
-| `aic submit [--doc D] [--from N --to M] [--now]` | type the request + paste doc D's diff since sent.D.md (or its file lines N..M) into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |
+| `aic prompts [--json]` | list templates (the winning one per name) | JSON `[{name, source, overrides, path, description, header, requires, input, uses_input, marks_sent}]` (`overrides`: the sources it shadows); a broken one has `error` instead |
+| `aic render --prompt P [--doc D] [--from N --to M] [--input TEXT] [--json]` | render template P for doc D: what a submit would send | `{header, body, receipt}` |
+| `aic submit [--doc D] [--prompt P] [--from N --to M] [--input TEXT] [--now]` | render **built-in** template P (default `selection` with a range, else `spec`; project/user templates are never sent unseen: render them and use `--rendered`) and send it: type the header + paste the body into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |
+| `aic submit --rendered FILE [--now]` | send a rendered prompt (`aic render --json`, header/body possibly edited); applies its receipt | message |
 | `aic hold` | set hold | message |
 | `aic continue [message...]` | clear hold; type `message` (default "continue") into worker pane | message |
 | `aic usage [--json]` | per-session context/cost + account quota (see Usage) | text / JSON |

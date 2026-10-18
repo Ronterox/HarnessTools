@@ -58,9 +58,14 @@ The daemon:
    - **incoherent** — spec contradicts itself / is ambiguous / has holes
    - **model** — your spec assumes something about the code that isn't true
    - **unspecified** — worker changed things the spec doesn't mention
-3. **Submit** (explicit): sends the spec diff since last submit (or a visual
-   selection) to the worker, plus any human code edits since last submit. The
-   worker only ever sees what you submit — the spec is your private scratch.
+3. **Submit** (explicit): you pick a **prompt template** (yours or a built-in:
+   `spec` sends the doc's diff since this worker last got it, `selection` the
+   selected lines, `message`, `review`…); the rendered prompt opens for
+   editing and `:w` sends exactly that, plus any human code edits since the
+   last submit. The worker only ever sees what you submit — docs are your
+   private scratch. Templates come from files the worker could write, so the
+   typed header is checked (no digits, `@`, invisible characters) and every
+   editor send goes through the preview.
 4. **Hold**: one key. The worker stops at its next tool call and waits.
    Release with *continue* or with a submit.
 
