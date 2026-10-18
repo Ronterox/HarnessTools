@@ -13,7 +13,7 @@ It never writes code.
 
 | Role | What it is | Can do |
 |---|---|---|
-| **Worker** | A normal Claude Code session, run however you like | Everything it normally does |
+| **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs and prompt templates with its file tools (the hook refuses; Bash is not covered) |
 | **Compiler** | Persistent headless `claude -p --resume` session | Read/Grep/Glob only. Advises; **never** stops the worker |
 | **Human** | You, in Neovim | Sole authority over the worker (submit / hold / redirect) |
 

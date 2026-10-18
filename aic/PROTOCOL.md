@@ -69,6 +69,7 @@ Common fields: `id` (string, stable, e.g. `"e17"`), `seq` (int), `ts` (unix floa
 | `hold` / `release` | — |
 | `held` | `tool` — the gate stopped the worker before this tool |
 | `hold-expired` | the turn ended before any tool call; the hold was dropped |
+| `guarded` | `tool`, `file` — the hook refused a worker file tool aimed at `.aic/docs/` or `.aic/prompts/` |
 | `compact` | the worker's context was compacted: `trigger` (manual/auto), `pre`, `post` tokens |
 
 Hunk: `{"start": <new-file first line, 1-based>, "count": <new line count>, "lines": ["+added", "-removed", " context"]}`.
@@ -300,7 +301,7 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic usage [--json]` | per-session context/cost + account quota (see Usage) | text / JSON |
 | `aic compact compile\|ask\|worker [--reset]` | summarize-and-restart (or reset) a compiler session; `worker` types `/compact` into the worker pane (no reset) | message |
 | `aic anchor [--json] TEXT` | resolve every anchor in TEXT (see Anchors) | blocks / JSON |
-| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook` | hook JSON |
+| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook`. Records the worker (pane, tmux socket, pid, state), enforces holds, and denies the worker's Write/Edit/MultiEdit/NotebookEdit into `.aic/docs/` and `.aic/prompts/` (symlinks resolved; the turn goes on). Never runs for the compiler (`AIC_ROLE=compiler`, project hooks off) | hook JSON |
 
 Exit code non-zero ⇒ stderr holds a one-line human-readable error.
 

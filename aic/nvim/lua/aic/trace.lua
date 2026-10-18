@@ -137,6 +137,8 @@ local function build()
         add(1, { { '▶ release', 'AicHold' } }, node)
       elseif ev.kind == 'held' then
         add(1, { { '⏹ held' .. (ev.tool and (' before ' .. ev.tool) or ''), 'AicHold' } }, node)
+      elseif ev.kind == 'guarded' then -- the worker tried to change a doc or prompt template
+        add(1, { { ('⛔ blocked %s %s'):format(ev.tool or '?', ev.file or '?'), 'AicError' } }, node)
       elseif ev.kind == 'prompt' then
         add(1, { { ev.midturn and '✉ you (mid-turn) ' or '✉ you ', 'AicPrompt' }, { util.first_line(ev.text), 'AicPrompt' } }, node)
         add_rest(ev, ev.text, 2, 'AicPrompt')
