@@ -102,6 +102,7 @@ aic init | sessions | attach [sid|--auto] | status
 aic watch                    # trace builder (the plugin starts it)
 aic docs [--json]            # list docs (migrates the old spec.md once)
 aic compile [--doc D]        # doc vs worker activity -> diagnostics.D.json (queues if busy)
+aic fix [--doc D] [--from N --to M] [--content-file F] [--json]   # proposed doc edits for its diagnostics
 aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will see)
 aic usage [--json]           # context/cost per session + account quota
 aic compact compile|ask [--reset]

@@ -153,6 +153,9 @@ EOT
   esac
   printf '{"header":"[aic] Rendered by %%s","body":"body one\\nbody two","receipt":{"prompt":"%%s","doc":"%%s","marks_sent":false}}\n' "$4" "$4" "$6" ;;
   submit) if [ "$2" = --rendered ]; then cp "$3" rendered.json; fi; echo "submitted to %%9: sent" ;;
+  fix) prev=; for a in "$@"; do if [ "$prev" = --content-file ]; then cp "$a" fixcontent.md; fi; prev=$a; done
+    if [ -f fixfail ]; then echo "aic: no diagnostics to fix in notes (compile it first)" >&2; exit 1; fi
+    cat fixes.json ;;
   docs) printf '[{"name":"spec","path":".aic/docs/spec.md","mtime":%d,"compile":true,"prompt":null}]\n' ;;
   ask) case "$*" in
     *fence*) cat <<'EOT'
@@ -1412,6 +1415,217 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- :AicFix: proposals in a float, picked like radio buttons, applied in one undo step
+do
+  local doc = require('aic.doc')
+  local fix = require('aic.fix')
+  vim.cmd('AicDoc notes')
+  local nb = doc.bufnr('notes')
+  vim.api.nvim_buf_set_lines(nb, 0, -1, false, { '# notes', '', '- idea @src/app.js:3', '- unsaved' })
+  write(dir .. '/diagnostics.notes.json', vim.json.encode({ doc = 'notes', compiled_at = 11, upto_seq = 99, summary = 's',
+    items = { { kind = 'incoherent', severity = 'error', file = 'doc', line = 3, message = 'which idea?' },
+      { kind = 'model', severity = 'warning', file = 'doc', line = 1, message = 'title?' },
+      { kind = 'unspecified', severity = 'info', file = 'src/app.js', line = 9, message = 'cache' } } }))
+  ok(wait(3000, function()
+    return #vim.diagnostic.get(nb, { namespace = doc.ns }) == 2
+  end), 'notes has two doc diagnostics before fixing')
+  write(root .. '/fixes.json', vim.json.encode({ doc = 'notes', compiled_at = 11, created_at = 1,
+    fixes = {
+      { id = 1, item = 1, title = 'Name the idea', why = 'Say which one.', kind = 'incoherent', message = 'which idea?',
+        edits = { { old = '- idea @src/app.js:3', new = '- greeting idea @src/app.js:3', line = 3, end_line = 3 } }, conflicts = { 2 } },
+      { id = 2, item = 1, title = 'Drop the idea', why = '', edits = { { old = '- idea @src/app.js:3\n', new = '', line = 3, end_line = 3 } },
+        conflicts = { 1 } },
+      { id = 3, item = 2, title = 'Title it', why = 'w', edits = { { old = '# notes', new = '# Notes: greeting', line = 1, end_line = 1 } },
+        conflicts = {} },
+      { id = 4, title = 'Stale one', edits = { { old = 'not in the doc', new = 'x', line = 9, end_line = 9 } }, conflicts = {} },
+    },
+    rejected = { { title = 'Twice', reason = 'its text occurs 2 times in the doc' } },
+    skipped = { { item = 3, message = 'cache', reason = 'the worker should drop it' } } }))
+  local function fbuf_lines()
+    return vim.api.nvim_buf_get_lines(0, 0, -1, false)
+  end
+  local function line_of(pat)
+    for i, l in ipairs(fbuf_lines()) do
+      if l:find(pat, 1, true) then
+        return i
+      end
+    end
+  end
+  local function press_on(pat, key)
+    vim.api.nvim_win_set_cursor(0, { line_of(pat), 0 })
+    vim.api.nvim_feedkeys(vim.keycode(key), 'x', false)
+  end
+  vim.cmd('AicFix')
+  ok(wait(3000, function()
+    return line_of('( ) 1. Name the idea') ~= nil
+  end), ':AicFix shows the proposed fixes in a float, none picked')
+  local fwin = vim.api.nvim_get_current_win()
+  ok(vim.api.nvim_win_get_config(fwin).relative ~= '' and #solid_wins() == 1 and #vim.api.nvim_list_tabpages() == 1,
+    'the fix list is a float: one tab, one window')
+  ok((read(log) or ''):find('fix --doc notes --json --content-file ', 1, true) ~= nil
+    and (read(root .. '/fixcontent.md') or ''):find('- unsaved', 1, true) ~= nil,
+    'aic fix gets the unsaved buffer text')
+  ok(line_of('stale: its text is no longer in the doc') ~= nil and line_of('✗ unusable: Twice') ~= nil
+    and line_of('not a doc fix: #3 cache — the worker should drop it') ~= nil, 'stale, unusable and skipped fixes are listed')
+  press_on('1. Name the idea', '<Space>')
+  ok(line_of('(•) 1. Name the idea') ~= nil, '<Space> picks a fix')
+  press_on('2. Drop the idea', '<Space>')
+  ok(line_of('(•) 2. Drop the idea') ~= nil and line_of('( ) 1. Name the idea') ~= nil,
+    'picking a fix that changes the same text unpicks the other (radio)')
+  press_on('4. Stale one', '<Space>')
+  ok(line_of('( ) 4. Stale one') ~= nil, 'a stale fix cannot be picked')
+  press_on('3. Title it', '<Tab>')
+  ok(line_of('      - # notes') ~= nil and line_of('      + # Notes: greeting') ~= nil, '<Tab> shows the edit as a diff')
+  press_on('3. Title it', '<Space>')
+  press_on('1. Name the idea', '<Space>')
+  ok(line_of('(•) 1.') and line_of('( ) 2.') and line_of('(•) 3.'), 'picked: 1 and 3')
+  vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
+  ok(not vim.api.nvim_win_is_valid(fwin) and vim.api.nvim_get_current_buf() == nb, '<CR> closes the float and shows the doc')
+  ok(vim.deep_equal(vim.api.nvim_buf_get_lines(nb, 0, -1, false), { '# Notes: greeting', '', '- greeting idea @src/app.js:3', '- unsaved' })
+    and vim.bo[nb].modified, 'the picked fixes are applied to the buffer, unsaved')
+  ok(#vim.diagnostic.get(nb, { namespace = doc.ns }) == 0, 'the fixed items are hidden until the next compile')
+  single('fix applied')
+  vim.cmd('silent undo')
+  ok(vim.deep_equal(vim.api.nvim_buf_get_lines(nb, 0, -1, false), { '# notes', '', '- idea @src/app.js:3', '- unsaved' }),
+    'one u undoes every applied fix')
+  -- :AicFix! shows the last proposal; undone fixes can be picked again; an edit through the last line
+  vim.api.nvim_buf_set_lines(nb, 3, 4, false, {})
+  vim.cmd('AicFix!')
+  ok(line_of('( ) 1. Name the idea') ~= nil and not line_of('(✓)'), ':AicFix! reopens; undone fixes are offered again')
+  press_on('2. Drop the idea', '<Space>')
+  vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
+  ok(vim.deep_equal(vim.api.nvim_buf_get_lines(nb, 0, -1, false), { '# notes', '' }), 'an edit through the last line applies')
+  vim.cmd('AicFix!')
+  ok(line_of('(✓) 2. Drop the idea') ~= nil and line_of('stale: its text is no longer in the doc', 1) ~= nil,
+    'applied fixes stay marked; ones it removed the text of are stale')
+  vim.cmd('close')
+  -- a failure shows in the float
+  write(root .. '/fixfail', '')
+  vim.cmd('AicFix')
+  ok(wait(3000, function()
+    return line_of('no diagnostics to fix in notes') ~= nil
+  end), 'aic fix failing shows its error in the float')
+  vim.cmd('close')
+  os.remove(root .. '/fixfail')
+  vim.cmd('silent undo')
+  vim.cmd('silent write')
+  ok(fix.last and fix.last.doc == 'notes', 'the last proposal is kept')
+end
+
+-- :AicFix edge cases: the end of the doc, touching edits, applied state
+do
+  local doc = require('aic.doc')
+  local fix = require('aic.fix')
+  doc.ensure_file('edge', false)
+  vim.cmd('AicDoc edge')
+  local eb = doc.bufnr('edge')
+  local function lines_now()
+    return vim.api.nvim_buf_get_lines(eb, 0, -1, false)
+  end
+  local function line_of(pat)
+    for i, l in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+      if l:find(pat, 1, true) then
+        return i
+      end
+    end
+  end
+  local n = 0
+  -- set the doc, propose `fixes`, pick `picks` and apply
+  local function run(lines, fixes, picks)
+    vim.cmd('AicDoc edge')
+    vim.api.nvim_buf_set_lines(eb, 0, -1, false, lines)
+    for i, f in ipairs(fixes) do
+      f.id, f.title, f.conflicts = i, f.title or ('fix ' .. i), f.conflicts or {}
+      for _, e in ipairs(f.edits) do
+        e.line, e.end_line = 1, 1
+      end
+    end
+    n = n + 1
+    write(root .. '/fixes.json', vim.json.encode({ doc = 'edge', created_at = n, fixes = fixes, rejected = {}, skipped = {} }))
+    vim.cmd('AicFix')
+    wait(3000, function()
+      return line_of('. fix 1') ~= nil or line_of('. ' .. (fixes[1].title or '')) ~= nil
+    end)
+    for _, id in ipairs(picks or {}) do
+      vim.api.nvim_win_set_cursor(0, { line_of(('%d. '):format(id)), 0 })
+      vim.api.nvim_feedkeys(' ', 'x', false)
+    end
+    if picks then
+      vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
+    end
+  end
+  run({ '# t', 'items' }, { { edits = { { old = 's\n', new = '' } } } }, { 1 })
+  ok(vim.deep_equal(lines_now(), { '# t', 'item' }), 'deleting text that ends at the end of the doc removes only that text: '
+    .. table.concat(lines_now(), '|'))
+  run({ '# t', 'abc foo' }, { { edits = { { old = 'foo\n', new = '' } } } }, { 1 })
+  ok(vim.deep_equal(lines_now(), { '# t', 'abc ' }), '... mid-line too')
+  run({ 'prev', 'last' }, { { edits = { { old = '\nlast\n', new = '' } } } }, { 1 })
+  ok(vim.deep_equal(lines_now(), { 'prev' }), '... and starting with a newline')
+  run({ '- a', '- b', '- c' }, { { edits = { { old = '- b\n', new = '- B\n' } } }, { edits = { { old = '- c\n', new = '' } } } }, { 1, 2 })
+  ok(vim.deep_equal(lines_now(), { '- a', '- B' }), 'touching edits of two fixes both apply')
+  vim.cmd('silent undo')
+  ok(vim.deep_equal(lines_now(), { '- a', '- b', '- c' }), '... and one u undoes both')
+  -- a fix edited after it was applied stays applied (never applied twice)
+  run({ '# t', '- retry' }, { { title = 'Count', edits = { { old = '- retry', new = '- retry 3 times' } } } }, { 1 })
+  vim.api.nvim_buf_set_lines(eb, 1, 2, false, { '- retry 4 times' })
+  vim.cmd('AicFix!')
+  ok(line_of('(✓) 1. Count') ~= nil, 'a fix edited after applying stays applied')
+  vim.cmd('close')
+  -- undo it, redo it: applied again (never offered twice)
+  vim.cmd('silent undo')
+  vim.cmd('silent undo')
+  vim.cmd('silent redo')
+  vim.cmd('silent redo')
+  vim.cmd('AicFix!')
+  ok(line_of('(✓) 1. Count') ~= nil and lines_now()[2] == '- retry 4 times', 'undo + redo: the fix is applied again')
+  vim.cmd('close')
+  -- undone, then edited elsewhere: offered again
+  vim.cmd('silent undo')
+  vim.cmd('silent undo')
+  vim.api.nvim_buf_set_lines(eb, 0, 1, false, { '# title' })
+  vim.cmd('AicFix!')
+  ok(line_of('( ) 1. Count') ~= nil, 'undone and then edited elsewhere: offered again')
+  vim.cmd('close')
+  -- the apply trimmed from the undo history: still applied
+  run({ '# t', '- retry' }, { { title = 'Count', edits = { { old = '- retry', new = '- retry 3 times' } } } }, { 1 })
+  vim.bo[eb].undolevels = 1
+  for _, t in ipairs({ '# t2', '# t3', '- retry 4 times' }) do
+    vim.cmd('let &g:undolevels = &g:undolevels')
+    vim.api.nvim_buf_set_lines(eb, t:sub(1, 1) == '#' and 0 or 1, t:sub(1, 1) == '#' and 1 or 2, false, { t })
+  end
+  vim.cmd('AicFix!')
+  ok(line_of('(✓) 1. Count') ~= nil, 'an apply trimmed from the undo history still counts as applied')
+  vim.cmd('close')
+  vim.bo[eb].undolevels = -123456
+  -- an applied insertion is "already in the doc" for a fresh copy of the proposal (e.g. after a restart)
+  run({ '# t', 'L1', 'end' }, {
+    { title = 'Insert', edits = { { old = 'L1\n', new = 'L1\nNEW\n' } }, conflicts = { 2 } },
+    { title = 'Change', edits = { { old = 'L1\n', new = 'L1 changed\n' } }, conflicts = { 1 } },
+  }, { 1 })
+  ok(vim.deep_equal(lines_now(), { '# t', 'L1', 'NEW', 'end' }), 'insertion applied')
+  vim.cmd('AicFix!')
+  ok(line_of('( ) 2. Change  doc:2  its alternative 1 is applied') ~= nil, 'the alternative of an applied fix is blocked')
+  vim.api.nvim_feedkeys(vim.keycode('a<CR>'), 'x', false)
+  ok(vim.deep_equal(lines_now(), { '# t', 'L1', 'NEW', 'end' }), 'pick-all + apply cannot apply it')
+  vim.cmd('silent! close')
+  fix.by_doc.edge = nil
+  write(dir .. '/fixes.edge.json', read(root .. '/fixes.json')) -- (what the real backend writes)
+  vim.cmd('AicFix!')
+  ok(line_of('( ) 1. Insert  doc:2  its text is already in the doc') ~= nil, 'reloaded: an applied insertion is already in the doc')
+  vim.cmd('close')
+  -- a new text that also appears elsewhere in the doc is not "already in the doc"
+  run({ '```python', 'a', '```', '```pyhton', 'b', '```' }, { { title = 'Typo', edits = { { old = '```pyhton', new = '```python' } } } })
+  ok(line_of('( ) 1. Typo  doc:4') ~= nil and not line_of('already in the doc'), 'a typo fix to a word used elsewhere can be picked')
+  vim.cmd('close')
+  -- multi-line text from the compiler renders on one line
+  run({ '# t', 'x' }, { { title = 'Two\nlines', message = 'a\nb', kind = 'model', edits = { { old = 'x', new = 'y' } } } })
+  ok(line_of('( ) 1. Two lines') ~= nil and line_of('[model] a b') ~= nil, 'newlines in titles/messages do not break the float')
+  vim.cmd('close')
+  vim.cmd('AicDoc edge')
+  vim.cmd('silent write')
+end
+
+---------------------------------------------------------------------------
 -- sweep: no command or key ever adds a tab, a split or the quickfix window,
 -- and no view pins its window
 do
@@ -1442,8 +1656,8 @@ do
   end
   local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicDoc', 'AicToggle', 'AicToggle', 'AicDiagnostics',
     'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
-    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue' }
-  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p' }
+    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue', 'AicFix', 'AicFix!' }
+  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p', 'f' }
   for _, c in ipairs(steps) do
     pcall(vim.cmd, c)
     vim.wait(50)

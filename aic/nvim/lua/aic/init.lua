@@ -147,6 +147,7 @@ local function setup_keymaps(prefix)
   map('n', 'D', '<Plug>(aic-doc-new)', 'new doc')
   map('n', 'p', '<Plug>(aic-prompts)', 'prompt templates')
   map('n', 'e', '<Plug>(aic-diagnostics)', 'compile diagnostics -> quickfix list')
+  map({ 'n', 'x' }, 'f', '<Plug>(aic-fix)', 'ask the compiler to fix the doc (pick fixes)')
   map({ 'n', 'x' }, 's', '<Plug>(aic-submit)', 'submit')
   map({ 'n', 'x' }, 'S', '<Plug>(aic-submit-now)', 'submit now')
   map('n', 'h', '<Plug>(aic-hold)', 'hold')
@@ -288,6 +289,19 @@ end
 function M.compile()
   ensure(function()
     mod('doc').compile()
+  end)
+end
+
+-- :AicFix: the compiler proposes edits to the current doc that fix its
+-- diagnostics; pick them in a float. o = { range, line1, line2, reopen }
+function M.fix(o)
+  o = o or {}
+  ensure(function()
+    if o.reopen then
+      mod('fix').reopen()
+    else
+      mod('fix').start(o)
+    end
   end)
 end
 

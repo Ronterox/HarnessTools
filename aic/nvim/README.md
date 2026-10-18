@@ -70,6 +70,7 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>b` | `:AicBlame`: trace event for the touched range under the cursor | `(aic-blame)` |
 | `<prefix>a` | `:AicAttach`: pick the worker session (or auto) | `(aic-attach)` |
 | `<prefix>e` | `:AicDiagnostics`: load the last compile into the quickfix list (no window: `:copen`/`]q` are yours) | `(aic-diagnostics)` |
+| `<prefix>f` (n, x) | `:AicFix`: ask the compiler for edits to the current doc that fix its diagnostics, then pick them in a float (see [Fixes](#fixes)); with a range, only the items about those lines. `:AicFix!` shows the last proposal again | `(aic-fix)` |
 | `<prefix>u` | `:AicNextUnseen`: show the history and go to the next unseen node | `(aic-next-unseen)` |
 | `<prefix>U` | `:AicUsage`: context/cost per session, account quota, compact/reset (see [Usage](#usage)) | `(aic-usage)` |
 | `<prefix>]` / `<prefix>[` | `:AicNextTouched` / `:AicPrevTouched` | `(aic-next-touched)` / `(aic-prev-touched)` |
@@ -150,6 +151,50 @@ goes into the buffer and you save it yourself. In both floats:
 - `gd` follows anchors in the answer; they are highlighted.
 
 The footer lists the keys.
+
+## Fixes
+
+The compiler only suggests. `:AicFix` (or `<prefix>f`) is the one place where
+you ask it to write the change, and even then it writes nothing itself. It
+proposes edits to the current doc that resolve that doc's diagnostics, and you
+pick which ones aic applies to your buffer. The compiler sees your unsaved text.
+
+```
+( ) 1. Name the exception that fetch retries on  doc:4
+      [incoherent] 'errors' is vague: which errors are retried?
+      why: src/retry.py:7 catches only IOError.
+(•) 2. Describe exponential backoff instead of 1s  doc:5  overlaps 3
+( ) 3. Drop the wait line  doc:5  overlaps 2
+(✓) 4. Title it  doc:1  applied
+( ) 5. Say what happens after the last try  doc:6  stale: its text is no longer in the doc
+
+– not a doc fix: #6 the code raises instead of returning None — the worker is wrong here
+```
+
+| key | action |
+|---|---|
+| `<Space>` / `x` | pick / unpick the fix under the cursor. Fixes that change the same text work like radio buttons: picking one unpicks the others |
+| `<Tab>` | show / hide its edits as a diff |
+| `a` | pick every fix that can be picked (no two that overlap); again: pick none |
+| `<CR>` | apply the picked fixes to the doc buffer and show it: all or none, in one undo step (`u` undoes them all). Nothing is saved |
+| `q` / `<Esc>` | close (`:AicFix!` reopens; picks are kept) |
+
+- Some fixes can't be picked, and the list says why:
+  - stale: its text changed since the proposal (ask again with `:AicFix`)
+  - its text is already in the doc (for example, applied before a restart)
+  - its alternative N is applied
+- `doc:N` and `@@ line N` show where the text is now, not where it was when
+  the compiler proposed it.
+- Applied fixes stay marked, also after you edit their text. If you undo
+  their apply (`u`, even if you edit more afterwards), they can be picked
+  again.
+- The diagnostics a fix resolved are hidden (inline and in the quickfix list)
+  until the next compile, which reports them again if they still hold.
+  Undoing doesn't bring them back.
+- Items the compiler would not fix in the doc (the worker is the one that is
+  wrong, or it proposed nothing) are listed at the bottom with the reason.
+- Proposals are made by the compile session (env `AIC_FIX_MODEL`, default the
+  compile model). One `:AicFix` costs about one compile.
 
 ## Submit
 
