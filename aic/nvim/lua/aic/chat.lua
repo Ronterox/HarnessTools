@@ -1,5 +1,6 @@
--- Chat buffer: a nofile view of chat.md plus an input area under a final
--- `## You` line. The plugin never writes chat.md; `aic ask` appends to it.
+-- Questions view (`aic://questions`): a nofile view of chat.md plus an input
+-- area under a final `## You` line. The plugin never writes chat.md; `aic ask`
+-- appends to it.
 local backend = require('aic.backend')
 local state = require('aic.state')
 local util = require('aic.util')
@@ -122,7 +123,7 @@ function M.get_buf()
     return M.buf
   end
   local b = api.nvim_create_buf(false, true)
-  pcall(api.nvim_buf_set_name, b, 'aic://chat')
+  pcall(api.nvim_buf_set_name, b, 'aic://questions')
   vim.bo[b].buftype = 'nofile'
   vim.bo[b].bufhidden = 'hide'
   vim.bo[b].swapfile = false
@@ -130,18 +131,25 @@ function M.get_buf()
   M.buf = b
   vim.keymap.set('n', '<CR>', M.send, { buffer = b, desc = 'aic: send chat input' })
   require('aic.anchors').attach(b)
+  local first = true
+  api.nvim_create_autocmd('BufWinEnter', {
+    buffer = b,
+    callback = function()
+      local win = api.nvim_get_current_win()
+      local wo = vim.wo[win][0] -- buffer-local: never leaks into the next buffer
+      wo.wrap = true
+      wo.linebreak = true
+      wo.number = false
+      wo.relativenumber = false
+      require('aic.usage').set_winbar(win, 'questions')
+      if first then -- the input area, the first time only
+        first = false
+        api.nvim_win_set_cursor(win, { api.nvim_buf_line_count(b), 0 })
+      end
+    end,
+  })
   M.render()
   return b
-end
-
-function M.show(win)
-  util.set_win_buf(win, M.get_buf())
-  vim.wo[win].wrap = true
-  vim.wo[win].linebreak = true
-  vim.wo[win].number = false
-  vim.wo[win].relativenumber = false
-  local n = api.nvim_buf_line_count(M.buf)
-  api.nvim_win_set_cursor(win, { n, 0 })
 end
 
 return M

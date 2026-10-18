@@ -11,8 +11,8 @@ M.defaults = {
   prefix = '<leader>z',
   -- install default keymaps under `prefix`
   keymaps = true,
-  -- height of the chat window in the aic tab
-  chat_height = 12,
+  -- usage winbar on the aic views (history, questions, spec)
+  winbar = true,
   -- debounce for file-watch refreshes (ms)
   debounce = 150,
   -- fallback polling interval when fs_event is unavailable (ms)

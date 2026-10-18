@@ -116,8 +116,10 @@ The daemon:
 
 ## Neovim UI
 
-- `:Aic` opens a dedicated tab with spec | trace | chat. Jumps open code in
-  your normal windows. Every buffer also works on its own.
+- One window, one tab. The views (history = trace, questions = compiler chat,
+  spec) are buffers shown in the current window; jumps to code open in the
+  same window and `<C-o>`/`<C-^>` come back. aic never creates a tab or a
+  split. Floats are used only for short-lived things (answers, usage, blame).
 - Everything is exposed as commands and `<Plug>` mappings; default keys go
   under one leader prefix.
 

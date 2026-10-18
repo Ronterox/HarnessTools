@@ -2,20 +2,12 @@
 local M = {}
 local uv = vim.uv or vim.loop
 
+-- Floats opened by M.float (answers, blame, usage): win -> true. Jumping to
+-- code from one of them closes it; other floats are never closed by aic.
+M.floats = setmetatable({}, { __mode = 'k' })
+
 function M.notify(msg, level)
   vim.notify(msg, level or vim.log.levels.INFO, { title = 'aic' })
-end
-
--- Put `buf` in an aic window and pin it there ('winfixbuf'), so :cc, :e, gd
--- and friends open code elsewhere instead of eating the aic layout.
-function M.set_win_buf(win, buf)
-  pcall(function()
-    vim.wo[win].winfixbuf = false
-  end)
-  vim.api.nvim_win_set_buf(win, buf)
-  pcall(function()
-    vim.wo[win].winfixbuf = true
-  end)
 end
 
 function M.read_file(path)
@@ -192,6 +184,7 @@ function M.float(lines, opts)
     title = opts.title,
     title_pos = opts.title and 'center' or nil,
   })
+  M.floats[win] = true
   vim.wo[win].wrap = true
   vim.wo[win].linebreak = true
   vim.wo[win].foldenable = false -- markdown folding (or nvim-ufo) would hide answer lines

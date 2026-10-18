@@ -169,7 +169,7 @@ local function scratch(lines, ft)
   api.nvim_buf_set_lines(b, 0, -1, false, lines)
   vim.bo[b].modifiable = false
   vim.bo[b].filetype = ft
-  require('aic.layout').open_buf(b)
+  require('aic.view').show_buf(b)
 end
 
 -- @log / @log:path / @show:REV: content from `aic anchor --json`.
@@ -213,19 +213,19 @@ end
 
 -- Act on a parsed anchor (PROTOCOL "gd in Neovim").
 function M.follow(a)
-  local layout = require('aic.layout')
+  local view = require('aic.view')
   if a.kind == 'diff' or a.kind == 'staged' then
     return show_diff(a)
   elseif a.kind == 'log' or a.kind == 'show' then
     return show_resolved(a)
   elseif a.kind == 'turn' then
-    layout.focus('trace')
+    view.show('trace')
     if not require('aic.trace').goto_turn(a.turn) then
       util.notify('aic: no turn ' .. tostring(a.turn) .. ' in the trace', vim.log.levels.WARN)
     end
     return
   end
-  layout.open_code(a.abs, a.line or 1)
+  view.open_code(a.abs, a.line or 1)
   if vim.fs.normalize(api.nvim_buf_get_name(0)) ~= a.abs then
     return -- open failed (already notified)
   end
@@ -279,7 +279,7 @@ end
 ---------------------------------------------------------------------------
 -- highlighting
 
--- Small buffers are highlighted whole; big ones, and the chat buffer (it grows
+-- Small buffers are highlighted whole; big ones, and the questions buffer (it grows
 -- with every answer and re-renders on each chat.md change), only around the
 -- visible lines of their windows.
 M.chat_margin = 50
@@ -289,7 +289,7 @@ function M.highlight(buf)
     return
   end
   local n = api.nvim_buf_line_count(buf)
-  local chat = api.nvim_buf_get_name(buf) == 'aic://chat'
+  local chat = api.nvim_buf_get_name(buf) == 'aic://questions'
   local ranges = {}
   if n < 2000 and not chat then
     ranges = { { 1, n } }

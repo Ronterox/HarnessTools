@@ -43,19 +43,23 @@ function M.ensure_file()
   return p
 end
 
-function M.show(win)
+-- The spec buffer (loaded, listed), or a placeholder when there is no session.
+function M.get_buf()
   local p = M.ensure_file()
   if not p then
-    local b = api.nvim_create_buf(false, true)
-    vim.bo[b].bufhidden = 'wipe'
-    api.nvim_buf_set_lines(b, 0, -1, false, { '(no worker session — run :AicAttach)' })
-    util.set_win_buf(win, b)
-    return
+    if not (M.placeholder and api.nvim_buf_is_valid(M.placeholder)) then
+      M.placeholder = api.nvim_create_buf(false, true)
+      pcall(api.nvim_buf_set_name, M.placeholder, 'aic://spec')
+      vim.bo[M.placeholder].bufhidden = 'hide'
+      api.nvim_buf_set_lines(M.placeholder, 0, -1, false, { '(no worker session — run :AicAttach)' })
+      vim.bo[M.placeholder].modifiable = false
+    end
+    return M.placeholder
   end
   local b = vim.fn.bufadd(p)
   vim.fn.bufload(b)
   vim.bo[b].buflisted = true
-  util.set_win_buf(win, b)
+  return b
 end
 
 ---------------------------------------------------------------------------
@@ -208,6 +212,17 @@ function M.attach(buf)
     buffer = buf,
     callback = function()
       M.compile()
+    end,
+  })
+  api.nvim_create_autocmd('BufWinEnter', {
+    buffer = buf,
+    callback = function()
+      local win = api.nvim_get_current_win()
+      if require('aic.view').name_of(buf) == 'spec' then
+        require('aic.usage').set_winbar(win, 'spec')
+      else -- another session's spec: no (empty) winbar row
+        vim.wo[win][0].winbar = ''
+      end
     end,
   })
   M.apply_diagnostics(buf)

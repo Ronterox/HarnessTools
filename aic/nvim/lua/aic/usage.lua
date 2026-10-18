@@ -1,4 +1,4 @@
--- Context/cost usage (PROTOCOL.md "Usage"): winbars on the aic windows,
+-- Context/cost usage (PROTOCOL.md "Usage"): winbars on the aic views,
 -- account quota polling, the :AicUsage float and compact/reset actions.
 local backend = require('aic.backend')
 local config = require('aic.config')
@@ -9,13 +9,13 @@ local api = vim.api
 local uv = vim.uv or vim.loop
 
 local M = {
-  cache = { spec = '', trace = '', chat = '' }, -- winbar strings (statusline syntax)
+  cache = { spec = '', trace = '', questions = '' }, -- winbar strings (statusline syntax)
   float = nil, -- { buf, win } of the :AicUsage float
   running = nil, -- 'compile' | 'ask' | 'worker' while a compact/reset runs
 }
 
 local WINBAR = "%%{%%v:lua.require'aic.usage'.winbar('%s')%%}"
-local SESSION = { spec = 'compile', trace = 'worker', chat = 'ask' }
+local SESSION = { spec = 'compile', trace = 'worker', questions = 'ask' }
 local QUOTA_EVERY = 60 -- s
 local QUOTA_STALE = 900 -- s
 local HOT_PCT = 80
@@ -196,8 +196,8 @@ function M.update()
   end
   local q = quota_part(state.quota)
   if q then
-    c.chat = c.chat .. '   ' .. q
-    c.chat_narrow = c.chat_narrow .. '   ' .. q
+    c.questions = c.questions .. '   ' .. q
+    c.questions_narrow = c.questions_narrow .. '   ' .. q
   end
   if not vim.deep_equal(c, M.cache) then
     M.cache = c
@@ -206,11 +206,10 @@ function M.update()
   M.render()
 end
 
--- Winbar expression: cached string, only in the aic window it was set for
+-- Winbar expression: cached string, only while the window shows view `name`
 -- (%{} items are evaluated with the winbar's window as the current one).
 function M.winbar(name)
-  local wins = require('aic.layout').wins or {}
-  if api.nvim_get_current_win() ~= wins[name] then
+  if require('aic.view').name_of(api.nvim_get_current_buf()) ~= name then
     return ''
   end
   local full = M.cache[name] or ''
@@ -221,14 +220,23 @@ function M.winbar(name)
   return full
 end
 
--- Set the window-local winbar on the aic windows (after (re)creating them).
-function M.apply(wins)
-  for name in pairs(SESSION) do
-    local w = wins[name]
-    if w and api.nvim_win_is_valid(w) then
-      api.nvim_set_option_value('winbar', WINBAR:format(name), { win = w, scope = 'local' })
+-- Set the winbar of view `name` on `win`, buffer-locally (called on the
+-- view's BufWinEnter), so it goes away with the view.
+function M.set_winbar(win, name)
+  if config.options.winbar and SESSION[name] and api.nvim_win_is_valid(win) then
+    vim.wo[win][0].winbar = WINBAR:format(name)
+  end
+end
+
+-- An aic view is shown in some window of the current tab.
+local function view_visible()
+  local view = require('aic.view')
+  for _, w in ipairs(api.nvim_tabpage_list_wins(0)) do
+    if view.name_of(api.nvim_win_get_buf(w)) then
+      return true
     end
   end
+  return false
 end
 
 ---------------------------------------------------------------------------
@@ -270,23 +278,12 @@ function M.start()
   timer = uv.new_timer()
   timer:start(QUOTA_EVERY * 1000, QUOTA_EVERY * 1000, function()
     vim.schedule(function()
-      local layout = require('aic.layout')
-      if layout.tab and api.nvim_tabpage_is_valid(layout.tab) and api.nvim_get_current_tabpage() == layout.tab then
+      if view_visible() then
         M.poll()
       end
     end)
   end)
   pcall(timer.unref, timer)
-  -- windows split off an aic window inherit its winbar: drop it there
-  api.nvim_create_autocmd('WinNew', {
-    group = api.nvim_create_augroup('aic_usage', { clear = true }),
-    callback = function()
-      local w = api.nvim_get_current_win()
-      if vim.wo[w].winbar:find("aic.usage", 1, true) and not vim.tbl_contains(vim.tbl_values(require('aic.layout').wins or {}), w) then
-        api.nvim_set_option_value('winbar', '', { win = w, scope = 'local' })
-      end
-    end,
-  })
 end
 
 local function hint_key()

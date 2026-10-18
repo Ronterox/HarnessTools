@@ -22,7 +22,10 @@ cd your-project
    ```lua
    { dir = '/path/to/aic/nvim', config = function() require('aic').setup({}) end }
    ```
-   `:Aic` opens the aic tab: **spec** | **trace**, **chat** below.
+   `:Aic` shows aic in the current window. Views are buffers you switch
+   between, never tabs or splits: `<leader>zt` history (trace), `<leader>zq`
+   questions (compiler chat), `<leader>zd` spec; `<leader>zz` toggles back to
+   your code.
 3. Write pseudocode in the spec (`@path:symbol` anchors, `gd` follows them).
    `:w` compiles: diagnostics land in quickfix and the spec's sign column.
 4. `<leader>zs` submits the spec diff (visual: just the selected lines) to the
@@ -64,8 +67,8 @@ cd your-project
 - **Review before committing:** "review @diff against the spec" gives a
   checklist and a commit message.
 - The statusline says `stale` when code changed since the last compile.
-- **Watch context and cost, compact when it grows.** Each aic window's winbar
-  shows the session behind it (spec → compile, trace → worker, chat → ask,
+- **Watch context and cost, compact when it grows.** Each aic view's winbar
+  shows the session behind it (spec → compile, history → worker, questions → ask,
   plus your 5h/weekly quota from the OMC HUD cache). `<leader>zU` opens the
   breakdown with the last calls; `c`/`C` compact the compile/ask session
   (handoff summary → fresh session), `r`/`R` reset it. In testing, compacting

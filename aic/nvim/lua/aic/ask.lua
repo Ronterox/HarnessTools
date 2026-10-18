@@ -96,7 +96,7 @@ local function run(args, ctx, q, title, actions)
       function(answer, entry)
         if entry.submitted then
           util.notify('aic: already submitted')
-          return false
+          return
         end
         entry.submitted = true
         M.submit_answer(q, answer)
@@ -139,12 +139,11 @@ function M.attach(buf, win, entry)
         util.notify('aic: no answer yet')
         return
       end
-      if a[2](entry.answer, entry) == false then
-        return
-      end
+      -- close first: the action then runs in the window under the float
       if api.nvim_win_is_valid(win) then
         api.nvim_win_close(win, true)
       end
+      a[2](entry.answer, entry)
     end, { buffer = buf, nowait = true, desc = 'aic: ' .. a[1] })
   end
 end
