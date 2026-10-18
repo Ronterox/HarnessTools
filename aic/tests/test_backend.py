@@ -137,9 +137,10 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(s["hooks"]["PreToolUse"][0]["hooks"][0]["command"], "/x/bin/aic-hook")
 
     def test_hook_registers_and_holds_once(self):
-        self.assertEqual(self.run_hook("UserPromptSubmit"), "")
+        with mock.patch.dict(os.environ, {"TMUX": "/tmp/tmux-1000/work,123,0"}):
+            self.assertEqual(self.run_hook("UserPromptSubmit"), "")
         w = paths.worker(self.root, self.sid)
-        self.assertEqual((w["state"], w["pane"]), ("busy", "%9"))
+        self.assertEqual((w["state"], w["pane"], w["tmux_socket"]), ("busy", "%9", "/tmp/tmux-1000/work"))
         worker.hold(self.root, self.sid)
         out = json.loads(self.run_hook("PreToolUse", tool_name="Edit"))
         self.assertFalse(out["continue"])
@@ -186,7 +187,7 @@ class ProjectTest(unittest.TestCase):
         paths.write_json(os.path.join(paths.aic_dir(self.root), "workers", self.sid + ".json"), w)
         typed = []
 
-        def fake_tmux(*args, input=None):
+        def fake_tmux(*args, input=None, socket=None):
             typed.append(args)
             return "/dev/pts/77\n" if args[0] == "display-message" else ""
         with mock.patch.object(worker, "_tmux", fake_tmux):
@@ -201,7 +202,7 @@ class ProjectTest(unittest.TestCase):
     def test_deliver_never_types_into_dialog(self):
         typed = []
 
-        def fake_tmux(*args, input=None):
+        def fake_tmux(*args, input=None, socket=None):
             typed.append(args)
             if args[0] == "capture-pane":
                 return " Do you want to proceed?\n ❯ 1. Yes\n   2. No\n"
@@ -215,7 +216,7 @@ class ProjectTest(unittest.TestCase):
     def test_deliver_sees_text_after_nbsp_prompt(self):
         typed = []
 
-        def fake_tmux(*args, input=None):
+        def fake_tmux(*args, input=None, socket=None):
             typed.append(args)
             return "out\n❯\u00a0[aic] hello there\n" if args[0] == "capture-pane" else ""
         with mock.patch.object(worker, "verify_pane", lambda w: "%1"), \
@@ -226,7 +227,7 @@ class ProjectTest(unittest.TestCase):
     def test_deliver_stops_before_enter_if_text_not_in_input(self):
         typed = []
 
-        def fake_tmux(*args, input=None):
+        def fake_tmux(*args, input=None, socket=None):
             typed.append(args)
             return "some output\n❯ \n" if args[0] == "capture-pane" else ""
         with mock.patch.object(worker, "verify_pane", lambda w: "%1"), \

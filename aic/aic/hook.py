@@ -84,7 +84,9 @@ def handle(data):
     })
     if event in ("SessionStart", "UserPromptSubmit") or not w.get("pid"):
         pid, tty = worker_process()
-        w.update(pid=pid, tty=tty, pane=os.environ.get("TMUX_PANE"))
+        # $TMUX = "<socket>,<pid>,<session>": the server the pane id belongs to
+        sock = (os.environ.get("TMUX") or "").split(",")[0] or None
+        w.update(pid=pid, tty=tty, pane=os.environ.get("TMUX_PANE"), tmux_socket=sock)
     if event in ("SessionStart", "UserPromptSubmit"):
         w["prompted"] = paths.now()
     if event in STATE:

@@ -125,8 +125,11 @@ def status(root):
 
 
 # -- delivery -----------------------------------------------------------------
-def _tmux(*args, input=None):
-    p = subprocess.run(["tmux"] + list(args), input=input, capture_output=True, text=True, timeout=10)
+def _tmux(*args, input=None, socket=None):
+    """tmux on the worker's own server (`socket` from the hook) when known,
+    never whatever server the caller happens to be in."""
+    cmd = ["tmux"] + (["-S", socket] if socket else []) + list(args)
+    p = subprocess.run(cmd, input=input, capture_output=True, text=True, timeout=10)
     if p.returncode != 0:
         raise WorkerError("tmux %s failed: %s" % (args[0], p.stderr.strip()))
     return p.stdout
@@ -152,7 +155,7 @@ def verify_pane(w):
         raise WorkerError("worker pane unknown (or the session ended): run the worker inside tmux "
                           "in a project with `aic init` hooks")
     try:
-        pane_tty = _tmux("display-message", "-p", "-t", pane, "#{pane_tty}").strip()
+        pane_tty = _tmux("display-message", "-p", "-t", pane, "#{pane_tty}", socket=w.get("tmux_socket")).strip()
     except WorkerError:
         raise WorkerError("worker pane %s is gone" % pane)
     pid = w.get("pid")
@@ -170,20 +173,20 @@ def verify_pane(w):
     return pane
 
 
-def _screen(pane):
+def _screen(pane, socket=None):
     # Claude Code draws its prompt as "❯" + NO-BREAK SPACE; normalize it.
-    text = _tmux("capture-pane", "-p", "-t", pane).replace("\u00a0", " ")
+    text = _tmux("capture-pane", "-p", "-t", pane, socket=socket).replace("\u00a0", " ")
     return [l for l in text.splitlines() if l.strip()]
 
 
-def _check_screen(pane, header=None, wait=1.5):
+def _check_screen(pane, header=None, wait=1.5, socket=None):
     """No dialog at the bottom of the screen and, when `header` is given, our
     text sits in Claude Code's input box. Positive evidence before every
     keystroke batch; polls briefly so a slow redraw isn't mistaken for failure.
     Errors are fail-safe: nothing more is typed."""
     end = time.time() + wait
     while True:
-        lines = _screen(pane)
+        lines = _screen(pane, socket)
         if DIALOG.search("\n".join(lines[-12:])):
             raise WorkerError("the worker is showing a dialog in %s (permission prompt?). Answer it there; "
                               "aic never types into dialogs" % pane)
@@ -195,6 +198,14 @@ def _check_screen(pane, header=None, wait=1.5):
         time.sleep(0.2)
 
 
+def paste_text(body):
+    """What is pasted under the header. Claude Code marks a paste as
+    <pasted_content> (data) only from 3 newlines on (or ~800 characters):
+    shorter ones are inlined as if typed. Blank lines around the body make
+    every body a paste, so it is never read as the human's own words."""
+    return "\n\n" + body + "\n"
+
+
 def deliver(root, sid, header, body=None, now=False):
     """Type `header` into the worker's prompt as the human, paste `body` under it,
     and press Enter. The header is typed (not pasted) on purpose: Claude Code
@@ -203,23 +214,24 @@ def deliver(root, sid, header, body=None, now=False):
     if a dialog appeared mid-delivery, digits could pick its options."""
     w = paths.worker(root, sid) or {}
     pane = verify_pane(w)
+    sock = w.get("tmux_socket")
     header = " ".join(header.split())
-    _check_screen(pane)
+    _check_screen(pane, socket=sock)
     size = os.path.getsize(w["transcript_path"]) if w.get("transcript_path") and os.path.exists(w["transcript_path"]) else 0
     # tmux reads an argument's trailing `;` as a command separator: escape it
-    _tmux("send-keys", "-t", pane, "-l", header[:-1] + "\\;" if header.endswith(";") else header)
+    _tmux("send-keys", "-t", pane, "-l", header[:-1] + "\\;" if header.endswith(";") else header, socket=sock)
     time.sleep(0.2)
-    _check_screen(pane, header)
+    _check_screen(pane, header, socket=sock)
     if body:
-        _tmux("load-buffer", "-b", "aic", "-", input="\n" + body)
-        _tmux("paste-buffer", "-p", "-d", "-b", "aic", "-t", pane)
+        _tmux("load-buffer", "-b", "aic", "-", input=paste_text(body), socket=sock)
+        _tmux("paste-buffer", "-p", "-d", "-b", "aic", "-t", pane, socket=sock)
     time.sleep(0.3)  # let the TUI absorb the input before submitting it
-    _check_screen(pane, header)
-    _tmux("send-keys", "-t", pane, "Enter")
+    _check_screen(pane, header, socket=sock)
+    _tmux("send-keys", "-t", pane, "Enter", socket=sock)
     if now:
         time.sleep(0.3)
-        _check_screen(pane)
-        _tmux("send-keys", "-t", pane, "C-x", "C-s")
+        _check_screen(pane, socket=sock)
+        _tmux("send-keys", "-t", pane, "C-x", "C-s", socket=sock)
     if not _confirm(w.get("transcript_path"), size, header):
         raise WorkerError("typed into %s but the worker did not record it; check that pane" % pane)
     return pane

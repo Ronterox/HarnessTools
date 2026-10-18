@@ -284,13 +284,34 @@ class SendTest(Base):
         with self.assertRaises(worker.WorkerError):
             worker.submit(self.root, "S1", doc="notes", prompt="mine")
 
+    def test_every_body_is_pasted_as_data(self):
+        # verified live (Claude Code 2.1.x): pastes under 3 newlines are inlined as typed text
+        for body in ("ok", "a\nb", "x" * 500):
+            self.assertGreaterEqual(worker.paste_text(body).count("\n"), 3, body)
+        calls = []
+        with mock.patch.object(worker, "verify_pane", lambda w: "%9"), \
+                mock.patch.object(worker, "_check_screen", lambda *a, **k: None), \
+                mock.patch.object(worker, "_tmux", lambda *a, **k: calls.append((a, k))):
+            worker.deliver(self.root, "S1", "[aic] do this", "short")
+        self.assertEqual([k.get("input") for a, k in calls if a[0] == "load-buffer"], ["\n\nshort\n"])
+
     def test_trailing_semicolon_survives_tmux(self):
         calls = []
         with mock.patch.object(worker, "verify_pane", lambda w: "%9"), \
-                mock.patch.object(worker, "_check_screen", lambda *a: None), \
+                mock.patch.object(worker, "_check_screen", lambda *a, **k: None), \
                 mock.patch.object(worker, "_tmux", lambda *a, **k: calls.append(a)):
             worker.deliver(self.root, "S1", "[aic] do this;")
         self.assertEqual(calls[0], ("send-keys", "-t", "%9", "-l", "[aic] do this\\;"))
+
+    def test_tmux_goes_to_the_workers_own_server(self):
+        paths.write_json(os.path.join(self.root, ".aic", "workers", "S1.json"),
+                         {"session_id": "S1", "pane": "%9", "tmux_socket": "/tmp/tmux-1000/work"})
+        runs = []
+        with mock.patch.object(worker, "verify_pane", lambda w: "%9"), \
+                mock.patch.object(worker, "_check_screen", lambda *a, **k: None), \
+                mock.patch("subprocess.run", lambda cmd, **k: runs.append(cmd) or mock.Mock(returncode=0, stdout="")):
+            worker.deliver(self.root, "S1", "[aic] go", "body")
+        self.assertTrue(runs and all(c[:3] == ["tmux", "-S", "/tmp/tmux-1000/work"] for c in runs), runs)
 
 
 if __name__ == "__main__":

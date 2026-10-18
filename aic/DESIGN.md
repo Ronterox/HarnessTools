@@ -78,6 +78,13 @@ The daemon:
 - **Typed header + pasted body.** Claude Code wraps pasted text in
   `<pasted_content>` and treats it as data unless the user's own typed words
   ask for it. So the one-line request is typed and the spec/diff is pasted.
+  Only pastes of 3+ newlines (or ~800+ characters) are wrapped; shorter ones
+  are inlined as if typed (verified, Claude Code 2.1.3xx), so aic pastes the
+  body between blank lines and every body stays data.
+- **The worker's own tmux server.** The hook records `$TMUX`'s socket with
+  the pane id, and every tmux call aic makes uses that socket (`tmux -S`):
+  a pane id like `%0` exists on every server, and aic is often run from a
+  different one (an editor in another tmux session or server).
 - **Submit is already a redirect.** Input sent while the worker is busy is
   queued and absorbed *at the next tool boundary* of the running turn.
   `--now` additionally presses Claude Code's "send now" (ctrl+x ctrl+s),
