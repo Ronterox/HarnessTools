@@ -59,7 +59,8 @@ function M.first_block(lines)
   return lines
 end
 
--- Append the answer's pseudocode to the current doc, save it and `aic submit` it.
+-- Append the answer's pseudocode to the current doc, save it, and preview it
+-- through the `selection` template (:w in the preview sends).
 function M.submit_answer(q, answer)
   local doc = require('aic.doc')
   -- The block's own heading names it; otherwise a neutral one. Never the
@@ -76,15 +77,7 @@ function M.submit_answer(q, answer)
       vim.cmd('silent write')
     end)
   end
-  backend.run({ 'submit', '--doc', name, '--from', tostring(first), '--to', tostring(last) }, state.root, function(ok, out, err, code)
-    out, err = vim.trim(out), vim.trim(err)
-    if ok then
-      util.notify(util.oneline(out ~= '' and out or 'aic submit: ok'))
-    else
-      util.notify(util.oneline(('aic submit failed (%s): %s'):format(code, err ~= '' and err or out)), vim.log.levels.ERROR)
-    end
-    state.refresh()
-  end)
+  require('aic.submit').render({ prompt = 'selection', doc = name, line1 = first, line2 = last })
 end
 
 -- Show the answer float for question `q`.
@@ -93,10 +86,10 @@ end
 local function run(args, ctx, q, title, actions)
   actions = vim.tbl_extend('keep', actions, {
     S = {
-      'append pseudocode to doc + submit',
+      'append pseudocode to doc + preview submit',
       function(answer, entry)
         if entry.submitted then
-          util.notify('aic: already submitted')
+          util.notify('aic: already appended to the doc; select those lines and <prefix>s to send them again')
           return
         end
         entry.submitted = true

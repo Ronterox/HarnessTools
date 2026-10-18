@@ -145,6 +145,7 @@ local function setup_keymaps(prefix)
   map('n', 'q', '<Plug>(aic-questions)', 'questions')
   map('n', 'd', '<Plug>(aic-docs)', 'doc picker')
   map('n', 'D', '<Plug>(aic-doc-new)', 'new doc')
+  map('n', 'p', '<Plug>(aic-prompts)', 'prompt templates')
   map('n', 'e', '<Plug>(aic-diagnostics)', 'compile diagnostics -> quickfix list')
   map({ 'n', 'x' }, 's', '<Plug>(aic-submit)', 'submit')
   map({ 'n', 'x' }, 'S', '<Plug>(aic-submit-now)', 'submit now')
@@ -257,31 +258,18 @@ function M.show(name)
   end, true)
 end
 
--- o = { range = n, line1 = a, line2 = b, now = bool }
+-- Pick a prompt template, preview, :w sends. o = { range = n, line1 = a, line2 = b, now = bool }
 function M.submit(o)
   o = o or {}
-  local buf = api.nvim_get_current_buf()
   ensure(function()
-    local doc = mod('doc')
-    local name = doc.name_of(buf) or doc.current()
-    local args = { 'submit', '--doc', name }
-    if o.range and o.range > 0 then
-      if not doc.name_of(buf) then
-        util.notify('aic: range submit only works in a doc buffer', vim.log.levels.WARN)
-        return
-      end
-      vim.list_extend(args, { '--from', tostring(o.line1), '--to', tostring(o.line2) })
-    end
-    if o.now then
-      table.insert(args, '--now')
-    end
-    local db = doc.bufnr(name)
-    if db and vim.bo[db].modified then
-      util.notify(('aic: %s has unsaved changes; submitting the saved file'):format(name), vim.log.levels.WARN)
-    end
-    backend.run(args, state.root, backend.report('submit', function()
-      state.refresh()
-    end))
+    mod('submit').start(o)
+  end)
+end
+
+-- :AicPrompts: edit a template (built-ins are copied first) or make one.
+function M.prompts()
+  ensure(function()
+    mod('submit').manage()
   end)
 end
 

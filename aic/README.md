@@ -31,9 +31,12 @@ cd your-project
    `<!-- aic: compile -->` compiles on `:w`: diagnostics land in the quickfix
    list and the doc's sign column. `.aic/` is gitignored: `git clean -fdx`
    deletes your docs.
-4. `<leader>zs` submits the current doc's diff (visual: just the selected lines) to the
-   worker; `<leader>zS` interrupts it to deliver now; `<leader>zh` holds it at its
-   next tool call; `<leader>zc` continues.
+4. `<leader>zs` submits the current doc (visual: just the selected lines): pick
+   a prompt template (`spec` sends the full doc first, then diffs), and the
+   rendered prompt opens in the current window: edit it, `:w` sends exactly
+   that, leaving it sends nothing. `<leader>zS` does the same but interrupts
+   the worker to deliver now; `<leader>zp` edits or makes templates;
+   `<leader>zh` holds the worker at its next tool call; `<leader>zc` continues.
 5. Read along in the trace (`]u` next unseen, `<CR>` show/hide a node's diff, `gf` jump to code, `W` what-if),
    ask about anything with `<leader>z?`, see who touched a line with `<leader>zb`.
 
@@ -63,6 +66,17 @@ cd your-project
   pseudocode block to the current doc and submits just that (once); `Y` yanks it;
   `<leader>zl` reopens the last answer if you closed it. (Uppercase, so
   `y`/`f` motions still work for copying from the float.)
+- **Choose what a submit says.** A submit renders a prompt template: the
+  typed header and the pasted body, with `{{doc}}`, `{{diff}}`,
+  `{{selection}}`, `{{previous}}`, `{{diagnostics}}`, `{{input}}`… placed
+  wherever you want. Built-ins: `spec` (full doc first, then diffs),
+  `selection`, `message` (asks for text), `review` (have the worker check its
+  changes against your notes, no edits). Your own go in
+  `~/.config/aic/prompts/` or `.aic/prompts/` (same name overrides). Format:
+  PROTOCOL.md "Prompt templates". The header is typed as you, so it is
+  refused if it has digits, `@` or invisible characters, and every send from
+  Neovim shows you the rendered prompt first; `aic submit` without a preview
+  only uses built-in templates.
 - **Keep working in parallel.** Submit what you already know while the worker
   is busy; it reads it at its next tool call.
 - **Mark finished sections `## [done] …`.** The compiler keeps checking they
@@ -89,7 +103,10 @@ aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will s
 aic usage [--json]           # context/cost per session + account quota
 aic compact compile|ask [--reset]
 aic ask [--doc D] [--whatif] [--context-file F] QUESTION
-aic submit [--doc D] [--from N --to M] [--now] | hold | continue [MESSAGE]
+aic prompts [--json]         # prompt templates
+aic render --prompt P [--doc D] [--from N --to M] [--input T] [--json]
+aic submit [--doc D] [--prompt P] [--from N --to M] [--input T] [--now] | --rendered F
+aic hold | continue [MESSAGE]
 ```
 
 ## Tests

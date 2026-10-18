@@ -6,14 +6,13 @@ input typed while it is busy and absorbs it at the next tool boundary, so a
 plain submit already redirects mid-turn. `--now` additionally presses Claude
 Code's "send now" (ctrl+x ctrl+s), which interrupts the running tool.
 """
-import difflib
 import json
 import os
 import re
 import subprocess
 import time
 
-from . import anchors, docs, paths
+from . import docs, paths, prompts
 
 HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                "Stop", "Notification", "SessionEnd"]
@@ -207,7 +206,8 @@ def deliver(root, sid, header, body=None, now=False):
     header = " ".join(header.split())
     _check_screen(pane)
     size = os.path.getsize(w["transcript_path"]) if w.get("transcript_path") and os.path.exists(w["transcript_path"]) else 0
-    _tmux("send-keys", "-t", pane, "-l", header)
+    # tmux reads an argument's trailing `;` as a command separator: escape it
+    _tmux("send-keys", "-t", pane, "-l", header[:-1] + "\\;" if header.endswith(";") else header)
     time.sleep(0.2)
     _check_screen(pane, header)
     if body:
@@ -269,72 +269,48 @@ def _human_edits_since(sdir, seq):
     return out
 
 
-def _last_seq(sdir):
-    tr = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
-    return tr[-1].get("seq", 0) if tr else 0
+def build_submit(root, sid, line_from=None, line_to=None, doc=docs.DEFAULT, prompt=None, input_text=None,
+                 builtin_only=False):
+    """Render prompt template `prompt` (default: `selection` for a line range,
+    else `spec`) for doc `doc` -> dict(header=typed line, body=pasted text,
+    spec=doc text that counts as sent or None, seq=trace position covered,
+    receipt=what a send records). Line numbers are file lines."""
+    prompt = prompt or ("selection" if line_from else "spec")
+    try:
+        r = prompts.render(root, sid, prompt, doc, line_from, line_to, input_text, builtin_only)
+    except prompts.PromptError as e:
+        raise WorkerError(str(e))
+    rc = r["receipt"]
+    return {"header": r["header"], "body": r["body"], "spec": rc["sent"], "seq": rc["seq"], "receipt": rc}
 
 
-def build_submit(root, sid, line_from=None, line_to=None, doc=docs.DEFAULT):
-    """-> dict(header=typed line, body=pasted text, spec=exact doc text sent or None,
-    seq=trace position covered). Headers are digit-free; details go in the body.
-    Line numbers are file lines; the doc's marker line is never sent."""
+def send_rendered(root, sid, header, body, receipt, now=False):
+    """Send a rendered (possibly edited) prompt and record its receipt: the
+    doc's diff base moves only for a template that marks it sent; the
+    hand-edit mark only when the hand edits were in it. Sends to one worker
+    are serialized (check, type, record), so two cannot interleave keys."""
+    if not isinstance(header, str) or not isinstance(body, str) or not isinstance(receipt, dict):
+        raise WorkerError("a rendered prompt needs a string header and body and a receipt")
     sdir = paths.session_dir(root, sid)
-    raw = docs.read(root, doc)
-    spec = docs.strip_marker(raw)
-    st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
-    seq = _last_seq(sdir)
-    sent_spec = None
-    if line_from:
-        lines = raw.splitlines()
-        line_to = line_to or line_from
-        first = line_from - 1
-        if first == 0 and lines and docs.MARKER.match(lines[0]):
-            first = 1  # the marker line is the doc's settings, not content
-        part = "\n".join(lines[first: line_to])
-        if not part.strip():
-            raise WorkerError("selected spec lines are empty")
-        header = "[aic] Please implement this part of my spec:"
-        body = "(spec lines %d-%d)\n\n%s" % (line_from, line_to, part)
-    else:
-        old = paths.read_text(docs.sent_path(sdir, doc))
-        if old == spec:
-            raise WorkerError("spec unchanged since last submit")
-        if not old.strip():
-            header = "[aic] Here is my spec, please implement it:"
-            body = spec.strip()
-        else:
-            diff = "".join(difflib.unified_diff(old.splitlines(True), spec.splitlines(True),
-                                                "spec (last submit)", "spec (now)"))
-            header = "[aic] I changed my spec, please apply these changes (diff, then the full spec):"
-            body = "```diff\n%s```\n\nFull spec now:\n\n%s" % (diff, spec.strip())
-        sent_spec = spec
-    # anchors in what is being sent: inline what the worker can't just open
-    # (line ranges, symbols, diffs, turns, files outside the project)
-    if line_from:
-        sent_text = part
-    elif not old.strip():
-        sent_text = spec
-    else:
-        sent_text = "\n".join(l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++"))
-    ref = anchors.blocks(sent_text, root, sid, for_worker=True)
-    if ref:
-        body += "\n\nReferenced context (resolved from my @anchors):\n\n" + ref
-    edits = _human_edits_since(sdir, st.get("submit_seq", 0))
-    if edits:
-        header += " I also edited code by hand, keep my changes (listed at the end)."
-        body += "\n\nMy hand edits since my last message: " + ", ".join(edits)
-    return {"header": header, "body": body, "spec": sent_spec, "seq": seq}
-
-
-def submit(root, sid, line_from=None, line_to=None, now=False, doc=docs.DEFAULT):
-    sdir = paths.session_dir(root, sid)
-    msg = build_submit(root, sid, line_from, line_to, doc)
-    busy = (paths.worker(root, sid) or {}).get("state") == "busy"
-    pane = deliver(root, sid, msg["header"], msg["body"], now=now and busy)
-    if msg["spec"] is not None:  # exactly what was sent, not what is on disk now
-        paths.write_text(docs.sent_path(sdir, doc), msg["spec"])
-    paths.update_json(os.path.join(sdir, "state.json"), submit_seq=msg["seq"])
-    control(root, sid, "submit", text=msg["header"] + "\n" + msg["body"], now=bool(now))
+    with paths.locked(os.path.join(sdir, "deliver")):
+        try:
+            header = prompts.check_header(header)
+            prompts.check_body(body)
+            prompts.check_receipt(root, sid, receipt)
+        except prompts.PromptError as e:
+            raise WorkerError(str(e))
+        except docs.DocError as e:
+            raise WorkerError("bad receipt: %s" % e)
+        busy = (paths.worker(root, sid) or {}).get("state") == "busy"
+        pane = deliver(root, sid, header, body, now=now and busy)
+        if receipt["marks_sent"] and receipt.get("sent") is not None:  # exactly what was rendered
+            paths.write_text(docs.sent_path(sdir, receipt["doc"]), receipt["sent"])
+        if receipt.get("edits_sent"):
+            st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
+            cur = st.get("submit_seq") if isinstance(st.get("submit_seq"), int) else 0
+            paths.update_json(os.path.join(sdir, "state.json"), submit_seq=max(cur, receipt["seq"]))
+        control(root, sid, "submit", text=header + "\n" + body, now=bool(now),
+                prompt=receipt.get("prompt"), doc=receipt.get("doc"))
     if not busy:
         state = "sent"
     elif now:
@@ -342,6 +318,14 @@ def submit(root, sid, line_from=None, line_to=None, now=False, doc=docs.DEFAULT)
     else:
         state = "queued: the worker reads it at its next tool call"
     return "submitted to %s: %s" % (pane, state)
+
+
+def submit(root, sid, line_from=None, line_to=None, now=False, doc=docs.DEFAULT, prompt=None, input_text=None):
+    """Render and send without a preview: built-in templates only (a project
+    or user template, possibly written by the worker, must be seen first:
+    render it and send with send_rendered)."""
+    msg = build_submit(root, sid, line_from, line_to, doc, prompt, input_text, builtin_only=True)
+    return send_rendered(root, sid, msg["header"], msg["body"], msg["receipt"], now)
 
 
 def hold(root, sid):

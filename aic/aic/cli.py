@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import anchors, compiler, docs, hook, paths, usage, watch, worker
+from . import anchors, compiler, docs, hook, paths, prompts, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -45,8 +45,21 @@ def main(argv=None):
     p.add_argument("--context-file")
     p.add_argument("--whatif", action="store_true")
     p.add_argument("question", nargs="+")
-    p = sub.add_parser("submit", help="send doc changes to the worker")
+    p = sub.add_parser("prompts", help="list prompt templates")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("render", help="render a prompt template (what a submit would send)")
+    p.add_argument("--prompt", required=True)
     p.add_argument("--doc", default=docs.DEFAULT)
+    p.add_argument("--from", dest="line_from", type=int)
+    p.add_argument("--to", dest="line_to", type=int)
+    p.add_argument("--input", dest="input_text")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("submit", help="send a doc (through a prompt template) to the worker")
+    p.add_argument("--doc", default=docs.DEFAULT)
+    p.add_argument("--prompt", help="built-in template, sent without a preview (default: selection with --from, "
+                                    "else spec); project/user templates go through render + --rendered")
+    p.add_argument("--input", dest="input_text")
+    p.add_argument("--rendered", help="JSON file from `aic render --json`, header/body possibly edited")
     p.add_argument("--from", dest="line_from", type=int)
     p.add_argument("--to", dest="line_to", type=int)
     p.add_argument("--now", action="store_true", help="interrupt the running tool (Claude Code send-now)")
@@ -130,13 +143,31 @@ def main(argv=None):
             print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc))
         elif a.cmd == "submit":
             sid = _sid(root)
+            if a.rendered:
+                r = paths.read_json(a.rendered)
+                if not isinstance(r, dict) or not isinstance(r.get("receipt"), dict):
+                    raise worker.WorkerError("%s is not a rendered prompt (aic render --json)" % a.rendered)
+                print(worker.send_rendered(root, sid, r.get("header") or "", r.get("body") or "", r["receipt"], a.now))
+            else:
+                docs.resolve(root, sid, a.doc)
+                print(worker.submit(root, sid, a.line_from, a.line_to, a.now, a.doc, a.prompt, a.input_text))
+        elif a.cmd == "prompts":
+            ps = prompts.listing(root)
+            if a.json:
+                print(json.dumps(ps))
+            else:
+                for t in ps:
+                    print("%-14s %-9s %s" % (t["name"], t["source"], t.get("error") or t.get("description", "")))
+        elif a.cmd == "render":
+            sid = _sid(root)
             docs.resolve(root, sid, a.doc)
-            print(worker.submit(root, sid, a.line_from, a.line_to, a.now, a.doc))
+            r = prompts.render(root, sid, a.prompt, a.doc, a.line_from, a.line_to, a.input_text)
+            print(json.dumps(r) if a.json else "%s\n----\n%s" % (r["header"], r["body"]))
         elif a.cmd == "hold":
             print(worker.hold(root, _sid(root)))
         elif a.cmd == "continue":
             print(worker.cont(root, _sid(root), " ".join(a.message) or None))
-    except (worker.WorkerError, compiler.CompilerError, docs.DocError) as e:
+    except (worker.WorkerError, compiler.CompilerError, docs.DocError, prompts.PromptError) as e:
         sys.stderr.write("aic: %s\n" % e)
         return 1
     return 0
