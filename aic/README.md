@@ -76,7 +76,10 @@ cd your-project
   PROTOCOL.md "Prompt templates". The header is typed as you, so it is
   refused if it has digits, `@` or invisible characters, and every send from
   Neovim shows you the rendered prompt first; `aic submit` without a preview
-  only uses built-in templates.
+  only uses built-in templates. The worker's Write/Edit tools can't change
+  `.aic/docs/` or `.aic/prompts/` (the hook refuses and the trace shows
+  `⛔ blocked`); the compiler never writes files, so compiles and their
+  quickfix are unaffected.
 - **Keep working in parallel.** Submit what you already know while the worker
   is busy; it reads it at its next tool call.
 - **Mark finished sections `## [done] …`.** The compiler keeps checking they

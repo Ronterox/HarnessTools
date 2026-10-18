@@ -148,6 +148,34 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(paths.worker(self.root, self.sid)["state"], "held")
         self.assertEqual(self.run_hook("PreToolUse", tool_name="Edit"), "")  # one-shot
 
+    def test_worker_file_tools_never_touch_docs_or_prompts(self):
+        def pre(tool, path, cwd=None):
+            out = self.run_hook("PreToolUse", tool_name=tool, cwd=cwd or self.root,
+                                tool_input={"file_path": path, "notebook_path": path})
+            return json.loads(out) if out else None
+        for tool, path in (("Write", ".aic/docs/notes.md"), ("Edit", os.path.join(self.root, ".aic/prompts/spec.md")),
+                           ("MultiEdit", ".aic/docs/../docs/x.md"), ("NotebookEdit", ".aic/prompts/n.ipynb")):
+            out = pre(tool, path)
+            self.assertEqual(out and out["hookSpecificOutput"]["permissionDecision"], "deny", (tool, path))
+            self.assertNotIn("continue", out)  # the worker carries on with its turn
+        os.symlink(os.path.join(self.root, ".aic", "docs"), os.path.join(self.root, "sneaky"))
+        self.assertIsNotNone(pre("Write", "sneaky/notes.md"))  # through a symlink
+        for tool, path in (("Write", "src/app.py"), ("Edit", ".aic/docsish.md"), ("Read", ".aic/docs/notes.md"),
+                           ("Write", ".aic/sessions/S1/x")):
+            self.assertIsNone(pre(tool, path), (tool, path))
+        ev = paths.read_jsonl(os.path.join(paths.session_dir(self.root, self.sid), "control.jsonl"))
+        self.assertEqual([e["file"] for e in ev if e["kind"] == "guarded"][:2], [".aic/docs/notes.md", ".aic/prompts/spec.md"])
+
+    def test_compiler_is_never_guarded(self):
+        with mock.patch.dict(os.environ, {"AIC_ROLE": "compiler"}):
+            self.assertEqual(self.run_hook("PreToolUse", tool_name="Write",
+                                           tool_input={"file_path": ".aic/docs/notes.md"}), "")
+
+    def test_hold_wins_over_the_guard(self):
+        worker.hold(self.root, self.sid)
+        out = json.loads(self.run_hook("PreToolUse", tool_name="Write", tool_input={"file_path": ".aic/docs/a.md"}))
+        self.assertFalse(out["continue"])
+
     def test_compiler_role_is_ignored(self):
         with mock.patch.dict(os.environ, {"AIC_ROLE": "compiler"}):
             self.run_hook("UserPromptSubmit")
