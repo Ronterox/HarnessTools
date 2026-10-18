@@ -13,7 +13,7 @@ import re
 import subprocess
 import time
 
-from . import anchors, paths
+from . import anchors, docs, paths
 
 HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                "Stop", "Notification", "SessionEnd"]
@@ -274,24 +274,29 @@ def _last_seq(sdir):
     return tr[-1].get("seq", 0) if tr else 0
 
 
-def build_submit(root, sid, line_from=None, line_to=None):
-    """-> dict(header=typed line, body=pasted text, spec=exact spec sent or None,
-    seq=trace position covered). Headers are digit-free; details go in the body."""
+def build_submit(root, sid, line_from=None, line_to=None, doc=docs.DEFAULT):
+    """-> dict(header=typed line, body=pasted text, spec=exact doc text sent or None,
+    seq=trace position covered). Headers are digit-free; details go in the body.
+    Line numbers are file lines; the doc's marker line is never sent."""
     sdir = paths.session_dir(root, sid)
-    spec = paths.read_text(os.path.join(sdir, "spec.md"))
+    raw = docs.read(root, doc)
+    spec = docs.strip_marker(raw)
     st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
     seq = _last_seq(sdir)
     sent_spec = None
     if line_from:
-        lines = spec.splitlines()
+        lines = raw.splitlines()
         line_to = line_to or line_from
-        part = "\n".join(lines[line_from - 1: line_to])
+        first = line_from - 1
+        if first == 0 and lines and docs.MARKER.match(lines[0]):
+            first = 1  # the marker line is the doc's settings, not content
+        part = "\n".join(lines[first: line_to])
         if not part.strip():
             raise WorkerError("selected spec lines are empty")
         header = "[aic] Please implement this part of my spec:"
         body = "(spec lines %d-%d)\n\n%s" % (line_from, line_to, part)
     else:
-        old = paths.read_text(os.path.join(sdir, "spec.submitted.md"))
+        old = paths.read_text(docs.sent_path(sdir, doc))
         if old == spec:
             raise WorkerError("spec unchanged since last submit")
         if not old.strip():
@@ -321,13 +326,13 @@ def build_submit(root, sid, line_from=None, line_to=None):
     return {"header": header, "body": body, "spec": sent_spec, "seq": seq}
 
 
-def submit(root, sid, line_from=None, line_to=None, now=False):
+def submit(root, sid, line_from=None, line_to=None, now=False, doc=docs.DEFAULT):
     sdir = paths.session_dir(root, sid)
-    msg = build_submit(root, sid, line_from, line_to)
+    msg = build_submit(root, sid, line_from, line_to, doc)
     busy = (paths.worker(root, sid) or {}).get("state") == "busy"
     pane = deliver(root, sid, msg["header"], msg["body"], now=now and busy)
     if msg["spec"] is not None:  # exactly what was sent, not what is on disk now
-        paths.write_text(os.path.join(sdir, "spec.submitted.md"), msg["spec"])
+        paths.write_text(docs.sent_path(sdir, doc), msg["spec"])
     paths.update_json(os.path.join(sdir, "state.json"), submit_seq=msg["seq"])
     control(root, sid, "submit", text=msg["header"] + "\n" + msg["body"], now=bool(now))
     if not busy:

@@ -30,12 +30,12 @@ everything is `cat`-able.
 
 ```
 .aic/                       (gitignored)
+  docs/<name>.md            your docs: specs, notes (project-wide)
   sessions/<worker-session-id>/
-    spec.md                 your pseudocode outline
-    spec.submitted.md       snapshot at last submit (for diffing)
+    sent.<doc>.md           what this worker last got of doc <doc> (for diffing)
     trace.jsonl             normalized worker + human events
     seen.json               inbox state (seen node ids)
-    diagnostics.json        last compile output
+    diagnostics.<doc>.json  last compile of doc <doc>
     chat.md                 compiler REPL transcript
     mailbox                 human → worker messages (hook gate reads this)
 ```
@@ -44,7 +44,7 @@ The daemon:
 - tails the worker transcript `~/.claude/projects/<project>/<session>.jsonl`
 - watches human code saves (reported by the editor client)
 - normalizes both into `trace.jsonl`
-- runs compiles on request and writes `diagnostics.json`
+- runs compiles on request and writes `diagnostics.<doc>.json`
 
 ## Core loop
 
@@ -123,12 +123,14 @@ The daemon:
 - Everything is exposed as commands and `<Plug>` mappings; default keys go
   under one leader prefix.
 
-## Spec lifetime
+## Docs
 
-v1 has one spec per worker session (gitignored scratch). It's designed so a
-later **promote** key can copy selected outline nodes into a committed project
-spec, so a long-lived "high-level view of the codebase" can be added without a
-redesign.
+You write in as many **docs** as you like (`.aic/docs/<name>.md`, project-wide,
+gitignored scratch): specs, notes, plans. Not every doc is a spec, so a doc
+compiles on `:w` only when its first line says so (`<!-- aic: compile -->`).
+What each worker was last sent of a doc is remembered per worker, so a submit
+still sends only the diff. One compiler session serves all docs. The old
+per-session `spec.md` becomes doc `spec` once (migration).
 
 ## Milestones (each usable on its own)
 

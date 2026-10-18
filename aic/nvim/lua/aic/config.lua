@@ -11,8 +11,10 @@ M.defaults = {
   prefix = '<leader>z',
   -- install default keymaps under `prefix`
   keymaps = true,
-  -- usage winbar on the aic views (history, questions, spec)
+  -- usage winbar on the aic views (history, questions, docs)
   winbar = true,
+  -- new docs compile when saved: 'ask' (asked on :AicDocNew), true or false
+  new_doc_compile = 'ask',
   -- debounce for file-watch refreshes (ms)
   debounce = 150,
   -- fallback polling interval when fs_event is unavailable (ms)

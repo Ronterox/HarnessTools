@@ -14,7 +14,7 @@ local M = {
   events = {}, -- trace events in file order
   by_id = {},
   touched = {},
-  diagnostics = nil,
+  diagnostics = {}, -- doc name -> last compile (diagnostics.<doc>.json)
   seen = {}, -- set: id -> true
   hold = false,
   compiling = false, -- `compiling` file exists
@@ -99,7 +99,7 @@ local function watch(path, list, cb, poll_cb)
 end
 
 local function reset_cache()
-  M.events, M.by_id, M.touched, M.diagnostics, M.seen = {}, {}, {}, nil, {}
+  M.events, M.by_id, M.touched, M.diagnostics, M.seen = {}, {}, {}, {}, {}
   M.usage = nil
   M.hold, M.compiling = false, false
   stats = {}
@@ -243,7 +243,25 @@ local function load_seen()
   end
 end
 
-local files = { 'trace.jsonl', 'seen.json', 'touched.json', 'diagnostics.json', 'chat.md', 'hold', 'compiling', 'usage.json' }
+local files = { 'trace.jsonl', 'seen.json', 'touched.json', 'chat.md', 'hold', 'compiling', 'usage.json' }
+
+-- The session files to stat: the fixed ones, every diagnostics.<doc>.json on
+-- disk, and those seen before (so a removed one is noticed).
+local function session_files()
+  local names, seen = vim.list_extend({}, files), {}
+  for name, t in vim.fs.dir(M.dir) do
+    if t == 'file' and name:match('^diagnostics%..+%.json$') then
+      table.insert(names, name)
+      seen[name] = true
+    end
+  end
+  for name in pairs(stats) do
+    if name:match('^diagnostics%..+%.json$') and not seen[name] then
+      table.insert(names, name)
+    end
+  end
+  return names
+end
 
 -- Re-stat the session files and reload the ones that changed.
 -- `initial` is passed to listeners (true on the first load of a session).
@@ -252,7 +270,7 @@ function M.refresh(initial)
     return
   end
   local changed = {}
-  for _, name in ipairs(files) do
+  for _, name in ipairs(session_files()) do
     local st = uv.fs_stat(M.dir .. '/' .. name)
     local sig = st and (st.mtime.sec .. '.' .. st.mtime.nsec .. ':' .. st.size) or 'none'
     if initial or sig ~= stats[name] then
@@ -277,9 +295,17 @@ function M.refresh(initial)
     M.touched = type(t) == 'table' and t or {}
     M.emit('touched')
   end
-  if changed['diagnostics.json'] ~= nil then
-    M.diagnostics = util.read_json(M.dir .. '/diagnostics.json')
-    M.emit('diagnostics', M.diagnostics, initial)
+  local changed_docs = {}
+  for name, st in pairs(changed) do
+    local doc = name:match('^diagnostics%.(.+)%.json$')
+    if doc and require('aic.doc').valid(doc) then
+      M.diagnostics[doc] = st and util.read_json(M.dir .. '/' .. name) or nil
+      table.insert(changed_docs, doc)
+    end
+  end
+  table.sort(changed_docs) -- a stable order (the last one fills the quickfix list)
+  for _, doc in ipairs(changed_docs) do
+    M.emit('diagnostics', doc, M.diagnostics[doc], initial)
   end
   if changed['chat.md'] ~= nil then
     M.emit('chat')

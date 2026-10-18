@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from aic import paths, worker  # noqa: E402
+from aic import docs, paths, worker  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "submit_golden.json")
 
@@ -50,9 +50,10 @@ def build(name):
         paths.write_text(os.path.join(root, "app.py"), APP)
         sdir = paths.session_dir(root, "S1")
         os.makedirs(sdir)
-        paths.write_text(os.path.join(sdir, "spec.md"), c["spec"])
+        os.makedirs(docs.docs_dir(root))
+        paths.write_text(docs.path(root, "spec"), c["spec"])
         if c.get("sent") is not None:
-            paths.write_text(os.path.join(sdir, "spec.submitted.md"), c["sent"])
+            paths.write_text(docs.sent_path(sdir, "spec"), c["sent"])
         if c.get("submit_seq"):
             paths.write_json(os.path.join(sdir, "state.json"), {"submit_seq": c["submit_seq"]})
         events = [PROMPT] + c.get("events", [])

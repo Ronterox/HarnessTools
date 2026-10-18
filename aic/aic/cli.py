@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import anchors, compiler, hook, paths, usage, watch, worker
+from . import anchors, compiler, docs, hook, paths, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -36,12 +36,17 @@ def main(argv=None):
     p = sub.add_parser("status")
     p.add_argument("--json", action="store_true")
     sub.add_parser("watch", help="tail worker transcript into the trace")
-    sub.add_parser("compile", help="compile spec against worker activity")
+    p = sub.add_parser("docs", help="list docs (migrates the old spec.md once)")
+    p.add_argument("--json", action="store_true")
+    p = sub.add_parser("compile", help="compile a doc against worker activity")
+    p.add_argument("--doc", default=docs.DEFAULT)
     p = sub.add_parser("ask", help="ask the compiler")
+    p.add_argument("--doc", default=docs.DEFAULT)
     p.add_argument("--context-file")
     p.add_argument("--whatif", action="store_true")
     p.add_argument("question", nargs="+")
-    p = sub.add_parser("submit", help="send spec changes to the worker")
+    p = sub.add_parser("submit", help="send doc changes to the worker")
+    p.add_argument("--doc", default=docs.DEFAULT)
     p.add_argument("--from", dest="line_from", type=int)
     p.add_argument("--to", dest="line_to", type=int)
     p.add_argument("--now", action="store_true", help="interrupt the running tool (Claude Code send-now)")
@@ -65,6 +70,7 @@ def main(argv=None):
         if a.cmd == "init":  # (WorkerError on a broken settings file is reported below)
             root = paths.init_root()
             sp = worker.init(root, BIN)
+            docs.migrate(root, paths.attached(root))
             print("aic initialized in %s/.aic (hooks: %s). Restart running claude sessions there "
                   "so they load the hooks." % (root, os.path.relpath(sp, root)))
             return 0
@@ -94,30 +100,43 @@ def main(argv=None):
                 print(json.dumps([anchors.resolve(x, root, sid) for x in anchors.parse(text, root)]))
             else:
                 print(anchors.blocks(text, root, paths.attached(root)) or "(no anchors)")
+        elif a.cmd == "docs":
+            docs.migrate(root, paths.attached(root))
+            ds = docs.listing(root)
+            if a.json:
+                print(json.dumps(ds))
+            else:
+                for d in ds:
+                    print("%-20s %s" % (d["name"], "compile" if d["compile"] else ""))
         elif a.cmd == "watch":
             return watch.main(root)
         elif a.cmd == "compile":
             sid = _sid(root)
-            d = compiler.compile_spec(root, sid)
+            docs.resolve(root, sid, a.doc)
+            d = compiler.compile_spec(root, sid, a.doc)
             if d is None:
-                print("compile queued: it runs again on your latest spec when the current one finishes")
+                print("compile queued: %s runs again, as saved, when the current compile finishes" % a.doc)
                 return 0
             counts = {}
             for it in d["items"]:
                 counts[it["severity"]] = counts.get(it["severity"], 0) + 1
-            print("compiled: %d errors, %d warnings, %d info — %s" % (
-                counts.get("error", 0), counts.get("warning", 0), counts.get("info", 0), d["summary"]))
+            print("compiled %s: %d errors, %d warnings, %d info — %s" % (
+                a.doc, counts.get("error", 0), counts.get("warning", 0), counts.get("info", 0), d["summary"]))
         elif a.cmd == "ask":
             sid = _sid(root)
             ctx = paths.read_json(a.context_file) if a.context_file else None
-            print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif))
+            docs.check_name(a.doc)  # a question needs no doc file: it may not exist yet
+            docs.migrate(root, sid)
+            print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc))
         elif a.cmd == "submit":
-            print(worker.submit(root, _sid(root), a.line_from, a.line_to, a.now))
+            sid = _sid(root)
+            docs.resolve(root, sid, a.doc)
+            print(worker.submit(root, sid, a.line_from, a.line_to, a.now, a.doc))
         elif a.cmd == "hold":
             print(worker.hold(root, _sid(root)))
         elif a.cmd == "continue":
             print(worker.cont(root, _sid(root), " ".join(a.message) or None))
-    except (worker.WorkerError, compiler.CompilerError) as e:
+    except (worker.WorkerError, compiler.CompilerError, docs.DocError) as e:
         sys.stderr.write("aic: %s\n" % e)
         return 1
     return 0

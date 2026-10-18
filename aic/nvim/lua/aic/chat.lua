@@ -94,7 +94,7 @@ function M.ask(text)
   end
   state.asking = state.asking + 1
   set_pending(true)
-  backend.run({ 'ask', '--', text }, state.root, function(ok, out, err, code)
+  backend.run({ 'ask', '--doc', require('aic.doc').current(), '--', text }, state.root, function(ok, out, err, code)
     state.asking = state.asking - 1
     set_pending(state.asking > 0)
     if not ok then

@@ -9,13 +9,13 @@ local api = vim.api
 local uv = vim.uv or vim.loop
 
 local M = {
-  cache = { spec = '', trace = '', questions = '' }, -- winbar strings (statusline syntax)
+  cache = { doc = '', trace = '', questions = '' }, -- winbar strings (statusline syntax)
   float = nil, -- { buf, win } of the :AicUsage float
   running = nil, -- 'compile' | 'ask' | 'worker' while a compact/reset runs
 }
 
 local WINBAR = "%%{%%v:lua.require'aic.usage'.winbar('%s')%%}"
-local SESSION = { spec = 'compile', trace = 'worker', questions = 'ask' }
+local SESSION = { doc = 'compile', trace = 'worker', questions = 'ask' }
 local QUOTA_EVERY = 60 -- s
 local QUOTA_STALE = 900 -- s
 local HOT_PCT = 80

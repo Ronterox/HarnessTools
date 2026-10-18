@@ -35,7 +35,7 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
   `.aic/` or `.aic/workers/` changes, after `:AicAttach`, and on `R`.
 - **One window, one tab.** aic's views are buffers shown in the current
   window: **history** (`aic://trace`), **questions** (`aic://questions`) and the
-  **spec** (`spec.md`). aic never creates a tab or a split and never opens the
+  **docs** (`.aic/docs/*.md`). aic never creates a tab or a split and never opens the
   quickfix window. Jumps to code (`<CR>`/`gf` in the history, `gd` on anchors)
   open in the same window; `<C-o>` / `<C-^>` bring you back. Window options a
   view needs (folds, wrap, winbar) are set buffer-locally, so code buffers
@@ -49,7 +49,7 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
   stopped on exit.
 - **Watching**: `vim.uv` fs_event on the session dir (falls back to 500 ms
   polling), debounced 150 ms. Changes reload the trace, seen state, signs,
-  statusline, questions, usage winbars, and (when `diagnostics.json` changes) the quickfix list.
+  statusline, questions, usage winbars, and (when a `diagnostics.<doc>.json` changes) that doc's diagnostics and the quickfix list.
 
 ## Keymaps (default prefix `<leader>z`)
 
@@ -58,8 +58,9 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>z` | `:AicToggle`: in an aic buffer, back to the last code buffer; elsewhere, the last aic view | `(aic-toggle)` |
 | `<prefix>t` | `:AicHistory`: the history (trace) in this window | `(aic-history)` |
 | `<prefix>q` | `:AicQuestions`: the questions (compiler chat) in this window | `(aic-questions)` |
-| `<prefix>d` | `:AicSpec`: the spec in this window | `(aic-spec)` |
-| `<prefix>s` (n, x) | `:AicSubmit`: full spec diff; with a visual range, `--from/--to` | `(aic-submit)` |
+| `<prefix>d` | `:AicDocs`: pick a doc (newest first) or `+ new doc`; shown in this window | `(aic-docs)` |
+| `<prefix>D` | `:AicDocNew [name]`: new doc | `(aic-doc-new)` |
+| `<prefix>s` (n, x) | `:AicSubmit`: the current doc's diff; with a visual range (in a doc), `--from/--to` | `(aic-submit)` |
 | `<prefix>S` (n, x) | `:AicSubmitNow`: same with `--now` | `(aic-submit-now)` |
 | `<prefix>h` | `:AicHold` | `(aic-hold)` |
 | `<prefix>c` | `:AicContinue [msg]` | `(aic-continue)` |
@@ -73,7 +74,7 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>]` / `<prefix>[` | `:AicNextTouched` / `:AicPrevTouched` | `(aic-next-touched)` / `(aic-prev-touched)` |
 | `<prefix>g` | follow the anchor under the cursor, in any buffer (see [Anchors](#anchors)) | `(aic-follow)` |
 
-Other commands: `:Aic` (show the last aic view here), `:AicCompile`,
+Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCompile`,
 `:AicChat <text>`, `:AicPrevUnseen`, `:AicRefresh`, `:AicCompact compile|ask|worker`,
 `:AicReset compile|ask`. `<Plug>(aic-open)`,
 `(aic-compile)` and `(aic-prev-unseen)` also exist.
@@ -99,19 +100,32 @@ hold/release, `◆` end-of-turn text, `⇣` the worker's context was compacted
 (`⇣ compacted 107k → 10k (manual)`, `AicCompact`). Only worker `tool` and
 `text` nodes count as unseen. Seen state is saved to `seen.json` (tmp file + rename).
 
-**Spec** (`<session>/spec.md`, a real file): `:w` runs `aic compile`. If a
-compile is already running, the backend queues one more pass on your latest
-spec (`aic: compile queued`; the statusline shows `compiling+queued`). When it
-finishes, quickfix (title `aic compile`) and inline `vim.diagnostic`
-(namespace `aic`) are updated, and a one-line summary is shown. Anchors are
-highlighted, `gd` follows them and `<C-x><C-o>` completes them (see
-[Anchors](#anchors)).
+**Docs** (`<root>/.aic/docs/<name>.md`, real files, shared by every worker
+session): write as many as you like; `:AicDoc [name]` shows one (default: the
+current doc, else the last one entered, else `spec`; completes names),
+`:AicDocNew [name]` makes one. The **current doc** is the doc in the current
+buffer, else the last doc you entered: submit, ask, `:AicCompile`,
+`<prefix>e` and the statusline act on it. Rename/delete docs as plain files.
+- A doc compiles on `:w` only if its first line is `<!-- aic: compile -->`
+  (`prompt=<template>` may follow, for the submit picker). New docs ask
+  (config `new_doc_compile = 'ask' | true | false`; a doc made implicitly,
+  e.g. the first `:AicDoc`, gets the marker unless it is `false`).
+- If a compile is already running, the backend queues one more pass of that
+  doc (`aic: compile queued`; the statusline shows `compiling+queued`). When
+  it finishes, the quickfix list (title `aic compile <doc>`, never opened) and
+  inline `vim.diagnostic` (namespace `aic`) are updated, and a one-line
+  summary is shown. Each doc has its own diagnostics.
+- Anchors are highlighted, `gd` follows them and `<C-x><C-o>` completes them
+  (see [Anchors](#anchors)).
+- The first time a project gets a docs dir, `aic docs` runs first so the old
+  per-session `spec.md` is migrated to doc `spec`.
 
 **Questions** (`aic://questions`): shows `chat.md` followed by a `## You` line. Type
 below it and press `<CR>` in normal mode to send with `aic ask`. The plugin never
 writes `chat.md`; the view reloads when the backend appends to it, and keeps
 what you've typed. Anchors in your input are sent as-is (the backend resolves
-them); `gd`, highlighting and `<C-x><C-o>` work as in the spec.
+them); `gd`, highlighting and `<C-x><C-o>` work as in docs. Questions are
+about the current doc (`aic ask --doc`).
 
 **Code buffers** with touched ranges: `]w` / `[w` go to the next / previous
 touched range. Signs: `▎` in `AicWorker` (worker) or `AicHuman` (you). Signs
@@ -121,14 +135,14 @@ changed, so big writes stay cheap.
 
 **Ask / what-if float**: `q`/`<Esc>` close. Action keys are uppercase so
 `y`, `p`, `f` and the other motions still work for copying from the float.
-`P` appends the answer to the
-end of spec.md under `## Notes` (ask). `F` adds it under
-`## What-if: <question>` (what-if). If spec.md is open, the text goes into the buffer and you
-save it yourself (saving compiles). In both floats:
+Every action closes the float first and acts in the window under it. `P`
+appends the answer to the end of the current doc under `## Notes` (ask). `F`
+adds it under `## What-if: <question>` (what-if). If the doc is open, the text
+goes into the buffer and you save it yourself. In both floats:
 
 - `S` appends the answer's first fenced code block (or the whole answer if it
-  has none) under `## From compiler: <question>`, saves spec.md (which
-  compiles), and runs `aic submit --from <heading line> --to <last line>`.
+  has none) under `## From compiler`, saves the doc, and runs
+  `aic submit --doc <doc> --from <heading line> --to <last line>`.
   `S` works once per answer (also after `:AicLastAnswer`); pressing it again
   only notifies `aic: already submitted`.
 - `Y` yanks the same block (linewise) into the unnamed register.
@@ -157,14 +171,14 @@ root; a path anchor only counts if the path exists.
 | `@show:REV` | same (`git show REV`) |
 | `@turn:N` / `@turn:last` | open the trace on that turn's header |
 
-- `gd` is buffer-local in the spec, questions and answer float; off an anchor it
+- `gd` is buffer-local in docs, questions and the answer float; off an anchor it
   calls the `gd` mapping that was there before (e.g. an LSP one), else the
   normal `gd`. `<prefix>g` works in any buffer.
 - Valid anchors are highlighted with `AicAnchor` (default link `Underlined`),
   refreshed on edits and scrolling (debounced): the whole buffer under 2000
   lines, else the visible lines. The questions buffer always highlights only the
   visible lines ±50.
-- `omnifunc` (spec and questions) completes after `@` with `<C-x><C-o>`: project files and
+- `omnifunc` (docs and questions) completes after `@` with `<C-x><C-o>`: project files and
   directories (`git ls-files -co --exclude-standard`, else a walk capped at
   5000 entries skipping `.git` `.aic` `node_modules`), `diff`, `diff:<path>`,
   `staged`, `log`, `log:<path>`, `show:HEAD`, `show:HEAD~1`, `turn:last` and
@@ -183,7 +197,7 @@ view shows the session behind it:
 
 | view | example |
 |---|---|
-| spec | `compile · sonnet  ctx:[####------] 82k/200k (41%)  12 runs  $1.20` |
+| doc | `compile · sonnet  ctx:[####------] 82k/200k (41%)  12 runs  $1.20` |
 | trace | `worker · sonnet  ctx:[##--------] 36k/200k (18%)  turn 21` (window unknown: `worker · sonnet  ctx 107k (?%)  turn 21`) |
 | questions | `ask · opus  ctx:[######----] 126k/200k (63%)  9 turns  $2.85   5h:57% wk:15%` |
 
@@ -274,7 +288,9 @@ into a fresh buffer), trace rendering and folds (including `compact` events), `]
 persistence, the watcher (one per root, all stopped on exit, no leaked
 timers), quickfix and diagnostics, signs and `]w` (bounded to the view, only
 changed buffers re-applied), human-edit hunks, the
-statusline, submit/hold/continue, compile on `:w` (and queued compiles),
+statusline, submit/hold/continue, docs (new doc with/without the compile
+marker, per-doc diagnostics and statusline, picker, `--doc` on submit/ask,
+migration before the first docs dir), compile on `:w` (and queued compiles),
 ask/what-if floats (`P` `F` `S` `Y` `gd`), chat, and usage: the three
 winbars (plus null ctx window, null quota, gone with the view, back with it), the 80% hint, the `:AicUsage` float and its `c`/`R`/`w` actions
 (including a refused worker compact and `:AicReset worker` being rejected). The project is a git repo

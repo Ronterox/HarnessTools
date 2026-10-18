@@ -47,8 +47,8 @@ local function wire()
   state.on('touched', function()
     mod('signs').apply_all()
   end)
-  state.on('diagnostics', function(d, initial)
-    mod('spec').on_diagnostics(d, initial)
+  state.on('diagnostics', function(name, d, initial)
+    mod('doc').on_diagnostics(name, d, initial)
   end)
   state.on('chat', function()
     mod('chat').render()
@@ -93,8 +93,8 @@ local function setup_autocmds()
         return
       end
       local name = api.nvim_buf_get_name(a.buf)
-      if name:match('/%.aic/sessions/[^/]+/spec%.md$') then
-        mod('spec').attach(a.buf)
+      if name:match('/%.aic/docs/[^/]+%.md$') then
+        mod('doc').attach(a.buf)
       end
       mod('human').snapshot(a.buf, a.event == 'BufNewFile')
       if state.active() then
@@ -143,7 +143,8 @@ local function setup_keymaps(prefix)
   map('n', 'z', '<Plug>(aic-toggle)', 'toggle code / last aic view')
   map('n', 't', '<Plug>(aic-history)', 'history (trace)')
   map('n', 'q', '<Plug>(aic-questions)', 'questions')
-  map('n', 'd', '<Plug>(aic-spec)', 'spec')
+  map('n', 'd', '<Plug>(aic-docs)', 'doc picker')
+  map('n', 'D', '<Plug>(aic-doc-new)', 'new doc')
   map('n', 'e', '<Plug>(aic-diagnostics)', 'compile diagnostics -> quickfix list')
   map({ 'n', 'x' }, 's', '<Plug>(aic-submit)', 'submit')
   map({ 'n', 'x' }, 'S', '<Plug>(aic-submit-now)', 'submit now')
@@ -247,7 +248,7 @@ function M.toggle()
   end, true)
 end
 
--- Show view `name` ('trace' | 'questions' | 'spec') in the current window.
+-- Show view `name` ('trace' | 'questions' | 'doc') in the current window.
 function M.show(name)
   ensure(function()
     backend.ensure_watch(state.root)
@@ -261,11 +262,12 @@ function M.submit(o)
   o = o or {}
   local buf = api.nvim_get_current_buf()
   ensure(function()
-    local spec = mod('spec')
-    local args = { 'submit' }
+    local doc = mod('doc')
+    local name = doc.name_of(buf) or doc.current()
+    local args = { 'submit', '--doc', name }
     if o.range and o.range > 0 then
-      if buf ~= spec.bufnr() then
-        util.notify('aic: range submit only works in the spec buffer', vim.log.levels.WARN)
+      if not doc.name_of(buf) then
+        util.notify('aic: range submit only works in a doc buffer', vim.log.levels.WARN)
         return
       end
       vim.list_extend(args, { '--from', tostring(o.line1), '--to', tostring(o.line2) })
@@ -273,9 +275,9 @@ function M.submit(o)
     if o.now then
       table.insert(args, '--now')
     end
-    local sb = spec.bufnr()
-    if sb and vim.bo[sb].modified then
-      util.notify('aic: spec.md has unsaved changes; submitting the saved file', vim.log.levels.WARN)
+    local db = doc.bufnr(name)
+    if db and vim.bo[db].modified then
+      util.notify(('aic: %s has unsaved changes; submitting the saved file'):format(name), vim.log.levels.WARN)
     end
     backend.run(args, state.root, backend.report('submit', function()
       state.refresh()
@@ -297,7 +299,7 @@ end
 
 function M.compile()
   ensure(function()
-    mod('spec').compile()
+    mod('doc').compile()
   end)
 end
 
@@ -319,6 +321,25 @@ function M.chat(text)
   end)
 end
 
+-- Docs: picker, show one (default: current), new one.
+function M.docs()
+  ensure(function()
+    mod('doc').pick()
+  end, true)
+end
+
+function M.doc(name)
+  ensure(function()
+    mod('doc').show(name and vim.trim(name) ~= '' and vim.trim(name) or nil)
+  end, true)
+end
+
+function M.doc_new(name)
+  ensure(function()
+    mod('doc').new(name)
+  end, true)
+end
+
 function M.blame()
   ensure(function()
     mod('signs').blame()
@@ -335,7 +356,7 @@ end
 -- :copen / ]q are yours.
 function M.diagnostics()
   ensure(function()
-    if mod('spec').load_qf() then
+    if mod('doc').load_qf() then
       util.notify(('aic: %d compile diagnostics in the quickfix list'):format(#vim.fn.getqflist()))
     else
       util.notify('aic: no compile diagnostics yet')

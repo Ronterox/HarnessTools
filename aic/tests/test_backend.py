@@ -10,7 +10,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from aic import anchors, compiler, hook, paths, usage, watch, worker  # noqa: E402
+from aic import anchors, compiler, docs, hook, paths, usage, watch, worker  # noqa: E402
 from aic.transcript import Parser  # noqa: E402
 
 
@@ -154,15 +154,16 @@ class ProjectTest(unittest.TestCase):
 
     def test_submit_diff_and_selection(self):
         sdir = paths.session_dir(self.root, self.sid)
-        paths.write_text(os.path.join(sdir, "spec.md"), "# Spec\n- a\n- b\n")
+        os.makedirs(docs.docs_dir(self.root))
+        paths.write_text(docs.path(self.root, "spec"), "# Spec\n- a\n- b\n")
         m = worker.build_submit(self.root, self.sid)
         self.assertIn("Here is my spec", m["header"])
         self.assertIn("- b", m["body"])
         self.assertEqual(m["spec"], "# Spec\n- a\n- b\n")
-        paths.write_text(os.path.join(sdir, "spec.submitted.md"), "# Spec\n- a\n- b\n")
+        paths.write_text(docs.sent_path(sdir, "spec"), "# Spec\n- a\n- b\n")
         with self.assertRaises(worker.WorkerError):
             worker.build_submit(self.root, self.sid)
-        paths.write_text(os.path.join(sdir, "spec.md"), "# Spec\n- a\n- c\n")
+        paths.write_text(docs.path(self.root, "spec"), "# Spec\n- a\n- c\n")
         m = worker.build_submit(self.root, self.sid)
         self.assertIn("\n-- b", m["body"])
         self.assertIn("\n+- c", m["body"])
@@ -480,7 +481,7 @@ class CompileQueueTest(unittest.TestCase):
         os.makedirs(sdir)
         runs = []
 
-        def fake_once(r, s):
+        def fake_once(r, s, doc="spec"):
             runs.append(1)
             if len(runs) == 1:  # while we compile, someone saves again
                 self.assertIsNone(compiler.compile_spec(root, "S"))
@@ -491,6 +492,190 @@ class CompileQueueTest(unittest.TestCase):
         self.assertEqual(d["n"], 2)
         self.assertFalse(compiler.compiling(sdir))
         self.assertFalse(os.path.exists(os.path.join(sdir, "compile.again")))
+
+
+class DocsTest(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        worker.init(self.root, "/x/bin/aic")
+        self.sdir = paths.session_dir(self.root, "S1")
+        os.makedirs(self.sdir)
+
+    def test_names_and_marker(self):
+        for bad in ("../x", "a/b", "", ".hidden", "a..b", "x y"):
+            with self.assertRaises(docs.DocError, msg=bad):
+                docs.check_name(bad)
+        self.assertEqual(docs.check_name("notes-v2.draft"), "notes-v2.draft")
+        text = "<!-- aic: compile prompt=review -->\n# Notes\n- a\n"
+        self.assertEqual(docs.marker(text), {"compile": True, "prompt": "review"})
+        self.assertEqual(docs.strip_marker(text), "# Notes\n- a\n")
+        self.assertEqual(docs.marker("# Notes\n<!-- aic: compile -->\n"), {"compile": False, "prompt": None})
+        self.assertEqual(docs.strip_marker("# Notes\n"), "# Notes\n")
+
+    def test_migrate_once(self):
+        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n- old idea\n")
+        paths.write_text(os.path.join(self.sdir, "spec.submitted.md"), "# Spec\n")
+        paths.write_json(os.path.join(self.sdir, "diagnostics.json"), {"upto_seq": 7, "items": []})
+        self.assertTrue(docs.migrate(self.root, "S1"))
+        self.assertEqual(docs.read(self.root, "spec"), "<!-- aic: compile -->\n# Spec\n- old idea\n")
+        self.assertEqual(paths.read_text(docs.sent_path(self.sdir, "spec")), "# Spec\n")
+        self.assertEqual(paths.read_json(os.path.join(self.sdir, "state.json"))["compile_upto_seq"], 7)
+        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n- changed later\n")
+        self.assertFalse(docs.migrate(self.root, "S1"))  # once per project
+        self.assertIn("old idea", docs.read(self.root, "spec"))
+        self.assertEqual([d["name"] for d in docs.listing(self.root)], ["spec"])
+        self.assertTrue(docs.listing(self.root)[0]["compile"])
+
+    def test_migrate_picks_the_written_spec_across_sessions(self):
+        old = paths.session_dir(self.root, "S0")
+        os.makedirs(old)
+        paths.write_text(os.path.join(old, "spec.md"), "# Spec\n- the real one\n")
+        paths.write_text(os.path.join(old, "spec.submitted.md"), "# Spec\n")
+        paths.write_json(os.path.join(old, "diagnostics.json"), {"upto_seq": 4})
+        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n<!-- aic: pseudocode outline -->\n\n")
+        self.assertTrue(docs.migrate(self.root, "S1"))  # attached S1 never wrote in its spec
+        self.assertIn("the real one", docs.read(self.root, "spec"))
+        self.assertEqual(paths.read_text(docs.sent_path(old, "spec")), "# Spec\n")
+        self.assertEqual(paths.read_json(os.path.join(old, "state.json"))["compile_upto_seq"], 4)
+
+    def test_missing_doc_is_an_error(self):
+        with self.assertRaises(docs.DocError):
+            docs.resolve(self.root, "S1", "nope")
+
+    def test_ask_needs_no_doc_file(self):
+        seen = []
+
+        def fake(root, sdir, key, model, prompt, **kw):
+            seen.append(prompt)
+            return {"result": "ok"}
+        with mock.patch.object(compiler, "run_claude", fake), mock.patch.object(paths, "attached", lambda r: "S1"), \
+                mock.patch("os.getcwd", lambda: self.root), mock.patch("sys.stdout", new_callable=io.StringIO):
+            from aic import cli
+            self.assertEqual(cli.main(["ask", "hello"]), 0)
+        self.assertIn("CURRENT DOC ==\n(none yet)", seen[0])
+
+    def test_untouched_template_is_not_migrated(self):
+        paths.write_text(os.path.join(self.sdir, "spec.md"),
+                         "# Spec\n<!-- aic: pseudocode outline. Anchors: @x. :w compiles. -->\n\n")
+        self.assertFalse(docs.migrate(self.root, "S1"))
+        self.assertTrue(os.path.isdir(docs.docs_dir(self.root)))
+        self.assertEqual(docs.listing(self.root), [])
+
+    def test_submit_never_sends_the_marker(self):
+        docs.migrate(self.root, "S1")
+        paths.write_text(docs.path(self.root, "notes"), "<!-- aic: compile -->\n# Notes\n- a\n- b\n")
+        m = worker.build_submit(self.root, "S1", doc="notes")
+        self.assertNotIn("aic: compile", m["body"])
+        self.assertEqual(m["spec"], "# Notes\n- a\n- b\n")
+        m = worker.build_submit(self.root, "S1", 3, 3, doc="notes")  # file lines
+        self.assertTrue(m["body"].endswith("- a"), m["body"])
+        m = worker.build_submit(self.root, "S1", 1, 4, doc="notes")  # the whole doc, marker included
+        self.assertNotIn("aic: compile", m["body"])
+        self.assertTrue(m["body"].startswith("(spec lines 1-4)\n\n# Notes"), m["body"])
+        paths.write_text(docs.sent_path(self.sdir, "notes"), "# Notes\n- a\n- b\n")
+        paths.write_text(docs.path(self.root, "notes"), "# Notes\n- a\n- b\n")  # marker removed
+        with self.assertRaises(worker.WorkerError):  # the marker is not a change
+            worker.build_submit(self.root, "S1", doc="notes")
+
+
+class DocCompileTest(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        worker.init(self.root, "/x/bin/aic")
+        self.sdir = paths.session_dir(self.root, "S1")
+        os.makedirs(self.sdir)
+        docs.migrate(self.root, "S1")
+        paths.write_text(docs.path(self.root, "a"), "<!-- aic: compile -->\n- doc a\n")
+        paths.write_text(docs.path(self.root, "b"), "- doc b\n")
+        self.trace = [{"id": "e1", "seq": 1, "ts": 0, "kind": "prompt", "turn": 1, "text": "first"}]
+        self.write_trace()
+        self.prompts = []
+
+    def write_trace(self):
+        paths.write_text(os.path.join(self.sdir, "trace.jsonl"), "".join(json.dumps(e) + "\n" for e in self.trace))
+
+    def fake_claude(self, root, sdir, key, model, prompt, **kw):
+        self.prompts.append(prompt)
+        paths.update_json(os.path.join(sdir, "state.json"), compile="C1")
+        doc = "a" if "DOC `a`" in prompt else "b"
+        return {"structured_output": {"summary": "s " + doc, "items": [
+            {"kind": "incoherent", "severity": "warning", "file": "doc", "line": 2, "message": "about " + doc}]}}
+
+    def test_per_doc_files_and_shared_activity(self):
+        with mock.patch.object(compiler, "run_claude", self.fake_claude):
+            da = compiler.compile_spec(self.root, "S1", "a")
+            self.trace.append({"id": "e2", "seq": 2, "ts": 0, "kind": "prompt", "turn": 2, "text": "second"})
+            self.write_trace()
+            db = compiler.compile_spec(self.root, "S1", "b")
+            compiler.compile_spec(self.root, "S1", "a")
+        self.assertEqual((da["doc"], da["items"][0]["message"]), ("a", "about a"))
+        self.assertEqual(paths.read_json(docs.diag_path(self.sdir, "b"))["items"][0]["message"], "about b")
+        self.assertEqual(db["upto_seq"], 2)
+        self.assertIn("   1| <!-- aic: compile -->", self.prompts[0])  # numbered as the file is
+        self.assertIn("ALL WORKER ACTIVITY", self.prompts[0])
+        self.assertIn("NEW ACTIVITY", self.prompts[1])
+        self.assertIn("second", self.prompts[1])
+        self.assertNotIn("first", self.prompts[2].split("NEW ACTIVITY")[1])  # sent once, not per doc
+        self.assertIn("YOUR PREVIOUS ITEMS FOR DOC `b` (your new list replaces exactly these) ==\n(none)", self.prompts[1])
+        self.assertIn("about a", self.prompts[2])  # a's own previous items, not b's
+        self.assertNotIn("about b", self.prompts[2])
+
+    def test_queued_docs_all_run(self):
+        runs = []
+
+        def fake_once(r, s, doc="spec"):
+            runs.append(doc)
+            if len(runs) == 1:  # while a compiles, b and a are saved
+                self.assertIsNone(compiler.compile_spec(self.root, "S1", "b"))
+                self.assertIsNone(compiler.compile_spec(self.root, "S1", "a"))
+            return {"doc": doc, "n": len(runs)}
+        with mock.patch.object(compiler, "_compile_once", fake_once):
+            d = compiler.compile_spec(self.root, "S1", "a")
+        self.assertEqual(runs, ["a", "b", "a"])
+        self.assertEqual(d, {"doc": "a", "n": 3})  # the latest run of the caller's doc
+        self.assertFalse(os.path.exists(os.path.join(self.sdir, "compile.again")))
+
+    def test_a_queued_failure_costs_nobody_else(self):
+        runs = []
+        paths.write_text(docs.path(self.root, "c"), "- doc c\n")
+
+        def fake_once(r, s, doc="spec"):
+            runs.append(doc)
+            if len(runs) == 1:
+                for d in ("b", "c", "gone"):
+                    self.assertIsNone(compiler.compile_spec(self.root, "S1", d))
+            if doc == "b":
+                raise OSError("disk full")
+            return {"doc": doc}
+        with mock.patch.object(compiler, "_compile_once", fake_once):
+            d = compiler.compile_spec(self.root, "S1", "a")
+        self.assertEqual(runs, ["a", "b", "c"])  # "gone" has no file: skipped
+        self.assertEqual(d, {"doc": "a"})
+        self.assertEqual(paths.read_json(docs.diag_path(self.sdir, "b"))["error"], "disk full")
+
+    def test_old_style_queue_is_dropped(self):
+        paths.write_text(os.path.join(self.sdir, "compile.again"), "1760000000.5")
+        runs = []
+        with mock.patch.object(compiler, "_compile_once", lambda r, s, doc="spec": runs.append(doc) or {"doc": doc}):
+            compiler.compile_spec(self.root, "S1", "a")
+        self.assertEqual(runs, ["a"])
+
+    def test_own_failure_is_raised(self):
+        def boom(r, s, doc="spec"):
+            raise compiler.CompilerError("nope")
+        with mock.patch.object(compiler, "_compile_once", boom), self.assertRaises(compiler.CompilerError):
+            compiler.compile_spec(self.root, "S1", "a")
+
+    def test_ask_reads_the_given_doc(self):
+        seen = []
+
+        def fake(root, sdir, key, model, prompt, **kw):
+            seen.append(prompt)
+            return {"result": "ok"}
+        with mock.patch.object(compiler, "run_claude", fake):
+            compiler.ask(self.root, "S1", "why?", doc="b")
+        self.assertIn("CURRENT DOC `b`", seen[0])
+        self.assertIn("- doc b", seen[0])
 
 
 if __name__ == "__main__":

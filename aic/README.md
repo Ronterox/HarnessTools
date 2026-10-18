@@ -24,11 +24,14 @@ cd your-project
    ```
    `:Aic` shows aic in the current window. Views are buffers you switch
    between, never tabs or splits: `<leader>zt` history (trace), `<leader>zq`
-   questions (compiler chat), `<leader>zd` spec; `<leader>zz` toggles back to
-   your code.
-3. Write pseudocode in the spec (`@path:symbol` anchors, `gd` follows them).
-   `:w` compiles: diagnostics land in quickfix and the spec's sign column.
-4. `<leader>zs` submits the spec diff (visual: just the selected lines) to the
+   questions (compiler chat), `<leader>zd` docs (pick one or make a new one,
+   `<leader>zD` new); `<leader>zz` toggles back to your code.
+3. Write in docs (`.aic/docs/*.md`): specs, notes, whatever you need
+   (`@path:symbol` anchors, `gd` follows them). A doc whose first line is
+   `<!-- aic: compile -->` compiles on `:w`: diagnostics land in the quickfix
+   list and the doc's sign column. `.aic/` is gitignored: `git clean -fdx`
+   deletes your docs.
+4. `<leader>zs` submits the current doc's diff (visual: just the selected lines) to the
    worker; `<leader>zS` interrupts it to deliver now; `<leader>zh` holds it at its
    next tool call; `<leader>zc` continues.
 5. Read along in the trace (`]u` next unseen, `<CR>` show/hide a node's diff, `gf` jump to code, `W` what-if),
@@ -57,7 +60,7 @@ cd your-project
   back undone; check @log and @show:HEAD"); the compiler finds the cause in
   code/history and answers with fix pseudocode.
 - **Answer → worker in one key.** In an answer float, `S` appends its
-  pseudocode block to the spec and submits just that (once); `Y` yanks it;
+  pseudocode block to the current doc and submits just that (once); `Y` yanks it;
   `<leader>zl` reopens the last answer if you closed it. (Uppercase, so
   `y`/`f` motions still work for copying from the float.)
 - **Keep working in parallel.** Submit what you already know while the worker
@@ -68,7 +71,7 @@ cd your-project
   checklist and a commit message.
 - The statusline says `stale` when code changed since the last compile.
 - **Watch context and cost, compact when it grows.** Each aic view's winbar
-  shows the session behind it (spec → compile, history → worker, questions → ask,
+  shows the session behind it (doc → compile, history → worker, questions → ask,
   plus your 5h/weekly quota from the OMC HUD cache). `<leader>zU` opens the
   breakdown with the last calls; `c`/`C` compact the compile/ask session
   (handoff summary → fresh session), `r`/`R` reset it. In testing, compacting
@@ -80,12 +83,13 @@ cd your-project
 ```
 aic init | sessions | attach [sid|--auto] | status
 aic watch                    # trace builder (the plugin starts it)
-aic compile                  # spec vs worker activity -> diagnostics.json (queues if busy)
+aic docs [--json]            # list docs (migrates the old spec.md once)
+aic compile [--doc D]        # doc vs worker activity -> diagnostics.D.json (queues if busy)
 aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will see)
 aic usage [--json]           # context/cost per session + account quota
 aic compact compile|ask [--reset]
-aic ask [--whatif] [--context-file F] QUESTION
-aic submit [--from N --to M] [--now] | hold | continue [MESSAGE]
+aic ask [--doc D] [--whatif] [--context-file F] QUESTION
+aic submit [--doc D] [--from N --to M] [--now] | hold | continue [MESSAGE]
 ```
 
 ## Tests

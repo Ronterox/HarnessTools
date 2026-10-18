@@ -95,8 +95,9 @@ write(
     },
   })
 )
-write(dir .. '/diagnostics.json', vim.json.encode({ compiled_at = 1, upto_seq = 1, summary = 'old', items = {} }))
-write(dir .. '/spec.md', '# Spec\n\n- greet users @src/app.js:4\n- helper @src/app.js:hello\n')
+write(dir .. '/diagnostics.spec.json', vim.json.encode({ compiled_at = 1, upto_seq = 1, summary = 'old', items = {} }))
+local spec_path = root .. '/.aic/docs/spec.md'
+write(spec_path, '<!-- aic: compile -->\n# Spec\n\n- greet users @src/app.js:4\n- helper @src/app.js:hello\n')
 write(dir .. '/seen.json', vim.json.encode({ seen = {} }))
 write(dir .. '/chat.md', '## You\nhi\n\n## Compiler\nhello\n')
 
@@ -137,6 +138,7 @@ case "$1" in
   status) printf '{"root":"%s","session_id":"%s","dir":".aic/sessions/%s","worker":{"session_id":"%s","state":"busy"},"hold":false,"compiling":false,"watching":true}\n' ;;
   sessions) printf '[{"session_id":"%s","updated":%d,"state":"busy","title":"greeting","pane":null,"attached":true}]\n' ;;
   watch) cat >/dev/null ;;
+  docs) printf '[{"name":"spec","path":".aic/docs/spec.md","mtime":%d,"compile":true,"prompt":null}]\n' ;;
   ask) case "$*" in
     *fence*) cat <<'EOT'
 Here:
@@ -159,7 +161,7 @@ EOT
 ;;
   *) echo "ok $1" ;;
 esac
-]]):format(log, root, sid, sid, sid, sid, now)
+]]):format(log, root, sid, sid, sid, sid, now, now)
 )
 vim.fn.setfperm(bin, 'rwxr-xr-x')
 
@@ -258,7 +260,7 @@ end), 'trace re-rendered after trace.jsonl append (watcher)')
 
 -- quickfix from diagnostics.json
 write(
-  dir .. '/diagnostics.json',
+  dir .. '/diagnostics.spec.json',
   vim.json.encode({
     compiled_at = 2,
     upto_seq = 5,
@@ -270,18 +272,18 @@ write(
   })
 )
 ok(wait(3000, function()
-  return vim.fn.getqflist({ title = 0 }).title == 'aic compile'
-end), 'quickfix loaded from diagnostics.json')
+  return vim.fn.getqflist({ title = 0 }).title == 'aic compile spec'
+end), 'quickfix loaded from diagnostics.spec.json')
 local qf = vim.fn.getqflist()
 ok(#qf == 2, 'two quickfix items')
 ok(qf[1] and qf[1].type == 'E' and qf[1].text == '[mismatch] not done', 'qf item 1 type/text')
-ok(qf[1] and vim.api.nvim_buf_get_name(qf[1].bufnr) == dir .. '/spec.md', 'spec item points at spec.md')
+ok(qf[1] and vim.api.nvim_buf_get_name(qf[1].bufnr) == spec_path, 'spec item points at spec.md')
 ok(qf[2] and vim.api.nvim_buf_get_name(qf[2].bufnr) == root .. '/src/app.js' and qf[2].type == 'W', 'code item points at project file')
-local spec = require('aic.spec')
+local spec = require('aic.doc')
 ok(#vim.diagnostic.get(spec.get_buf(), { namespace = spec.ns }) == 1, 'spec inline diagnostic set (on load)')
 require('aic.status').update()
 ok(aic.status() == 'aic 1● 1E ⚙', 'status with error: ' .. aic.status())
-ok(vim.tbl_contains(notes, 'aic compile: 1E 1W 0I — Two problems'), 'compile summary notified')
+ok(vim.tbl_contains(notes, 'aic compile spec: 1E 1W 0I — Two problems'), 'compile summary notified')
 
 -- jump to code from trace -> same window; signs placed
 aic.show('trace')
@@ -318,7 +320,7 @@ ok(signs.jump(1) == 10, ']w -> 10')
 ok(signs.jump(-1) == 3, '[w -> 3')
 
 -- gd on anchor
-vim.cmd.edit(vim.fn.fnameescape(dir .. '/spec.md'))
+vim.cmd.edit(vim.fn.fnameescape(spec_path))
 local p, t = spec.anchor_at('- helper @src/app.js:hello', 12)
 ok(p == 'src/app.js' and t == 'hello', 'anchor parse symbol')
 p, t = spec.anchor_at('- greet users @src/app.js:4.', 16)
@@ -369,7 +371,7 @@ ok(wait(3000, function()
 end), 'hold/continue/submit invoked backend')
 
 -- spec :w -> compile
-aic.show('spec')
+aic.show('doc')
 single('spec view')
 ok(vim.api.nvim_get_current_buf() == spec.bufnr(), 'spec view shows spec.md')
 vim.cmd('silent write')
@@ -527,9 +529,9 @@ ok(wait(3000, function()
   local b = vim.api.nvim_get_current_buf()
   return vim.bo[b].filetype == 'markdown' and vim.api.nvim_buf_get_lines(b, 0, 1, false)[1] == '**answer**'
 end), 'ask float shows answer')
-ok((read(log) or ''):find('ask %-%-context%-file .+%.json %-%- is this right%?') ~= nil, 'aic ask --context-file invoked')
+ok((read(log) or ''):find('ask %-%-doc spec %-%-context%-file .+%.json %-%- is this right%?') ~= nil, 'aic ask --context-file invoked')
 local float_lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
-ok(float_lines[#float_lines] == '_q close · P append to spec · S append pseudocode to spec + submit · Y yank pseudocode_', 'footer lists uppercase keys: ' .. float_lines[#float_lines])
+ok(float_lines[#float_lines] == '_q close · P append to doc · S append pseudocode to doc + submit · Y yank pseudocode_', 'footer lists uppercase keys: ' .. float_lines[#float_lines])
 ok(vim.fn.maparg('p', 'n') == '' and vim.fn.maparg('y', 'n') == '' and vim.fn.maparg('s', 'n') == '' and vim.fn.maparg('f', 'n') == '',
   'no lowercase p/y/s/f maps on the answer float')
 vim.api.nvim_feedkeys('P', 'x', false)
@@ -542,11 +544,11 @@ aic.whatif()
 ok(wait(3000, function()
   return vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == '**answer**'
 end), 'what-if float shows answer')
-ok((read(log) or ''):find('ask %-%-context%-file .+ %-%-whatif %-%- is this right%?') ~= nil, 'aic ask --whatif invoked')
+ok((read(log) or ''):find('ask %-%-doc spec %-%-context%-file .+ %-%-whatif %-%- is this right%?') ~= nil, 'aic ask --whatif invoked')
 vim.api.nvim_feedkeys('F', 'x', false)
 sl = vim.api.nvim_buf_get_lines(spec.bufnr(), 0, -1, false)
 ok(vim.tbl_contains(sl, '## What-if: is this right?'), 'F folded what-if into spec')
-aic.show('spec')
+aic.show('doc')
 vim.cmd('silent write')
 
 -- chat send
@@ -556,7 +558,7 @@ vim.api.nvim_buf_set_lines(cb, -2, -1, false, { 'why?' })
 ok(vim.deep_equal(chat.input_lines(), { 'why?' }), 'chat input under ## You')
 chat.send()
 ok(wait(3000, function()
-  return (read(log) or ''):find('ask -- why?', 1, true) ~= nil
+  return (read(log) or ''):find('ask --doc spec -- why?', 1, true) ~= nil
 end), 'chat <CR> sends via aic ask')
 ok(read(dir .. '/chat.md'):find('why', 1, true) == nil, 'plugin did not write chat.md')
 
@@ -629,7 +631,7 @@ local hl_marks = vim.api.nvim_buf_get_extmarks(sb, anchors.ns, 0, -1, { details 
 ok(#hl_marks >= 2 and hl_marks[1][4].hl_group == 'AicAnchor', 'spec anchors highlighted with AicAnchor (' .. #hl_marks .. ')')
 ok(vim.bo[sb].omnifunc:find('aic.anchors', 1, true) ~= nil, 'spec omnifunc set')
 ok(vim.bo[chat.buf].omnifunc:find('aic.anchors', 1, true) ~= nil, 'chat omnifunc set')
-aic.show('spec')
+aic.show('doc')
 vim.api.nvim_buf_set_lines(sb, -1, -1, false, { '- (@ser' })
 vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(sb), 7 })
 ok(anchors.omnifunc(1, '') == 3, 'omnifunc findstart at @')
@@ -647,7 +649,7 @@ vim.api.nvim_buf_set_lines(sb, -2, -1, false, {})
 
 -- gd from the spec -> code in the same window
 local function gd_on(text, col)
-  aic.show('spec')
+  aic.show('doc')
   vim.api.nvim_buf_set_lines(sb, -1, -1, false, { '- ' .. text })
   vim.api.nvim_win_set_cursor(0, { vim.api.nvim_buf_line_count(sb), col or 3 })
   vim.api.nvim_feedkeys('gd', 'x', false)
@@ -730,7 +732,7 @@ ok(at(root .. '/server.js', 3), 'gd in questions -> server.js:3 in the same wind
 aic.show('questions')
 vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
 ok(wait(3000, function()
-  return (read(log) or ''):find('ask -- @server.js:3 why?', 1, true) ~= nil
+  return (read(log) or ''):find('ask --doc spec -- @server.js:3 why?', 1, true) ~= nil
 end), 'chat <CR> sends anchors as-is')
 
 -- global <prefix>g in a plain buffer
@@ -742,7 +744,7 @@ ok(at(root .. '/src/app.js', 9), '<prefix>g follows anchor in any buffer')
 
 -- answer float: S appends first fenced block + submits, Y yanks, gd works
 local function ask_float()
-    aic.show('spec')
+    aic.show('doc')
   vim.ui.input = function(_, cb2)
     cb2('fence it')
   end
@@ -761,9 +763,9 @@ vim.api.nvim_feedkeys('S', 'x', false)
 sl = vim.api.nvim_buf_get_lines(sb, 0, -1, false)
 ok(sl[first] == '## From compiler' and sl[first + 2] == 'step one' and sl[last] == 'step two' and #sl == last,
   'S appended first fenced block under ## From compiler: heading')
-ok(not vim.bo[sb].modified and read(dir .. '/spec.md'):find('## From compiler', 1, true) ~= nil, 'S saved spec.md')
+ok(not vim.bo[sb].modified and read(spec_path):find('## From compiler', 1, true) ~= nil, 'S saved spec.md')
 ok(wait(3000, function()
-  return (read(log) or ''):find(('submit --from %d --to %d'):format(first, last), 1, true) ~= nil
+  return (read(log) or ''):find(('submit --doc spec --from %d --to %d'):format(first, last), 1, true) ~= nil
 end), ('S ran aic submit --from %d --to %d'):format(first, last))
 ok(not vim.api.nvim_win_is_valid(fwin), 'S closed the float')
 
@@ -780,7 +782,7 @@ pcall(vim.api.nvim_win_close, fwin, true)
 
 -- a block that brings its own heading gets no extra "## From compiler"
 do
-  local spec = require('aic.spec')
+  local spec = require('aic.doc')
   local f, l = spec.append_section(nil, { '## Feature: x', 'do y' }, false)
   local cur = vim.api.nvim_buf_get_lines(sb, 0, -1, false)
   ok(cur[f] == '## Feature: x' and cur[l] == 'do y' and cur[f - 2] ~= '## From compiler',
@@ -796,7 +798,7 @@ ok(vim.fn.getreg('"') == 'step one\nstep two\n', 'reopened float keeps its Y key
 
 -- S is one-shot per answer, also across :AicLastAnswer
 local function submits()
-  return count(read(log), 'submit %-%-from')
+  return count(read(log), 'submit %-%-doc spec %-%-from')
 end
 local n_sub = submits()
 vim.cmd('AicLastAnswer')
@@ -813,7 +815,7 @@ ok(submits() == n_sub + 1, 'second S did not submit again')
 pcall(vim.api.nvim_win_close, fwin, true)
 
 -- questions starting with `-` are not parsed as options
-aic.show('spec')
+aic.show('doc')
 vim.ui.input = function(_, cb2)
   cb2('-h what?')
 end
@@ -848,21 +850,21 @@ do
   ok(wait(3000, function()
     return strip(usage.cache.questions) == W_CHAT
   end), 'chat winbar (ask + quota, inactive 0% bucket omitted): ' .. strip(usage.cache.questions))
-  ok(strip(usage.cache.spec) == W_SPEC, 'spec winbar (compile): ' .. strip(usage.cache.spec))
+  ok(strip(usage.cache.doc) == W_SPEC, 'spec winbar (compile): ' .. strip(usage.cache.doc))
   ok(strip(usage.cache.trace) == W_TRACE, 'trace winbar (worker, null ctx_window): ' .. strip(usage.cache.trace))
-  ok(usage.cache.spec:find('%#AicUsageOk#[####------] 82k/200k (41%%)%*', 1, true) ~= nil, 'bar+percent colored with AicUsageOk')
-  ok(bar_of('spec') == W_SPEC and bar_of('trace') == W_TRACE and bar_of('questions') == W_CHAT,
-    'view winbars evaluate to the cached strings: ' .. vim.inspect({ bar_of('spec'), bar_of('trace'), bar_of('questions') }))
-  aic.show('spec')
+  ok(usage.cache.doc:find('%#AicUsageOk#[####------] 82k/200k (41%%)%*', 1, true) ~= nil, 'bar+percent colored with AicUsageOk')
+  ok(bar_of('doc') == W_SPEC and bar_of('trace') == W_TRACE and bar_of('questions') == W_CHAT,
+    'view winbars evaluate to the cached strings: ' .. vim.inspect({ bar_of('doc'), bar_of('trace'), bar_of('questions') }))
+  aic.show('doc')
   ok(vim.api.nvim_get_option_value('winbar', { win = 0, scope = 'local' }):find('aic.usage', 1, true) ~= nil
     and vim.go.winbar == '', 'winbar is local (global empty)')
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
   ok(vim.wo.winbar == '', 'the winbar goes away with the view (code in the same window has none)')
-  aic.show('spec')
+  aic.show('doc')
   ok(fresh_opts()[4] == '', 'the spec winbar does not leak into a fresh buffer')
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
   single('winbar checks')
-  aic.show('spec')
+  aic.show('doc')
   vim.cmd('split') -- the user's own split
   local split_win = vim.api.nvim_get_current_win()
   vim.cmd.edit(vim.fn.fnameescape(root .. '/server.js'))
@@ -913,7 +915,7 @@ do
     end), '250k-token hint on a 1M window')
     write(dir .. '/usage.json', orig .. '  ')
     wait(3000, function()
-      return strip(usage.cache.spec or ''):find('41%', 1, true) ~= nil
+      return strip(usage.cache.doc or ''):find('41%', 1, true) ~= nil
     end)
   end
 
@@ -921,11 +923,11 @@ do
   do
     local usage_m = require('aic.usage')
     usage_m.force_full = false
-    aic.show('spec')
+    aic.show('doc')
     vim.cmd('vsplit') -- room to make one narrow
     local w = vim.api.nvim_get_current_win()
     vim.api.nvim_win_set_width(w, 30)
-    local got = vim.api.nvim_win_call(w, function() return usage_m.winbar('spec') end)
+    local got = vim.api.nvim_win_call(w, function() return usage_m.winbar('doc') end)
     ok(strip(got) == 'compile · sonnet  ctx:82k/200k (41%)  12 runs  $1.20', 'narrow winbar drops the bar: ' .. strip(got))
     vim.api.nvim_win_close(w, true)
     usage_m.force_full = true
@@ -1025,8 +1027,8 @@ do
 
   -- the winbar comes back with the view
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
-  ok(bar_of('questions'):find('^ask · opus') ~= nil and bar_of('spec') == W_SPEC,
-    'winbars back when the views come back: ' .. vim.inspect({ bar_of('spec'), bar_of('questions') }))
+  ok(bar_of('questions'):find('^ask · opus') ~= nil and bar_of('doc') == W_SPEC,
+    'winbars back when the views come back: ' .. vim.inspect({ bar_of('doc'), bar_of('questions') }))
   single('winbar views')
 end
 
@@ -1153,6 +1155,107 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- docs: several files, compile only with the marker, diagnostics per doc
+do
+  local doc = require('aic.doc')
+  local notes_path = root .. '/.aic/docs/notes.md'
+  vim.cmd('silent! only') -- the signs test above made its own split
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  local answer = 'No'
+  vim.ui.select = function(items, o, cb)
+    if o.prompt and o.prompt:find('when saved', 1, true) then
+      return cb(answer)
+    end
+    cb(items[1])
+  end
+  vim.cmd('AicDocNew notes')
+  ok(vim.api.nvim_get_current_buf() == doc.bufnr('notes') and read(notes_path) == '# notes\n\n',
+    ':AicDocNew notes (compile: No) creates the doc without a marker and shows it here')
+  single('new doc')
+  ok(doc.current() == 'notes' and require('aic.view').name_of(0) == 'doc', 'notes is the current doc')
+  local n_compile = count(read(log), 'compile')
+  vim.api.nvim_buf_set_lines(0, -1, -1, false, { '- idea @src/app.js:3' })
+  vim.cmd('silent write')
+  vim.wait(300)
+  ok(count(read(log), 'compile') == n_compile, ':w on a doc without the marker does not compile')
+  answer = 'Yes'
+  vim.cmd('AicDocNew plan')
+  ok(read(root .. '/.aic/docs/plan.md') == '<!-- aic: compile -->\n# plan\n\n', ':AicDocNew plan (compile: Yes) writes the marker')
+  vim.cmd('silent write')
+  ok(wait(3000, function()
+    return (read(log) or ''):find('compile --doc plan', 1, true) ~= nil
+  end), ':w on a doc with the marker runs `aic compile --doc plan`')
+  vim.cmd('AicDocNew bad/name')
+  ok(notes[#notes]:find('bad doc name', 1, true) ~= nil and not vim.uv.fs_stat(root .. '/.aic/docs/bad'), 'bad doc names are refused')
+  -- per-doc diagnostics: notes gets its own, spec keeps its own
+  vim.cmd('AicDoc notes')
+  write(dir .. '/diagnostics.notes.json', vim.json.encode({ doc = 'notes', compiled_at = 9, upto_seq = 99, summary = 'notes ok',
+    items = { { kind = 'incoherent', severity = 'error', file = 'doc', line = 3, message = 'which idea?' },
+      { kind = 'model', severity = 'error', file = 'doc', line = 1, message = 'no' } } }))
+  ok(wait(3000, function()
+    return #vim.diagnostic.get(doc.bufnr('notes'), { namespace = doc.ns }) == 2
+  end), 'diagnostics.notes.json -> inline diagnostics on notes')
+  ok(#vim.diagnostic.get(doc.bufnr('spec'), { namespace = doc.ns }) == 1, 'spec keeps its own diagnostics')
+  ok(vim.fn.getqflist({ title = 0 }).title == 'aic compile notes' and vim.tbl_contains(notes, 'aic compile notes: 2E 0W 0I — notes ok'),
+    'notes compile -> quickfix list + summary named after the doc')
+  require('aic.status').update()
+  ok(aic.status():find('2E', 1, true) ~= nil, 'statusline counts the current doc (notes): ' .. aic.status())
+  vim.cmd('AicDoc spec')
+  ok(aic.status():find('1E', 1, true) ~= nil, 'statusline follows the doc entered (spec): ' .. aic.status())
+  -- submit / ask / range carry the doc
+  vim.cmd('AicDoc notes')
+  vim.cmd('3,3AicSubmit')
+  ok(wait(3000, function()
+    return (read(log) or ''):find('submit --doc notes --from 3 --to 3', 1, true) ~= nil
+  end), 'range submit in notes -> --doc notes')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  aic.submit({})
+  ok(wait(3000, function()
+    return (read(log) or ''):find('submit --doc notes\n', 1, true) ~= nil
+  end), 'submit from code uses the last doc entered (notes)')
+  aic.show('questions')
+  chat.ask('which doc?')
+  ok(wait(3000, function()
+    return (read(log) or ''):find('ask --doc notes -- which doc?', 1, true) ~= nil
+  end), 'questions ask about the last doc (notes)')
+  -- picker
+  vim.cmd('AicDocs')
+  ok(wait(3000, function()
+    return vim.api.nvim_get_current_buf() == doc.bufnr('spec')
+  end) and (read(log) or ''):find('docs --json', 1, true) ~= nil, ':AicDocs lists docs (aic docs --json) and shows the pick')
+  ok(vim.deep_equal(doc.names(), { 'notes', 'plan', 'spec' }), ':AicDoc completes doc names: ' .. table.concat(doc.names(), ' '))
+  -- a typed .md is not doubled; a deleted last doc is not recreated by accident
+  vim.cmd('AicDocNew scratch.md')
+  ok(vim.uv.fs_stat(root .. '/.aic/docs/scratch.md') ~= nil and not vim.uv.fs_stat(root .. '/.aic/docs/scratch.md.md'),
+    ':AicDocNew scratch.md makes scratch.md')
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  vim.cmd('bwipeout! ' .. doc.bufnr('scratch'))
+  os.remove(root .. '/.aic/docs/scratch.md')
+  ok(doc.last == 'scratch' and doc.current() == 'spec', 'the last doc deleted: the current doc falls back to spec')
+  -- removing a doc's diagnostics file clears them
+  os.remove(dir .. '/diagnostics.notes.json')
+  ok(wait(3000, function()
+    return #vim.diagnostic.get(doc.bufnr('notes'), { namespace = doc.ns }) == 0
+  end), 'diagnostics.notes.json removed -> notes diagnostics cleared')
+  -- a doc opened through a symlinked path is still a doc
+  local link = vim.fn.tempname()
+  vim.uv.fs_symlink(root, link)
+  vim.cmd.edit(vim.fn.fnameescape(link .. '/.aic/docs/plan.md'))
+  ok(doc.name_of(0) == 'plan', 'a doc opened through a symlink is a doc: ' .. tostring(doc.name_of(0)))
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  -- the docs dir is created only after `aic docs` had the chance to migrate
+  local docs_dir = root .. '/.aic/docs'
+  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
+  os.rename(docs_dir, docs_dir .. '.away')
+  local n_docs = count(read(log), 'docs %-%-json')
+  doc.ensure_file('fresh', false)
+  ok(count(read(log), 'docs %-%-json') == n_docs + 1 and read(docs_dir .. '/fresh.md') == '# fresh\n\n',
+    'first doc in a project: `aic docs` (migration) runs before the docs dir is made')
+  vim.fn.delete(docs_dir, 'rf')
+  os.rename(docs_dir .. '.away', docs_dir)
+end
+
+---------------------------------------------------------------------------
 -- sweep: no command or key ever adds a tab, a split or the quickfix window,
 -- and no view pins its window
 do
@@ -1181,7 +1284,7 @@ do
       end
     end
   end
-  local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicSpec', 'AicToggle', 'AicToggle', 'AicDiagnostics',
+  local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicDoc', 'AicToggle', 'AicToggle', 'AicDiagnostics',
     'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
     'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue' }
   local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a' }
@@ -1219,7 +1322,7 @@ do
   aic.show('trace')
   ok(not vim.api.nvim_win_is_valid(aw) and vim.api.nvim_get_current_buf() == trace.buf, "aic's own float closes when a view is shown from it")
   -- 'nohidden' + unsaved spec: the refused switch is notified, not raised
-  aic.show('spec')
+  aic.show('doc')
   vim.o.hidden = false
   vim.api.nvim_buf_set_lines(0, -1, -1, false, { 'unsaved' })
   local n0 = #notes
@@ -1229,20 +1332,7 @@ do
   vim.api.nvim_buf_set_lines(0, -2, -1, false, {})
   vim.bo.modified = false
   vim.o.hidden = true
-  -- no session: placeholder spec, an aic buffer; replaced once a session exists
-  do
-    local saved = state.dir
-    state.dir = nil
-    view.show('spec')
-    local ph = vim.api.nvim_get_current_buf()
-    ok(ph == spec.placeholder and vim.api.nvim_buf_get_name(ph) == 'aic://spec' and view.is_aic(ph),
-      'no session: the spec view is the aic://spec placeholder')
-    state.dir = saved
-    view.on_session()
-    ok(vim.api.nvim_get_current_buf() == spec.bufnr() and view.last_aic ~= ph,
-      'session attached: the placeholder window and toggle target switch to the spec')
-  end
-  for _, name in ipairs({ 'trace', 'questions', 'spec' }) do
+  for _, name in ipairs({ 'trace', 'questions', 'doc' }) do
     vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
     aic.show(name)
     local vb = vim.api.nvim_get_current_buf()

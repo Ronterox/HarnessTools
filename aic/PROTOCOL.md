@@ -15,19 +15,21 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
   workers/<sid>.json      written by the hook on every worker event
   compilers.json          ["<sid>", ...]  claude sessions owned by aic (excluded from pickers)
   watch.pid               pid of the running `aic watch`
+  docs/<name>.md          the human's docs, shared by all worker sessions (editor writes; see Docs)
   sessions/<sid>/
-    spec.md               human's pseudocode outline (editor writes; `:w` triggers compile)
-    spec.submitted.md     snapshot of spec.md at last full submit
+    sent.<doc>.md         what this worker last received of doc <doc> (marker stripped), at its last full submit
     trace.jsonl           normalized events (written ONLY by `aic watch`)
     human.jsonl           human code-save events (appended ONLY by the editor)
     seen.json             {"seen": ["<event id>", ...]}  (written by editor)
     touched.json          per-file touched line ranges (written by `aic watch`)
-    diagnostics.json      last compile result (written by `aic compile`)
+    diagnostics.<doc>.json  last compile of doc <doc> (written by `aic compile --doc`)
     chat.md               compiler REPL transcript (written by `aic ask`)
     hold                  exists ⇒ worker is to be held at its next tool call (one-shot; the gate deletes it)
     control.jsonl         submit/hold/release/held/hold-expired events (appended by backend + hook)
     compiling             exists ⇒ a compile is running (contains pid)
+    compile.again         docs queued for one more compile (JSON list; backend-private)
     state.json            compile/ask/submit bookkeeping (backend-private; updated under state.json.lock)
+    spec.md, spec.submitted.md, diagnostics.json   before docs existed: migrated once (see Docs), then unused
     usage.json            context/cost per session (see Usage; backend-written)
     watch.json            watcher resume point: offsets, seq, parser state (backend-private)
 ```
@@ -75,17 +77,38 @@ Hunk: `{"start": <new-file first line, 1-based>, "count": <new line count>, "lin
 ```
 Ranges are in **current** file coordinates (later edits shift earlier ranges).
 
-## diagnostics.json
+## Docs
+
+- `.aic/docs/<name>.md`; name `[A-Za-z_][A-Za-z0-9_.-]*`, no `/`, no `..`
+  (checked on every `--doc`).
+- Optional first-line marker: `<!-- aic: compile prompt=<template> -->`.
+  `compile` = the editor runs `aic compile --doc <name>` on save. The marker
+  is never sent to the worker; compile numbers the file as it is (marker
+  line included), so line numbers are always file lines.
+- **Migration**, once per project (when `aic docs` / `aic init` / any `--doc`
+  command finds no `docs/` dir; locked): the old per-session `spec.md` becomes
+  `docs/spec.md` with `<!-- aic: compile -->` (the attached session's if it
+  has more than the old template, else the most recently changed one). Every
+  session's `spec.submitted.md` becomes its `sent.spec.md` and its
+  `diagnostics.json` `upto_seq` its `compile_upto_seq`. The old files are left in place.
+- Submit: range lines (`--from/--to`) are file lines, but the marker line is
+  never sent; diff hunks are computed on the doc without its marker.
+
+## diagnostics.\<doc\>.json
 
 ```json
-{"compiled_at": 1760000000.0, "upto_seq": 42, "summary": "one paragraph",
+{"doc": "spec", "compiled_at": 1760000000.0, "upto_seq": 42, "summary": "one paragraph",
  "items": [{"kind": "mismatch|incoherent|model|unspecified",
             "severity": "error|warning|info",
-            "file": "spec" | "<rel path>", "line": 12,
+            "file": "doc" | "<rel path>", "line": 12,
             "spec_line": 12 | null, "message": "..."}]}
 ```
-`file == "spec"` means the line refers to `spec.md`.
-On compile failure: `{"error": "message", "compiled_at": ...}`.
+`file == "doc"` means the line is a line of that doc (`"spec"` in files
+written before docs existed). `spec_line` = a related doc line.
+On compile failure: the previous content plus `{"error": "message", "compiled_at": ...}`.
+One compiler session serves every doc: worker activity is sent once
+(`compile_upto_seq` in state.json), and each compile replaces only that
+doc's items.
 
 ## Usage
 
@@ -125,7 +148,7 @@ On compile failure: `{"error": "message", "compiled_at": ...}`.
 
 ## Anchors
 
-Anchors work in the spec, in chat, and in ask questions. The grammar below is
+Anchors work in docs, in chat, and in ask questions. The grammar below is
 canonical; Python and Lua must both pass `tests/anchor_cases.json`.
 
 - An anchor starts with `@` at the start of a line or after whitespace or one
@@ -189,9 +212,10 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic attach <sid>` / `aic attach --auto` | pin / unpin worker | message |
 | `aic status --json` | `{"root","session_id","dir","worker":{...}\|null,"hold":bool,"compiling":bool,"watching":bool}` | JSON |
 | `aic watch` | long-running: tails transcript + human.jsonl → trace.jsonl, touched.json. Follows `current`/auto attach. Exits when stdin closes or on SIGTERM. Writes watch.pid. | log lines |
-| `aic compile` | spec + events since last compile → compiler Claude → diagnostics.json | summary line |
-| `aic ask [--context-file F] [--whatif] <question...>` | ask the chat compiler; appends to chat.md | answer markdown |
-| `aic submit [--from N --to M] [--now]` | type the request + paste the spec diff (or lines N..M) into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |
+| `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, prompt}]`, newest first |
+| `aic compile [--doc D]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json. Busy: queues one more run of D and prints `compile queued: …` | summary line |
+| `aic ask [--doc D] [--context-file F] [--whatif] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet); appends to chat.md | answer markdown |
+| `aic submit [--doc D] [--from N --to M] [--now]` | type the request + paste doc D's diff since sent.D.md (or its file lines N..M) into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |
 | `aic hold` | set hold | message |
 | `aic continue [message...]` | clear hold; type `message` (default "continue") into worker pane | message |
 | `aic usage [--json]` | per-session context/cost + account quota (see Usage) | text / JSON |
@@ -203,6 +227,6 @@ Exit code non-zero ⇒ stderr holds a one-line human-readable error.
 
 Context file for `ask` (written by editor, any subset):
 ```json
-{"where": "spec|trace|code|diagnostic|chat", "file": "rel/path", "line": 12,
+{"where": "doc|trace|code|diagnostic|chat", "doc": "name (where=doc)", "file": "rel/path", "line": 12,
  "excerpt": "text around cursor", "event": { <trace event> }, "diagnostic": { ... }}
 ```
