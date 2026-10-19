@@ -1448,6 +1448,136 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- history: long lines are cut with … and readable in full under <CR>; the view
+-- re-wraps on resize; nvim-ufo never keeps the trace's folds (it showed `0`)
+do
+  vim.cmd('silent! only')
+  aic.show('trace')
+  local tw = vim.api.nvim_get_current_win()
+  local long = 'This worker message is much longer than the window is wide, so its end used to be lost '
+    .. 'off the right edge with nothing to expand. THE END.'
+  local cmdline = 'Bash: cd /some/long/project/path && python3 -m unittest discover tests 2>&1 | tail -20 && echo all done'
+  local f2 = io.open(dir .. '/trace.jsonl', 'ab')
+  f2:write(jl({ id = 'e20', seq = 20, ts = now + 30, kind = 'text', turn = 9, text = long }))
+  f2:write(jl({ id = 'e21', seq = 21, ts = now + 31, kind = 'tool', turn = 9, tool = 'Bash', title = cmdline,
+    why = 'Run the tests.', input = 'x', error = false }))
+  f2:close()
+  local function line_with(pat)
+    for i, t in ipairs(vim.api.nvim_buf_get_lines(trace.buf, 0, -1, false)) do
+      if t:find(pat, 1, true) then
+        return i, t
+      end
+    end
+  end
+  ok(wait(3000, function()
+    return line_with('◆ This worker message') ~= nil
+  end), 'long text event rendered')
+  local width = vim.api.nvim_win_get_width(tw)
+  local hl, head = line_with('◆ This worker message')
+  ok(head:sub(-3) == '…' and vim.fn.strdisplaywidth(head) < width, 'a long head line is cut to the window with …: ' .. head)
+  ok(vim.fn.foldclosed(hl) == hl, '... and its details start hidden')
+  local _, tail = line_with('THE END.')
+  ok(tail and tail:find('^    ') ~= nil and vim.fn.strdisplaywidth(tail) < width, 'the full text is in the details, wrapped, not cut')
+  vim.api.nvim_win_set_cursor(tw, { hl, 0 })
+  trace.enter()
+  ok(vim.fn.foldclosed(hl) == -1, '<CR> on a cut line shows the whole text')
+  local bl, bhead = line_with('Bash: cd /some')
+  ok(bhead:find('…', 1, true) ~= nil and vim.fn.foldclosed(bl) == bl, 'a long tool title is cut and expandable')
+  vim.api.nvim_win_set_cursor(tw, { bl, 0 })
+  trace.enter()
+  ok(line_with('echo all done') ~= nil and line_with('Run the tests.') ~= nil, '... its details hold the full title and the why')
+  -- re-wrapped to a narrower window (headless has no UI to resize: a test-only split narrows it);
+  -- the cursor stays on its node while detail lines above it come and go
+  local f4 = io.open(dir .. '/trace.jsonl', 'ab')
+  f4:write(jl({ id = 'e25', seq = 25, ts = now + 35, kind = 'text', turn = 9, text = 'tabs\there\tand\tthere ' .. string.rep('word ', 30) }))
+  f4:write(jl({ id = 'e26', seq = 26, ts = now + 36, kind = 'text', turn = 9, text = 'CURSOR TARGET' }))
+  f4:close()
+  ok(wait(3000, function()
+    return line_with('CURSOR TARGET') ~= nil
+  end), 'more events rendered')
+  local _, tabbed = line_with('tabs')
+  ok(not tabbed:find('\t') and vim.fn.strdisplaywidth(tabbed) < width, 'tabs become spaces and the line is still cut to the window')
+  vim.api.nvim_win_set_cursor(tw, { (line_with('CURSOR TARGET')), 0 })
+  vim.cmd('vertical new')
+  local tmp = vim.api.nvim_get_current_win()
+  vim.api.nvim_win_set_width(tw, 50)
+  vim.api.nvim_exec_autocmds('WinResized', {})
+  ok(wait(3000, function()
+    local _, h = line_with('◆ This worker message')
+    return h and vim.fn.strdisplaywidth(h) < 50
+  end), 'a narrower window re-cuts the lines')
+  ok(vim.api.nvim_get_current_line():find('CURSOR TARGET', 1, true) ~= nil or
+    vim.api.nvim_buf_get_lines(trace.buf, vim.api.nvim_win_get_cursor(tw)[1] - 1, vim.api.nvim_win_get_cursor(tw)[1], false)[1]
+      :find('CURSOR TARGET', 1, true) ~= nil, 'the cursor stays on its node across the re-wrap')
+  vim.api.nvim_win_close(tmp, true)
+  vim.api.nvim_exec_autocmds('WinResized', {})
+  -- ufo: never loaded by aic; when it grabs the trace window anyway, aic takes it back
+  local loaded = false
+  package.preload.ufo = function()
+    loaded = true
+    return {}
+  end
+  require('aic.util').detach_ufo(trace.buf)
+  ok(not loaded, 'detaching ufo never loads a lazy ufo')
+  package.preload.ufo = nil
+  local detached
+  package.loaded.ufo = { detach = function(b) detached = b end }
+  vim.api.nvim_win_call(tw, function()
+    vim.cmd([[setlocal foldtext=v:lua.UfoLike() foldmethod=manual]])
+  end)
+  ok(wait(2000, function()
+    return vim.wo[tw].foldtext == '' and vim.wo[tw].foldmethod == 'expr'
+  end) and detached == trace.buf, 'another plugin changing the trace folds: aic detaches it and restores its own')
+  -- only the fold text taken: what the human opened with zo stays open
+  local hl2 = line_with('◆ This worker message')
+  vim.api.nvim_win_call(tw, function()
+    vim.cmd(hl2 .. 'foldclose')
+    vim.cmd(hl2 .. 'foldopen') -- (zo: not recorded in M.folds)
+    vim.cmd([[setlocal foldtext=v:lua.UfoLike()]])
+  end)
+  ok(wait(2000, function()
+    return vim.wo[tw].foldtext == ''
+  end) and vim.api.nvim_win_call(tw, function()
+    return vim.fn.foldclosed(hl2)
+  end) == -1, 'a foldtext-only takeover keeps the folds the human opened')
+  package.loaded.ufo = nil
+  -- a tool whose title the backend already cut (it ends in …): its input is the details
+  local f3 = io.open(dir .. '/trace.jsonl', 'ab')
+  f3:write(jl({ id = 'e22', seq = 22, ts = now + 32, kind = 'tool', turn = 9, tool = 'Bash', why = '', hunks = {},
+    title = 'Bash: cd /home/someone/project && cat Mak…', file = vim.NIL, error = false,
+    input = '{"command": "cd /home/someone/project && cat Makefile; ls vendor && echo \\"done\\" FULLCMD', }))
+  f3:write(jl({ id = 'e23', seq = 23, ts = now + 33, kind = 'tool', turn = 9, tool = 'Bash', why = '', hunks = {},
+    title = 'Bash: Run the tests', file = vim.NIL, error = false, input = '{}',
+    detail = 'Run the tests\n$ python3 -m unittest discover tests  # DETAILCMD' }))
+  f3:write(jl({ id = 'e24', seq = 24, ts = now + 34, kind = 'tool', turn = 9, tool = 'Bash', why = '', hunks = {},
+    title = 'Bash: ls', file = vim.NIL, error = false, input = '{"command": "ls"}', detail = '$ ls' }))
+  f3:close()
+  ok(wait(3000, function()
+    return line_with('Bash: ls') ~= nil
+  end), 'backend-cut tool titles rendered')
+  local cl = line_with('cat Mak…')
+  ok(vim.fn.foldclosed(cl) == cl, 'a title cut by the backend has details')
+  vim.api.nvim_win_set_cursor(tw, { cl, 0 })
+  trace.enter()
+  local fl = line_with('FULLCMD')
+  local full = fl and table.concat(vim.tbl_map(vim.trim, vim.api.nvim_buf_get_lines(trace.buf, cl, fl, false)), ' ')
+  ok(full and full:find('$ cd /home/someone/project && cat Makefile; ls vendor && echo "done" FULLCMD', 1, true) ~= nil,
+    '... <CR> shows the command from its input, wrapped: ' .. tostring(full))
+  ok(state.seen.e22 == true, '... and marks it read')
+  local dl = line_with('Bash: Run the tests')
+  vim.api.nvim_win_set_cursor(tw, { dl, 0 })
+  trace.enter()
+  ok(line_with('DETAILCMD') ~= nil, 'a description in place of the command: the command is in the details')
+  local ll = line_with('Bash: ls')
+  ok(vim.fn.foldclosed(ll) == -1 and (trace.levels[ll] or ''):sub(1, 1) ~= '>', 'a short command shown whole: nothing to expand')
+  vim.api.nvim_win_set_cursor(tw, { ll, 0 })
+  ok(not state.seen.e24, 'not read yet')
+  trace.enter()
+  ok(state.seen.e24 == true and vim.api.nvim_get_current_buf() == trace.buf,
+    '<CR> on a line with nothing to show or open still marks it read')
+end
+
+---------------------------------------------------------------------------
 -- :AicFix: proposals in a float, picked like radio buttons, applied in one undo step
 do
   local doc = require('aic.doc')
