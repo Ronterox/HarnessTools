@@ -40,4 +40,10 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_cmdguess" tests/test_cmdguess.c sr
 cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_timeline" tests/test_timeline.c src/timeline.c src/event.c src/util.c -lm -lpthread
 "$OUT/test_timeline" || fail=1
 
+# Syntax highlighting with Neovim's grammars (skipped where none is installed).
+TS=vendor/tree-sitter-0.25.10/lib
+cc -std=c11 -D_GNU_SOURCE -Isrc -I$TS/include -o "$OUT/test_syntax" tests/test_syntax.c src/syntax.c src/util.c \
+   build/tree-sitter.o -ldl -lm -lpthread
+"$OUT/test_syntax" || fail=1
+
 exit $fail

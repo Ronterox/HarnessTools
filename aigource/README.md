@@ -2,7 +2,7 @@
 
 Watch what Claude Code sessions do to a repo, live: which files they read,
 edit, create and delete, how big each change is, and how the folder tree grows.
-One native binary (C + raylib, ~1 MB), starts instantly, no browser.
+One native binary (C + raylib + tree-sitter), starts instantly, no browser.
 
 ```sh
 make                       # fetches pinned raylib + yyjson into vendor/, builds build/aigource
@@ -43,6 +43,23 @@ It's read back from the transcript on click, so nothing extra stays in memory;
 a step still running shows so and fills in when its result lands. Wheel or
 `PgUp`/`PgDn` scroll, `Ctrl+C` copies it, `✕`/`Esc`/click outside close it
 (one window at a time).
+
+Code in it (reads, created files, diffs) is syntax highlighted with
+tree-sitter, using the grammars and highlight queries Neovim has installed
+(nvim-treesitter's, or Neovim's own); diffs keep their green/red rows and
+`+`/`−` marks, each side highlighted as its own text. A grammar loads the first
+time its language is shown, and a detail is parsed when its code is first
+drawn: whole, or a 256 KB window around the visible rows for big files. A
+fragment that starts inside a code fence or block comment is parsed as if it
+were opened. Without a grammar, keyword lists stand in (C, Python, shell,
+JS/TS, Go, Rust, Lua; Markdown headings). `AIG_DEBUG=1` says which grammar
+loaded, or why none did.
+
+Elsewhere what stands out is bold, in its own color: numbers (peach), dates
+and times (sky), and in mauve each program of a command (flags and comments
+dim, heredoc bodies plain), warnings, and any word listed in
+`~/.config/aigource/keywords`; how a command's output went is red
+(error/failed) or green (ok/passed).
 
 **Comments.** What the agent wrote just before a step (its text since the last
 tool result) is that step's comment. Opening a step shows them in a panel left
@@ -120,7 +137,9 @@ only: nothing records past filesystem changes, so replays don't have them.
 
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
-unit-tests the timeline's time mapping (`tests/test_timeline.c`).
+unit-tests the timeline's time mapping (`tests/test_timeline.c`) and syntax
+highlighting against the installed grammars (`tests/test_syntax.c`, skipped
+for a language with none).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 
 ## Roadmap

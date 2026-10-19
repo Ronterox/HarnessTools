@@ -1,5 +1,6 @@
 #include "render.h"
 
+#include <ctype.h>
 #include <limits.h>
 #include <math.h>
 #include <stdio.h>
@@ -9,6 +10,7 @@
 #include <sys/stat.h>
 
 #include "model.h"
+#include "syntax.h"
 #include "transcript.h"
 #include "raylib.h"
 #include "timeline.h"
@@ -19,6 +21,22 @@
 #define DIM (Color){139, 148, 158, 255}
 #define TEXT (Color){230, 237, 243, 255}
 #define LIVE_RED (Color){255, 85, 85, 255}
+/* Commands in the detail window: a soft lavender, cool like the background
+ * (no glare on dark blue), clearly apart from the white of plain text. */
+#define CMD_TEXT (Color){180, 190, 254, 255}
+/* What stands out in it, bold and in its own color: keywords and programs
+ * (mauve), numbers (peach), dates and times (sky). Pastels of the same
+ * lightness, apart in hue from each other, the white text and the diff's
+ * green and red. */
+#define KEY_TEXT (Color){203, 166, 247, 255}
+#define NUM_TEXT (Color){250, 179, 135, 255}
+#define DATE_TEXT (Color){137, 220, 235, 255}
+/* Code, highlighted by tree-sitter, adds: strings (green), functions (blue),
+ * types (teal), builtins and escapes (pink); fields take the lavender. */
+#define STR_TEXT (Color){166, 227, 161, 255}
+#define FUNC_TEXT (Color){137, 180, 250, 255}
+#define TYPE_TEXT (Color){148, 226, 213, 255}
+#define BUILTIN_TEXT (Color){245, 194, 231, 255}
 #define IDLE_GAP_REAL 0.4  /* replay: longest real-time pause between events */
 #define LABEL_SECS 6.0     /* file labels show this long after a touch (sim time) */
 #define DIM_SECS 120.0     /* actors dim after this much sim-time idleness */
@@ -63,17 +81,11 @@ static void load_font(void) {
     g_font = GetFontDefault();
 }
 
-/* Monospace for the detail view: code, diffs, command output. */
-static Font g_mono;
-static bool g_mono_ok;
+/* Monospace for the detail view: code, diffs, command output. Bold for what
+ * should stand out in it; the same cell width, so columns stay aligned. */
+static Font g_mono, g_mono_bold;
 
-static void load_mono(void) {
-    static const char *paths[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
-        NULL,
-    };
+static bool load_mono_face(Font *f, const char *const *paths) {
     static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2190, 0x21FF},
                                     {0x2500, 0x25FF}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
     int cps[1200], n = 0;
@@ -82,13 +94,29 @@ static void load_mono(void) {
     for (int i = 0; paths[i]; i++) {
         if (!FileExists(paths[i])) continue;
         SetTraceLogLevel(LOG_ERROR); /* box-drawing glyphs overflow the cell: harmless warnings */
-        g_mono = LoadFontEx(paths[i], 32, cps, n);
+        *f = LoadFontEx(paths[i], 32, cps, n);
         SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
-        SetTextureFilter(g_mono.texture, TEXTURE_FILTER_BILINEAR);
-        g_mono_ok = true;
-        return;
+        SetTextureFilter(f->texture, TEXTURE_FILTER_BILINEAR);
+        return true;
     }
-    g_mono = g_font;
+    return false;
+}
+
+static void load_mono(void) {
+    static const char *const regular[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
+        NULL,
+    };
+    static const char *const bold[] = {
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
+        "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
+        NULL,
+    };
+    if (!load_mono_face(&g_mono, regular)) g_mono = g_font;
+    if (!load_mono_face(&g_mono_bold, bold)) g_mono_bold = g_mono;
 }
 
 static void text(const char *s, float x, float y, float size, Color c) {
@@ -321,6 +349,19 @@ static void bubble_icon(float x, float y, Color c) {
 
 typedef enum { HOVER_NONE, HOVER_NODE, HOVER_ACTOR } HoverKind;
 
+/* How a detail's lines are styled. Commands when it loads (a heredoc spans
+ * lines), everything else when a line is first drawn: code a block of lines
+ * at a time, highlighted on the side of the diff it belongs to. */
+typedef struct {
+    unsigned char **st;  /* per line: the style of each byte, NULL until drawn */
+    unsigned char *side; /* per line: 0 not code, 1 the new text, 2 the old one */
+    uint32_t *off;       /* where the line starts in its side's text */
+    char *text[2];       /* new side (context + added lines), old side (context + removed) */
+    uint32_t len[2];
+    SynDoc *doc[2];      /* NULL: no grammar installed, the keyword lists instead */
+    const char *kw;      /* keyword list without a grammar; "" = markdown headings */
+} DetStyle;
+
 typedef struct {
     const VizOpts *o;
     Scene *m;
@@ -359,6 +400,7 @@ typedef struct {
     int det_add, det_del;
     float det_scroll;
     Rectangle det_win, det_close;
+    DetStyle det_style;
     struct DetRow { int line, start, len; } *det_rows; /* wrapped */
     int det_nrows, det_caprows, det_cols, det_vis;
     /* Comments panel beside the detail: what the agent wrote before the step.
@@ -853,9 +895,377 @@ static bool failed_bare(Viz *v, const Event *e) {
 
 static Color step_color(EvKind k) { return k == EV_BASH ? DIM : kind_color(k); }
 
+/* ---- detail window: what stands out ------------------------------------ */
+
+/* Style of one byte of a detail line: bold, and a color over the line's own. */
+enum {
+    ST_BOLD = 1, ST_COLOR = 30, ST_GOOD = 2, ST_BAD = 4, ST_DIM = 6, ST_KEY = 8, ST_NUM = 10, ST_DATE = 12,
+    ST_STR = 14, ST_FUNC = 16, ST_TYPE = 18, ST_PROP = 20, ST_BUILTIN = 22,
+};
+
+/* Bytes i..e get the style, unless they have a color already (a number in a
+ * dim flag, a comment or a string stays as it is). */
+static void mark(unsigned char *st, int i, int e, unsigned char style) {
+    for (; i < e; i++)
+        if (!(st[i] & ST_COLOR)) st[i] |= style;
+}
+
+static Color style_color(int sc, Color line) {
+    switch (sc) {
+    case ST_GOOD: return kind_color(EV_CREATE);
+    case ST_BAD: return (Color){255, 120, 120, 255};
+    case ST_DIM: return DIM;
+    case ST_KEY: return KEY_TEXT;
+    case ST_NUM: return NUM_TEXT;
+    case ST_DATE: return DATE_TEXT;
+    case ST_STR: return STR_TEXT;
+    case ST_FUNC: return FUNC_TEXT;
+    case ST_TYPE: return TYPE_TEXT;
+    case ST_PROP: return CMD_TEXT;
+    case ST_BUILTIN: return BUILTIN_TEXT;
+    default: return line;
+    }
+}
+
+/* A tree-sitter class as a style. */
+static unsigned char syn_style(unsigned char c) {
+    static const unsigned char map[] = {
+        [SYN_NONE] = 0,          [SYN_KEYWORD] = ST_BOLD | ST_KEY,   [SYN_TAG] = ST_KEY,
+        [SYN_STRING] = ST_STR,   [SYN_ESCAPE] = ST_BUILTIN,          [SYN_COMMENT] = ST_DIM,
+        [SYN_FUNCTION] = ST_FUNC, [SYN_TYPE] = ST_TYPE,              [SYN_CONSTANT] = ST_BOLD | ST_NUM,
+        [SYN_PROPERTY] = ST_PROP, [SYN_BUILTIN] = ST_BUILTIN,        [SYN_HEADING] = ST_BOLD | ST_KEY,
+        [SYN_STRONG] = ST_BOLD,  [SYN_LINK] = ST_FUNC,               [SYN_LIST] = ST_KEY,
+    };
+    return c < sizeof map ? map[c] : 0;
+}
+
+static char *g_user_words; /* " w1 w2 ... ": bold everywhere (~/.config/aigource/keywords) */
+
+static void load_user_words(void) {
+    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
+    char path[1024];
+    if (xdg && *xdg) snprintf(path, sizeof path, "%s/aigource/keywords", xdg);
+    else snprintf(path, sizeof path, "%s/.config/aigource/keywords", home ? home : "");
+    char *txt = FileExists(path) ? LoadFileText(path) : NULL;
+    if (!txt) return;
+    g_user_words = xmalloc(strlen(txt) + 3);
+    char *p = g_user_words;
+    *p++ = ' ';
+    for (char *w = strtok(txt, " \t\r\n"); w; w = strtok(NULL, " \t\r\n")) p += sprintf(p, "%s ", w);
+    *p = 0;
+    UnloadFileText(txt);
+}
+
+/* Keywords of the languages a read or edit can show, by file extension. */
+static const struct { const char *ext, *kw; } LANGS[] = {
+    {" c h cc cpp hpp cxx ",
+     " if else for while do switch case default return break continue goto static const struct enum union typedef "
+     "extern inline sizeof void int char float double bool unsigned signed long short true false NULL "
+     "class public private protected template namespace using new delete virtual nullptr "},
+    {" py ", " def class import from as return if elif else for while in not and or is None True False try except "
+             "finally raise with lambda yield pass break continue global nonlocal async await assert del "},
+    {" sh bash zsh ", " if then else elif fi for while until do done case esac in function return local export "
+                      "set unset source exit "},
+    {" js ts jsx tsx mjs cjs ", " function return if else for while do switch case default break continue const let "
+                                "var new class extends import export from as async await try catch finally throw "
+                                "typeof instanceof this null undefined true false of in interface type "},
+    {" go ", " func package import return if else for range switch case default break continue go defer chan select "
+             "struct interface type map var const nil true false "},
+    {" rs ", " fn let mut pub use mod impl trait struct enum match if else for while loop in return break continue "
+             "self Self crate super where as const static unsafe async await move ref true false "},
+    {" lua ", " function local end if then else elseif for in do while repeat until return break nil true false "
+              "and or not "},
+    {" md ", ""}, /* headings */
+};
+/* What a command's output says about how it went. */
+static const char BAD_WORDS[] = " error errors failed failure fail fatal panic traceback exception denied refused "
+                                "abort aborted segmentation ";
+static const char GOOD_WORDS[] = " ok passed pass success succeeded successful ";
+static const char WARN_WORDS[] = " warning warnings warn deprecated ";
+/* Shell words after which the next word is still a command. */
+static const char SH_PREFIX[] = " if then else elif while until do ! sudo time env exec nohup xargs command builtin ";
+
+static bool word_byte(unsigned char c) { return isalnum(c) || c == '_'; }
+
+/* Is s[0..n) one of the words of list (" a b c ")? */
+static bool in_list(const char *list, const char *s, int n, bool fold) {
+    char w[64];
+    if (!list || n > 60) return false;
+    w[0] = ' ';
+    for (int i = 0; i < n; i++) w[i + 1] = fold ? (char)tolower((unsigned char)s[i]) : s[i];
+    w[n + 1] = ' ';
+    w[n + 2] = 0;
+    return strstr(list, w) != NULL;
+}
+
+/* Units a number can carry: 3.25s 40ms 2x 1.5MB. */
+static const char UNITS[] = " s ms us ns m h d x k K M G B KB MB GB KiB MiB GiB px ";
+
+/* The end of the number at s[i] (digits, with . or , between digits: 1,234
+ * 3.14, and a unit) when it isn't part of a word (v2, 9a99151, 0x1F), else i. */
+static int number_end(const char *s, int i) {
+    if (!isdigit((unsigned char)s[i]) || (i > 0 && word_byte((unsigned char)s[i - 1]))) return i;
+    int k = i, u;
+    while (isdigit((unsigned char)s[k]) || (s[k] && strchr(".,", s[k]) && isdigit((unsigned char)s[k + 1]))) k++;
+    for (u = k; isalpha((unsigned char)s[u]); u++) {}
+    if (u > k && !word_byte((unsigned char)s[u]) && in_list(UNITS, s + k, u - k, false)) k = u;
+    return word_byte((unsigned char)s[k]) ? i : k;
+}
+
+/* Exactly n digits at s[k]? */
+static bool digits(const char *s, int k, int n) {
+    for (int j = 0; j < n; j++)
+        if (!isdigit((unsigned char)s[k + j])) return false;
+    return !isdigit((unsigned char)s[k + n]);
+}
+
+/* The end of a date or time at s[i] (2026-10-19, 2026/10/19, 23:49:40, 9:05,
+ * 2026-10-19T23:49:40.123Z, ... +02:00), else i. */
+static int date_end(const char *s, int i) {
+    if (i > 0 && word_byte((unsigned char)s[i - 1])) return i;
+    int k = i;
+    bool date = digits(s, k, 4) && (s[k + 4] == '-' || s[k + 4] == '/') && digits(s, k + 5, 2) &&
+                s[k + 7] == s[k + 4] && digits(s, k + 8, 2);
+    if (date) {
+        k += 10;
+        if ((s[k] == 'T' || s[k] == ' ') && isdigit((unsigned char)s[k + 1])) k++;
+        else return word_byte((unsigned char)s[k]) ? i : k;
+    }
+    int h = digits(s, k, 2) ? 2 : digits(s, k, 1) ? 1 : 0;
+    if (!h || s[k + h] != ':' || !digits(s, k + h + 1, 2)) return date ? k - 1 : i; /* no time after it */
+    k += h + 3;
+    if (s[k] == ':' && digits(s, k + 1, 2)) k += 3;
+    if (s[k] == '.' && isdigit((unsigned char)s[k + 1]))
+        for (k++; isdigit((unsigned char)s[k]); k++) {}
+    if (s[k] == 'Z') k++;
+    else if (date && (s[k] == '+' || s[k] == '-')) { /* +02:00 +0200 +02 */
+        if (isdigit((unsigned char)s[k + 1]) && isdigit((unsigned char)s[k + 2]) && s[k + 3] == ':' && digits(s, k + 4, 2))
+            k += 6;
+        else if (digits(s, k + 1, 4)) k += 5;
+        else if (digits(s, k + 1, 2)) k += 3;
+    }
+    return word_byte((unsigned char)s[k]) ? i : k;
+}
+
+/* Words of the line in a list get the style; dates, numbers and the user's
+ * words bold in their own colors. */
+static void style_words(const char *s, unsigned char *st, const char *kw, unsigned char kst, bool outcome) {
+    for (int i = 0; s[i];) {
+        int e = date_end(s, i);
+        if (e > i) {
+            mark(st, i, e, ST_BOLD | ST_DATE);
+            i = e;
+            continue;
+        }
+        if ((e = number_end(s, i)) > i) {
+            mark(st, i, e, ST_BOLD | ST_NUM);
+            i = e;
+            continue;
+        }
+        if (!word_byte((unsigned char)s[i]) || (i > 0 && word_byte((unsigned char)s[i - 1]))) { i++; continue; }
+        for (e = i; word_byte((unsigned char)s[e]) || (s[e] == '-' && word_byte((unsigned char)s[e + 1])); e++) {}
+        unsigned char ws = in_list(g_user_words, s + i, e - i, false) ? ST_BOLD | ST_KEY : 0;
+        if (in_list(kw, s + i, e - i, false)) ws = kst;
+        if (outcome && in_list(BAD_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_BAD;
+        else if (outcome && in_list(GOOD_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_GOOD;
+        else if (outcome && in_list(WARN_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_KEY;
+        mark(st, i, e, ws);
+        i = e;
+    }
+}
+
+/* A shell command, over its lines: each segment's program bold (after start,
+ * && || | ; ( $( and the like), flags and comments dim, heredoc bodies and
+ * quoted strings left alone. */
+typedef struct {
+    bool seg;          /* the next word is a program */
+    char quote;        /* inside '...' or "..." */
+    char delim[64];    /* heredoc delimiter: pending, or the body runs to it */
+    bool in_body, dash;
+} ShState;
+
+static void style_shell(ShState *sh, const char *s, unsigned char *st, bool first) {
+    if (sh->in_body) {
+        const char *t = s;
+        if (sh->dash) while (*t == '\t' || *t == ' ') t++; /* tabs arrive as spaces */
+        if (!strcmp(t, sh->delim)) sh->in_body = false, sh->delim[0] = 0, sh->seg = true;
+        return;
+    }
+    int n = (int)strlen(s), i = first && !strncmp(s, "$ ", 2) ? 2 : 0;
+    if (first) sh->seg = true;
+    while (i < n) {
+        char c = s[i];
+        if (sh->quote) {
+            if (c == '\\' && sh->quote == '"') i++;
+            else if (c == sh->quote) sh->quote = 0;
+            i++;
+            continue;
+        }
+        if (c == '\'' || c == '"') { sh->quote = c; i++; continue; }
+        if (c == '#' && (i == 0 || isspace((unsigned char)s[i - 1]))) {
+            while (i < n) st[i++] |= ST_DIM;
+            break;
+        }
+        if (c == '<' && s[i + 1] == '<' && s[i + 2] != '<') { /* heredoc: <<EOF <<'EOF' <<-"EOF" */
+            i += 2;
+            bool dash = s[i] == '-';
+            if (dash) i++;
+            while (s[i] == ' ' || s[i] == '\'' || s[i] == '"') i++;
+            if (!isalpha((unsigned char)s[i]) && s[i] != '_') continue; /* $(( 1 << 3 )): a shift */
+            sh->dash = dash;
+            int k = 0;
+            while ((word_byte((unsigned char)s[i]) || s[i] == '-') && k < (int)sizeof sh->delim - 1) sh->delim[k++] = s[i++];
+            sh->delim[k] = 0;
+            if (s[i] == '\'' || s[i] == '"') i++;
+            continue;
+        }
+        bool redir = c == '&' && ((i > 0 && s[i - 1] == '>') || s[i + 1] == '>'); /* 2>&1, &> */
+        if ((strchr(";|&({`", c) && !redir) || (c == '$' && s[i + 1] == '(')) { sh->seg = true; i += c == '$' ? 2 : 1; continue; }
+        if (isspace((unsigned char)c) || strchr(")}<>&", c)) { i++; continue; }
+        int e = i;
+        while (e < n && !isspace((unsigned char)s[e]) && !strchr(";|&()<>`'\"", s[e])) e++;
+        const char *eq = memchr(s + i, '=', (size_t)(e - i));
+        if (sh->seg && eq && eq > s + i) { /* VAR=value before the program */
+        } else if (sh->seg) {
+            mark(st, i, e, ST_BOLD | ST_KEY);
+            sh->seg = in_list(SH_PREFIX, s + i, e - i, false);
+        } else if (c == '-') {
+            for (int k = i; k < e; k++) st[k] |= ST_DIM;
+        }
+        i = e;
+    }
+    if (sh->delim[0] && !sh->in_body) sh->in_body = true; /* the body starts on the next line */
+    else if (!sh->quote && !(n && s[n - 1] == '\\')) sh->seg = true; /* a newline ends the command */
+}
+
+/* The keyword list for path when no grammar is installed ("" = markdown). */
+static const char *fallback_keywords(const char *path) {
+    const char *dot = strrchr(path, '.'), *slash = strrchr(path, '/');
+    if (dot && (!slash || dot > slash))
+        for (size_t l = 0; l < sizeof LANGS / sizeof *LANGS; l++)
+            if (in_list(LANGS[l].ext, dot + 1, (int)strlen(dot + 1), true)) return LANGS[l].kw;
+    return NULL;
+}
+
+/* Get ready to style detail d of a step of kind k on path: which lines are
+ * code and on which side, and the commands (their state spans lines). Nothing
+ * is parsed yet. */
+static void det_style_init(DetStyle *ds, const Detail *d, EvKind k, const char *path) {
+    memset(ds, 0, sizeof *ds);
+    int n = d->n ? d->n : 1;
+    ds->st = xcalloc((size_t)n, sizeof *ds->st);
+    ds->side = xcalloc((size_t)n, 1);
+    ds->off = xcalloc((size_t)n, sizeof *ds->off);
+    bool code = path && (k == EV_READ || k == EV_EDIT || k == EV_CREATE || k == EV_TOUCH || k == EV_BASH);
+    SynLang *lang = code ? syn_lang_for(path) : NULL;
+    ds->kw = code ? fallback_keywords(path) : NULL;
+    /* Code: the file's lines, before a command's own (its diff comes first). */
+    size_t cap[2] = {0, 0};
+    int first_no[2] = {-1, -1}; /* line number of each side's first line */
+    for (int i = 0; (lang || ds->kw) && i < d->n && d->lines[i].kind != DL_HEAD; i++) {
+        DlKind kd = d->lines[i].kind;
+        if (kd != DL_TEXT && kd != DL_ADD && kd != DL_DEL) continue;
+        ds->side[i] = kd == DL_DEL ? 2 : 1;
+        ds->off[i] = ds->len[ds->side[i] - 1];
+        if (!lang) continue;
+        size_t len = strlen(d->lines[i].s);
+        for (int s = 0; s < 2; s++) {
+            if (kd == (s ? DL_ADD : DL_DEL)) continue; /* context goes to both sides */
+            if (ds->len[s] + len + 2 > cap[s]) {
+                cap[s] = (ds->len[s] + len + 2) * 2;
+                ds->text[s] = xrealloc(ds->text[s], cap[s]);
+            }
+            if (first_no[s] < 0) first_no[s] = d->lines[i].no;
+            memcpy(ds->text[s] + ds->len[s], d->lines[i].s, len);
+            ds->len[s] += (uint32_t)len;
+            ds->text[s][ds->len[s]++] = '\n';
+        }
+    }
+    for (int s = 0; s < 2; s++) {
+        if (!ds->len[s]) continue;
+        /* From the file's first line (a whole read, a created file) nothing is open before it. */
+        const char *pre = first_no[s] == 1 ? "" : syn_fragment_prefix(lang, ds->text[s], ds->len[s]);
+        uint32_t pn = (uint32_t)strlen(pre);
+        if (pn) { /* the lines move after it */
+            ds->text[s] = xrealloc(ds->text[s], ds->len[s] + pn);
+            memmove(ds->text[s] + pn, ds->text[s], ds->len[s]);
+            memcpy(ds->text[s], pre, pn);
+            ds->len[s] += pn;
+            for (int i = 0; i < d->n; i++)
+                if (ds->side[i] == s + 1) ds->off[i] += pn;
+        }
+        ds->doc[s] = syn_doc(lang, ds->text[s], ds->len[s]);
+    }
+    ShState sh = {0};
+    bool cmd = false;
+    for (int i = 0; i < d->n; i++) {
+        const DetailLine *dl = &d->lines[i];
+        if (dl->kind != DL_HEAD) continue;
+        bool first = !i || d->lines[i - 1].kind != DL_HEAD;
+        if (first) cmd = !strncmp(dl->s, "$ ", 2), sh = (ShState){0};
+        ds->st[i] = xcalloc(strlen(dl->s) + 1, 1);
+        if (cmd) style_shell(&sh, dl->s, ds->st[i], first);
+        style_words(dl->s, ds->st[i], NULL, 0, false);
+    }
+}
+
+#define STYLE_BLOCK 128 /* lines styled together: one query run per side */
+
+/* The style of line i, computing its block of lines on first use. */
+static const unsigned char *det_line_style(DetStyle *ds, const Detail *d, int i) {
+    if (ds->st[i]) return ds->st[i];
+    int b0 = i - i % STYLE_BLOCK, b1 = b0 + STYLE_BLOCK < d->n ? b0 + STYLE_BLOCK : d->n;
+    uint32_t lo[2] = {UINT32_MAX, UINT32_MAX}, hi[2] = {0, 0};
+    for (int j = b0; j < b1; j++) {
+        int s = ds->side[j] - 1;
+        if (ds->st[j] || s < 0 || !ds->doc[s]) continue;
+        uint32_t e = ds->off[j] + (uint32_t)strlen(d->lines[j].s);
+        if (ds->off[j] < lo[s]) lo[s] = ds->off[j];
+        if (e > hi[s]) hi[s] = e;
+    }
+    unsigned char *cls[2] = {NULL, NULL};
+    for (int s = 0; s < 2; s++)
+        if (hi[s] > lo[s]) {
+            cls[s] = xmalloc(hi[s] - lo[s]);
+            syn_highlight(ds->doc[s], lo[s], hi[s], cls[s]);
+        }
+    for (int j = b0; j < b1; j++) {
+        if (ds->st[j]) continue;
+        const DetailLine *dl = &d->lines[j];
+        int n = (int)strlen(dl->s), s = ds->side[j] - 1;
+        unsigned char *st = xcalloc((size_t)n + 1, 1);
+        bool styled = false;
+        if (s >= 0 && cls[s])
+            for (int k = 0; k < n; k++) styled |= (st[k] = syn_style(cls[s][ds->off[j] - lo[s] + (uint32_t)k])) != 0;
+        /* A markdown heading the grammar missed (no grammar, or a fragment that
+         * starts inside a code fence) */
+        if (s >= 0 && !styled && ds->kw && !*ds->kw && dl->s[0] == '#' && dl->kind != DL_DEL)
+            memset(st, ST_BOLD | ST_KEY, (size_t)n);
+        style_words(dl->s, st, s >= 0 && !ds->doc[s] ? ds->kw : NULL, ST_BOLD | ST_KEY,
+                    s < 0 && (dl->kind == DL_TEXT || dl->kind == DL_ERR));
+        ds->st[j] = st;
+    }
+    free(cls[0]);
+    free(cls[1]);
+    return ds->st[i];
+}
+
+/* Is line i highlighted code (drawn in the text color, not the diff's)? */
+static bool det_line_syntax(const DetStyle *ds, int i) { return ds->side[i] && ds->doc[ds->side[i] - 1]; }
+
+static void det_style_free(DetStyle *ds, int n) {
+    for (int i = 0; ds->st && i < n; i++) free(ds->st[i]);
+    free(ds->st);
+    free(ds->side);
+    free(ds->off);
+    for (int s = 0; s < 2; s++) syn_doc_free(ds->doc[s]), free(ds->text[s]);
+    memset(ds, 0, sizeof *ds);
+}
+
 /* ---- detail window ------------------------------------------------------ */
 
 static void detail_close(Viz *v) {
+    if (v->det) det_style_free(&v->det_style, v->det->n);
     detail_free(v->det);
     v->det = NULL;
     free(v->det_label);
@@ -880,8 +1290,10 @@ static void detail_load(Viz *v) {
         detail_line(d, DL_DIM, buf);
         detail_line(d, DL_DIM, "nothing recorded its content");
     }
+    if (v->det) det_style_free(&v->det_style, v->det->n);
     detail_free(v->det);
     v->det = d;
+    det_style_init(&v->det_style, d, v->det_kind, v->det_path);
     v->det_cols = 0; /* rewrap */
     v->det_reload = GetTime();
     struct stat st;
@@ -980,6 +1392,33 @@ static void detail_copy(Viz *v) {
 #define DET_FONT 14.0f
 #define DET_ROW 18.0f
 #define DET_ROW_BYTES 2048
+
+/* One wrapped row of a detail line, in runs of the same style. Runs are placed
+ * by cell, so bold never shifts a column. */
+static void draw_det_row(const DetailLine *dl, const unsigned char *st, const struct DetRow *row, float x, float y,
+                         float cw, Color c) {
+    const char *s = dl->s;
+    int end = row->start + row->len;
+    char buf[DET_ROW_BYTES];
+    int n = 0, cells = 0, run_cells = 0;
+    unsigned char run = 0;
+    for (int k = row->start;;) {
+        if (n && (k == end || st[k] != run || n >= (int)sizeof buf - 5)) {
+            buf[n] = 0;
+            Color rc = style_color(run & ST_COLOR, c);
+            DrawTextEx(run & ST_BOLD ? g_mono_bold : g_mono, buf, (Vector2){x + (float)cells * cw, y}, DET_FONT, 0, rc);
+            cells += run_cells;
+            n = run_cells = 0;
+        }
+        if (k == end) break;
+        run = st[k];
+        int cp = 0; /* one whole codepoint; invalid UTF-8 can run on, so at most 4 bytes */
+        do buf[n++] = s[k++];
+        while (k < end && ((unsigned char)s[k] & 0xC0) == 0x80 && ++cp < 4);
+        run_cells++;
+    }
+}
+
 #define DET_TOP 58.0f /* header height */
 
 static float note_panel_w(void) { return fminf(400, fmaxf(280, (float)GetScreenWidth() * 0.24f)); }
@@ -1100,26 +1539,24 @@ static void draw_detail(Viz *v, Vector2 mouse) {
         struct DetRow *row = &v->det_rows[r];
         DetailLine *dl = &d->lines[row->line];
         bool cont = r > 0 && v->det_rows[r - 1].line == row->line; /* wrapped continuation */
-        Color c = TEXT;
+        Color c = TEXT, mark_c = TEXT;
         switch (dl->kind) {
-        case DL_ADD: c = (Color){150, 240, 160, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){40, 120, 60, 60}); break;
-        case DL_DEL: c = (Color){255, 150, 150, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){140, 40, 40, 60}); break;
+        case DL_ADD: c = mark_c = (Color){150, 240, 160, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){40, 120, 60, 60}); break;
+        case DL_DEL: c = mark_c = (Color){255, 150, 150, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){140, 40, 40, 60}); break;
         case DL_HUNK: c = (Color){110, 190, 230, 255}; break;
-        case DL_HEAD: c = (Color){255, 230, 160, 255}; break;
+        case DL_HEAD: c = CMD_TEXT; break;
         case DL_DIM: c = DIM; break;
         case DL_ERR: c = (Color){255, 120, 120, 255}; break;
         default: break;
         }
+        if (det_line_syntax(&v->det_style, row->line)) c = TEXT; /* the row's tint says added/removed */
         if (!cont && dl->no > 0) {
             snprintf(buf, sizeof buf, "%6d", dl->no);
             DrawTextEx(g_mono, buf, (Vector2){x + 10, ry + 1}, DET_FONT, 0, fade(DIM, 0.7f));
         }
         if (!cont && (dl->kind == DL_ADD || dl->kind == DL_DEL))
-            DrawTextEx(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, c);
-        int len = row->len < (int)sizeof buf - 1 ? row->len : (int)sizeof buf - 1;
-        memcpy(buf, dl->s + row->start, (size_t)len);
-        buf[len] = 0;
-        DrawTextEx(g_mono, buf, (Vector2){tx, ry + 1}, DET_FONT, 0, c);
+            DrawTextEx(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, mark_c);
+        draw_det_row(dl, det_line_style(&v->det_style, d, row->line), row, tx, ry + 1, cw, c);
     }
     EndScissorMode();
     if (max_scroll) { /* scrollbar */
@@ -1692,6 +2129,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     SetExitKey(KEY_NULL);
     load_font();
     load_mono();
+    load_user_words();
 
     Viz v = {.o = o, .m = model_new(o->root), .speed = o->speed > 0 ? o->speed : 60,
              .auto_cam = true, .legend = true, .cam = {.zoom = 1}};

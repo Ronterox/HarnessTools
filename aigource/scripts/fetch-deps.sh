@@ -19,6 +19,9 @@ fetch https://github.com/raysan5/raylib/releases/download/5.5/raylib-5.5_linux_a
       raylib.tar.gz 3d95ef03d5b38dfa55c0a16ca122d382134b078f0e5b270b52fe7eae0549c000
 fetch https://github.com/ibireme/yyjson/archive/refs/tags/0.10.0.tar.gz \
       yyjson.tar.gz 0d901cb2c45c5586e3f3a4245e58c2252d6b24bf4b402723f6179523d389b165
+fetch https://github.com/tree-sitter/tree-sitter/archive/refs/tags/v0.25.10.tar.gz \
+      tree-sitter.tar.gz ad5040537537012b16ef6e1210a572b927c7cdc2b99d1ee88d44a7dcdc3ff44c
 tar xzf vendor/raylib.tar.gz -C vendor
 tar xzf vendor/yyjson.tar.gz -C vendor
-touch vendor/raylib-5.5_linux_amd64/lib/libraylib.a vendor/yyjson-0.10.0/src/yyjson.c
+tar xzf vendor/tree-sitter.tar.gz -C vendor
+touch vendor/raylib-5.5_linux_amd64/lib/libraylib.a vendor/yyjson-0.10.0/src/yyjson.c vendor/tree-sitter-0.25.10/lib/src/lib.c
