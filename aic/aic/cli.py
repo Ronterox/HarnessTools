@@ -4,7 +4,7 @@ import json
 import os
 import sys
 
-from . import anchors, compiler, docs, fixes, hook, paths, prompts, usage, watch, worker
+from . import anchors, compiler, compiler_prompts, docs, fixes, hook, paths, prompts, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -40,8 +40,11 @@ def main(argv=None):
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("compile", help="compile a doc against worker activity")
     p.add_argument("--doc", default=docs.DEFAULT)
+    p.add_argument("--print", dest="dry", action="store_true", help="print the prompt; ask nothing")
     p = sub.add_parser("ask", help="ask the compiler")
     p.add_argument("--doc", default=docs.DEFAULT)
+    p.add_argument("--template", help="a `task: ask` compiler template (with --whatif: `task: whatif`)")
+    p.add_argument("--print", dest="dry", action="store_true", help="print the prompt; ask nothing")
     p.add_argument("--context-file")
     p.add_argument("--whatif", action="store_true")
     p.add_argument("question", nargs="+")
@@ -51,7 +54,9 @@ def main(argv=None):
     p.add_argument("--to", dest="line_to", type=int)
     p.add_argument("--content-file", help="the doc's text as the editor has it (default: the saved doc)")
     p.add_argument("--json", action="store_true")
-    p = sub.add_parser("prompts", help="list prompt templates")
+    p.add_argument("--print", dest="dry", action="store_true", help="print the prompt; ask nothing")
+    p = sub.add_parser("prompts", help="list prompt templates (--compiler: the compiler's)")
+    p.add_argument("--compiler", action="store_true")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("render", help="render a prompt template (what a submit would send)")
     p.add_argument("--prompt", required=True)
@@ -132,6 +137,10 @@ def main(argv=None):
         elif a.cmd == "compile":
             sid = _sid(root)
             docs.resolve(root, sid, a.doc)
+            if a.dry:
+                c = compiler.compile_prompt(root, sid, a.doc)
+                print("(model %s)\n%s" % (c["model"], c["prompt"]))
+                return 0
             d = compiler.compile_spec(root, sid, a.doc)
             if d is None:
                 print("compile queued: %s runs again, as saved, when the current compile finishes" % a.doc)
@@ -146,7 +155,11 @@ def main(argv=None):
             ctx = paths.read_json(a.context_file) if a.context_file else None
             docs.check_name(a.doc)  # a question needs no doc file: it may not exist yet
             docs.migrate(root, sid)
-            print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc))
+            if a.dry:
+                q = compiler.ask_prompt(root, sid, " ".join(a.question), ctx, a.whatif, a.doc, a.template)
+                print("(model %s)\n%s" % (q["model"], q["prompt"]))
+                return 0
+            print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc, a.template))
         elif a.cmd == "fix":
             sid = _sid(root)
             docs.resolve(root, sid, a.doc)
@@ -157,7 +170,10 @@ def main(argv=None):
                         content = f.read()
                 except (OSError, UnicodeError) as e:
                     raise docs.DocError("can't read %s: %s" % (a.content_file, e))
-            r = fixes.propose(root, sid, a.doc, content, a.line_from, a.line_to)
+            r = fixes.propose(root, sid, a.doc, content, a.line_from, a.line_to, a.dry)
+            if a.dry:
+                print(json.dumps(r) if a.json else "(model %s)\n%s" % (r["model"], r["prompt"]))
+                return 0
             print(json.dumps(r) if a.json else fixes.describe(r))
         elif a.cmd == "submit":
             sid = _sid(root)
@@ -170,12 +186,13 @@ def main(argv=None):
                 docs.resolve(root, sid, a.doc)
                 print(worker.submit(root, sid, a.line_from, a.line_to, a.now, a.doc, a.prompt, a.input_text))
         elif a.cmd == "prompts":
-            ps = prompts.listing(root)
+            ps = compiler_prompts.listing(root) if a.compiler else prompts.listing(root)
             if a.json:
                 print(json.dumps(ps))
             else:
                 for t in ps:
-                    print("%-14s %-9s %s" % (t["name"], t["source"], t.get("error") or t.get("description", "")))
+                    print("%-14s %-9s %-8s %s" % (t["name"], t["source"], t.get("task", ""),
+                                                  t.get("error") or t.get("description", "")))
         elif a.cmd == "render":
             sid = _sid(root)
             docs.resolve(root, sid, a.doc)

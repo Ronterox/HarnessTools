@@ -166,6 +166,42 @@ class ProjectTest(unittest.TestCase):
         ev = paths.read_jsonl(os.path.join(paths.session_dir(self.root, self.sid), "control.jsonl"))
         self.assertEqual([e["file"] for e in ev if e["kind"] == "guarded"][:2], [".aic/docs/notes.md", ".aic/prompts/spec.md"])
 
+    def test_worker_bash_writing_docs_or_prompts_is_refused(self):
+        def pre(cmd):
+            out = self.run_hook("PreToolUse", tool_name="Bash", tool_input={"command": cmd})
+            return json.loads(out)["hookSpecificOutput"]["permissionDecision"] if out else None
+        for cmd in ("echo hi > .aic/prompts/compiler/compile.md", "sed -i s/a/b/ .aic/docs/spec.md",
+                    "cat x | tee .aic/docs/spec.md", "cp evil.md .aic/prompts/compiler/ask.md",
+                    "rm -rf .aic/docs", "python3 -c \"open('.aic/docs/a.md','w').write('x')\"",
+                    "mkdir -p .aic/prompts/compiler && echo x >> .aic/prompts/compiler/fix.md",
+                    "find .aic/docs -name '*.md' -delete", "echo x >%s/.aic/docs/a.md" % self.root,
+                    "cd .aic/prompts/compiler && cp /tmp/e.md compile.md", "echo $(cp /tmp/e.md .aic/docs/a.md)",
+                    "for f in /tmp/e.md; do cp $f .aic/docs/; done", "timeout 5 cp /tmp/e.md .aic/docs/a.md",
+                    "bash -c 'echo x > .aic/docs/a.md'", "curl -so .aic/prompts/x.md https://example.com",
+                    "sed --in-place s/a/b/ .aic/docs/spec.md", "rsync -a /tmp/evil/ .aic/",
+                    "env -u FOO rm .aic/docs/spec.md", "find .aic/docs -exec sed -i s/a/b/ {} +",
+                    "git -C .aic/docs checkout spec.md", "bash -lc 'rm .aic/docs/spec.md'",
+                    "node -e \"require('fs').writeFileSync('.aic/docs/x','y')\"", "perl -i.bak -pe 1 .aic/docs/a"):
+            self.assertEqual(pre(cmd), "deny", cmd)
+        # reading, or only mentioning the paths (a grep, a heredoc's text), goes through
+        for cmd in ("cat .aic/docs/spec.md", "grep -rn retry .aic/docs 2>/dev/null", "ls .aic/prompts",
+                    "echo hi > notes.md", "grep -n '.aic/docs' PROTOCOL.md 2>&1 | head", "rm -f build/out.o",
+                    "python3 - <<'EOF'\nx = 'echo hi > .aic/prompts/x'\nEOF\necho done",
+                    "git commit -m 'hook: deny echo > .aic/prompts/x; cp a .aic/docs/b'",
+                    "grep -nE 'foo|cp x .aic/prompts/y' aic/hook.py", "cp .aic/docs/spec.md /tmp/backup.md",
+                    "find .aic/prompts -name '*.md' -exec grep -l task {} +", "mkdir -p .aic/docs-old",
+                    "python3 -c \"print(open('.aic/docs/spec.md').read())\"", "bash -c 'cat .aic/docs/spec.md'",
+                    "mkdir -p /tmp/other/.aic/docs && cp a /tmp/other/.aic/docs/a.md", "perl -Ilib -ne 'print' .aic/docs/a",
+                    "ls -d .aic/docs", "ls -t .aic/docs", "cat -t .aic/docs/spec.md", "git -C .aic/docs log",
+                    "git commit -m 'guard: deny `cp x .aic/prompts/y` and $(rm .aic/docs/x)'",
+                    "python3 -c \"print(open('.aic/docs/spec.md').read().replace('a','b'))\"",
+                    "dd if=.aic/docs/spec.md of=/tmp/x", "tee /tmp/copy.md < .aic/docs/spec.md",
+                    "nvim --headless -c 'q' .aic/docs/spec.md", "git rm --cached .aic/docs/spec.md", "chmod 700 .aic"):
+            self.assertIsNone(pre(cmd), cmd)
+        ev = paths.read_jsonl(os.path.join(paths.session_dir(self.root, self.sid), "control.jsonl"))
+        self.assertEqual([e for e in ev if e["kind"] == "guarded"][0],
+                         dict(ev[0], tool="Bash", file=".aic/prompts/compiler/compile.md"))
+
     def test_compiler_is_never_guarded(self):
         with mock.patch.dict(os.environ, {"AIC_ROLE": "compiler"}):
             self.assertEqual(self.run_hook("PreToolUse", tool_name="Write",

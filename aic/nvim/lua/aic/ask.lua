@@ -4,7 +4,63 @@ local state = require('aic.state')
 local util = require('aic.util')
 
 local api = vim.api
-local M = {}
+local M = {
+  template = nil, -- the compiler template questions and ask-at-cursor use (nil: the default `ask`)
+}
+
+-- `--template NAME` for `aic ask`, when one is chosen.
+function M.template_args()
+  return M.template and { '--template', M.template } or {}
+end
+
+-- :AicAskTemplate [name]: choose the compiler template (`task: ask`) for
+-- questions and ask-at-cursor; `ask` goes back to the default.
+function M.choose_template(name)
+  local function set(n)
+    M.template = (n and n ~= '' and n ~= 'ask') and n or nil
+    util.notify('aic: questions use the ' .. (M.template or 'ask') .. ' template')
+    require('aic.chat').render()
+  end
+  name = name and vim.trim(name) or ''
+  backend.run({ 'prompts', '--compiler', '--json' }, state.root, function(ok, out, err)
+    local list = ok and util.decode(out)
+    if type(list) ~= 'table' then
+      util.notify(util.oneline('aic prompts failed: ' .. vim.trim(err ~= '' and err or out)), vim.log.levels.ERROR)
+      return
+    end
+    if name ~= '' then -- named: it must be an ask template
+      for _, t in ipairs(list) do
+        if t.name == name and t.task == 'ask' and not t.error then
+          return set(name)
+        end
+      end
+      util.notify('aic: no usable ask template ' .. name .. ' (:AicPrompts lists them)', vim.log.levels.ERROR)
+      return
+    end
+    local items = vim.tbl_filter(function(t)
+      return t.task == 'ask' or t.error ~= nil
+    end, list)
+    vim.ui.select(items, {
+      prompt = 'aic: ask with',
+      format_item = function(t)
+        if t.error then
+          return ('[%s] %s  (broken: %s)'):format(t.source, t.name, util.oneline(t.error))
+        end
+        local cur = t.name == (M.template or 'ask') and '* ' or '  '
+        local desc = vim.fn.strcharpart(util.oneline(t.description or ''), 0, 80)
+        return ('%s[%s] %s — %s'):format(cur, t.source, t.name, desc)
+      end,
+    }, function(t)
+      if not t then
+        return
+      elseif t.error then
+        util.notify('aic: ' .. t.error, vim.log.levels.ERROR)
+        return
+      end
+      set(t.name)
+    end)
+  end)
+end
 
 local function excerpt(buf, line)
   local n = api.nvim_buf_line_count(buf)
@@ -111,6 +167,9 @@ local function run(args, ctx, q, title, actions)
   local entry = { q = q, title = title, actions = actions }
   M.attach(buf, win, entry)
   local cmd = { 'ask', '--doc', doc_name, '--context-file', tmp }
+  if not vim.tbl_contains(args, '--whatif') then
+    vim.list_extend(cmd, M.template_args())
+  end
   vim.list_extend(cmd, args)
   backend.run(cmd, state.root, function(ok, out, err, code)
     os.remove(tmp)
@@ -178,7 +237,7 @@ end
 function M.ask()
   with_root(function()
     local ctx = M.context()
-    vim.ui.input({ prompt = 'aic ask: ' }, function(q)
+    vim.ui.input({ prompt = M.template and ('aic ask (' .. M.template .. '): ') or 'aic ask: ' }, function(q)
       if not q or vim.trim(q) == '' then
         return
       end

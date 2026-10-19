@@ -11,25 +11,11 @@ import os
 import re
 import unicodedata
 
-from . import compiler, docs, paths
+from . import compiler, compiler_prompts, docs, paths
 
 FIX_MODEL = os.environ.get("AIC_FIX_MODEL", compiler.COMPILE_MODEL)
 
-FIX_TASK = """The human asked you to FIX doc `%s`: propose edits to that doc that resolve the diagnostic items below.
-You still never edit files: your edits are data. aic shows them to the human, who picks which ones to apply.
-Rules:
-- Edit only this doc: never code, never other docs, never its first line when that is an `<!-- aic: ... -->` marker.
-- Fix an item only where changing the doc is the right resolution: the doc is ambiguous, contradicts itself, has a
-  hole, assumes something false about the code, or omits something the worker did that the human should decide on.
-  When the worker is the one that is wrong and the doc is right, do not change the doc: list the item under skipped.
-- One fix per item; a fix that also resolves related items names the main one. item = the item's number; null for a
-  fix no item names (only when it is needed for the others to make sense).
-- Each edit replaces `old` with `new`. Copy `old` verbatim from the doc text WITHOUT the "  12| " line-number prefix,
-  long enough to occur exactly once in the doc; prefer whole lines. To insert, put the neighbouring line in `old` and
-  repeat it in `new`. The edits of one fix never overlap; different fixes should not touch the same lines.
-- Keep the human's voice and form (outline, pseudocode, box diagrams); make the smallest edit that resolves the item.
-  Verify what you write about the code with Read/Grep/Glob first.
-- title: imperative, under 70 characters. why: one sentence."""
+# The instructions are the `fix` compiler template (prompts/compiler/fix.md).
 
 FIX_SCHEMA = {
     "type": "object",
@@ -180,9 +166,10 @@ def check(text, proposed):
     return fixes, rejected
 
 
-def propose(root, sid, doc, text=None, line_from=None, line_to=None):
+def propose(root, sid, doc, text=None, line_from=None, line_to=None, dry=False):
     """Ask the compiler for fixes to doc `doc` (its saved text, or `text`: the
-    editor's buffer). Range: only the items about those doc lines."""
+    editor's buffer). Range: only the items about those doc lines.
+    dry: only -> {"prompt", "model"} (nothing is asked or written)."""
     sdir = paths.session_dir(root, sid)
     if text is None:
         text = docs.read(root, doc)
@@ -203,12 +190,17 @@ def propose(root, sid, doc, text=None, line_from=None, line_to=None):
         i, it.get("kind"), it.get("severity"), "doc" if it.get("file") in ("doc", "spec") else it.get("file"),
         it.get("line"), it.get("message")) + ("" if it.get("file") in ("doc", "spec") or not it.get("spec_line")
                                              else " (doc line %s)" % it["spec_line"]) for i, it in picked)
-    parts = [FIX_TASK % doc,
-             "== DOC `%s` (.aic/docs/%s.md as the human sees it now, with line numbers) ==\n%s" % (
-                 doc, doc, compiler.numbered(text)),
-             "== ITEMS TO FIX (from your last compile of this doc; lines may have moved since) ==\n" + listing]
-    out = compiler.run_claude(root, sdir, "compile", FIX_MODEL, "\n\n".join(parts), schema=FIX_SCHEMA,
-                              note="fix " + doc)
+    t = compiler._template(root, "fix", "fix")
+    values = {"doc.name": doc,
+              "doc": "== DOC `%s` (.aic/docs/%s.md as the human sees it now, with line numbers) ==\n%s" % (
+                  doc, doc, compiler.numbered(text)),
+              "items": "== ITEMS TO FIX (from your last compile of this doc; lines may have moved since) ==\n"
+                       + listing}
+    prompt, model = compiler_prompts.render(t, values), compiler_prompts.model(t, FIX_MODEL)
+    if dry:
+        return {"prompt": prompt, "model": model}
+    out = compiler.run_claude(root, sdir, "compile", model, prompt, schema=FIX_SCHEMA,
+                              note="fix " + doc + compiler._tag(t, "fix"))
     res = out.get("structured_output")
     if not isinstance(res, dict):
         try:

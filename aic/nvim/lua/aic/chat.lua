@@ -9,6 +9,7 @@ local api = vim.api
 local M = { buf = nil }
 local FOOTER = '## You'
 local ns = api.nvim_create_namespace('aic_chat')
+local ns_tpl = api.nvim_create_namespace('aic_chat_template')
 
 local function footer_index(lines)
   for i = #lines, 1, -1 do
@@ -62,6 +63,14 @@ function M.render()
   for w, c in pairs(cursors) do
     pcall(api.nvim_win_set_cursor, w, c)
   end
+  api.nvim_buf_clear_namespace(b, ns_tpl, 0, -1)
+  local tpl = require('aic.ask').template
+  if tpl then -- the questions go through another template than `ask`
+    api.nvim_buf_set_extmark(b, ns_tpl, nf - 1, 0, {
+      virt_text = { { '  template: ' .. tpl, 'AicSubmit' } },
+      virt_text_pos = 'eol',
+    })
+  end
   require('aic.anchors').highlight(b)
 end
 
@@ -94,7 +103,10 @@ function M.ask(text)
   end
   state.asking = state.asking + 1
   set_pending(true)
-  backend.run({ 'ask', '--doc', require('aic.doc').current(), '--', text }, state.root, function(ok, out, err, code)
+  local args = { 'ask', '--doc', require('aic.doc').current() }
+  vim.list_extend(args, require('aic.ask').template_args())
+  vim.list_extend(args, { '--', text })
+  backend.run(args, state.root, function(ok, out, err, code)
     state.asking = state.asking - 1
     set_pending(state.asking > 0)
     if not ok then

@@ -5,7 +5,8 @@ Per worker session (flat files, so the editor's session-dir watcher sees them):
   diagnostics.<doc>.json  last compile of the doc
 
 A doc may start with a marker line, e.g. `<!-- aic: compile prompt=spec -->`:
-`compile` = saving it compiles; `prompt=` = the submit template offered first.
+`compile` = saving it compiles (`compile=NAME`: with compiler template NAME);
+`prompt=` = the submit template offered first.
 """
 import os
 import re
@@ -47,15 +48,18 @@ def diag_path(sdir, name):
 
 
 def marker(text):
-    """Settings from the doc's first line: {"compile": bool, "prompt": str|None}."""
+    """Settings from the doc's first line: {"compile": bool, "prompt": str|None}
+    (+ "compile_template" for `compile=NAME`)."""
     first = (text or "").split("\n", 1)[0]
     m = MARKER.match(first)
     out = {"compile": False, "prompt": None}
     if m:
         for tok in m.group(1).split():
             k, _, v = tok.partition("=")
-            if k == "compile" and not v:
+            if k == "compile":
                 out["compile"] = True
+                if v:
+                    out["compile_template"] = v
             elif k == "prompt" and v:
                 out["prompt"] = v
     return out
@@ -82,7 +86,8 @@ def listing(root):
         p = os.path.join(d, f)
         m = marker(paths.read_text(p))
         out.append({"name": name, "path": os.path.relpath(p, root), "mtime": os.path.getmtime(p),
-                    "compile": m["compile"], "prompt": m["prompt"]})
+                    "compile": m["compile"], "compile_template": m.get("compile_template"),
+                    "prompt": m["prompt"]})
     out.sort(key=lambda x: -x["mtime"])
     return out
 
