@@ -1,0 +1,5 @@
+{"ts":1791972001.000,"kind":"bash","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat a.txt | head -5; cd sub && sed -n 1p b.txt; cat ../missing.txt 2>/dev/null"}
+{"ts":1791972001.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd"}
+{"ts":1791972001.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"sub/b.txt","turn":0,"via":"cmd"}
+{"ts":1791972002.000,"kind":"bash","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat c.txt && false"}
+{"ts":1791972002.000,"kind":"failed","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"Exit code 1"}

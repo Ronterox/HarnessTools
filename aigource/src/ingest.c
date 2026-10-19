@@ -319,8 +319,8 @@ static void read_tail(Ingest *in, Tail *t) {
         off_t base = t->off; /* file offset of chunk[0] */
         t->off += n;
         size_t start = 0;
-        for (size_t i = 0; i < (size_t)n; i++) {
-            if (chunk[i] != '\n') continue;
+        for (const char *nl; start < (size_t)n && (nl = memchr(chunk + start, '\n', (size_t)n - start));) {
+            size_t i = (size_t)(nl - chunk);
             const char *line = chunk + start;
             size_t len = i - start;
             if (t->blen) { /* complete the buffered partial line */

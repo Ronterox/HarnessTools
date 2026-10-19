@@ -25,6 +25,8 @@ typedef struct {
     int nhd;
     struct { char *dir; bool lost; } sub[8]; /* ( subshells ): their cd doesn't last */
     int nsub;
+    struct { char *dir; bool lost; } push[8]; /* pushd: where popd goes back to */
+    int npush;
     bool test; /* inside [[ ]]: < and > compare */
 } G;
 
@@ -187,7 +189,8 @@ static void cmd_cd(G *g, Word *a, int na) {
     g->dir = nd;
 }
 
-/* sed -i / perl -i: the files after the script. */
+/* sed -i / perl -i: the files after the script, changed; without -i, sed
+ * reads them (perl's operands may be its script's own arguments). */
 static void cmd_inplace(G *g, Word *a, int na, bool perl) {
     bool inplace = false, script = false, ddash = false;
     for (int k = 0; k < na; k++) {
@@ -211,20 +214,28 @@ static void cmd_inplace(G *g, Word *a, int na, bool perl) {
             continue;
         }
         if (!script) { script = true; continue; }
-        if (inplace && !a[k].dyn) emit(g, s, GUESS_CHANGE, NULL);
+        if (a[k].dyn) continue;
+        if (inplace) emit(g, s, GUESS_CHANGE, NULL);
+        else if (!perl && strcmp(s, "-")) emit(g, s, GUESS_READ, NULL); /* "-": stdin */
     }
 }
 
-/* Each operand (non-option word); `valued`: short options that take the next word. */
-static void cmd_operands(G *g, Word *a, int na, const char *valued, GuessKind kind) {
+/* Each operand (non-option word). `valued`: short options that take the next
+ * word; `long_valued`: long ones that do when written apart ("--lines 5").
+ * For reads, "-" (stdin) and "+cmd" (less, more) aren't files. */
+static void cmd_operands(G *g, Word *a, int na, const char *valued, const char *const *long_valued, GuessKind kind) {
     bool ddash = false;
     for (int k = 0; k < na; k++) {
         if (is_option(&a[k], ddash)) {
             if (!strcmp(a[k].s, "--")) ddash = true;
             else if (a[k].s[1] != '-' && a[k].s[2] == 0 && strchr(valued, a[k].s[1])) k++;
+            else if (a[k].s[1] == '-' && long_valued)
+                for (int l = 0; long_valued[l]; l++)
+                    if (!strcmp(a[k].s, long_valued[l])) { k++; break; }
             continue;
         }
-        if (!a[k].dyn) emit(g, a[k].s, kind, NULL);
+        if (a[k].dyn || (kind == GUESS_READ && !ddash && (!strcmp(a[k].s, "-") || a[k].s[0] == '+'))) continue;
+        emit(g, a[k].s, kind, NULL);
     }
 }
 
@@ -288,18 +299,42 @@ static void end_cmd(G *g) {
         const char *cmd = base_name(a[k].s, nb, sizeof nb);
         Word *args = a + k + 1;
         int na = n - k - 1;
+        static const char *const head_long[] = {"--lines", "--bytes", "--pid", "--sleep-interval",
+                                                "--max-unchanged-stats", NULL};
+        static const char *const bat_long[] = {"--language", "--line-range", "--highlight-line", "--map-syntax",
+                                               "--theme", "--style", "--tabs", "--wrap", "--terminal-width", NULL};
         if (!strcmp(cmd, "cd")) cmd_cd(g, args, na);
+        else if (!strcmp(cmd, "pushd") && g->npush < 8) {
+            g->push[g->npush].dir = g->dir ? xstrdup(g->dir) : NULL;
+            g->push[g->npush++].lost = g->lost;
+            cmd_cd(g, args, na);
+        } else if (!strcmp(cmd, "popd")) {
+            free(g->dir);
+            if (g->npush) {
+                g->dir = g->push[--g->npush].dir;
+                g->lost = g->push[g->npush].lost;
+            } else { /* back to somewhere from before this command */
+                g->dir = NULL;
+                g->lost = true;
+            }
+        }
         else if (!strcmp(cmd, "sed") || !strcmp(cmd, "gsed")) cmd_inplace(g, args, na, false);
         else if (!strcmp(cmd, "perl")) cmd_inplace(g, args, na, true);
-        else if (!strcmp(cmd, "tee")) cmd_operands(g, args, na, "", GUESS_CHANGE);
-        else if (!strcmp(cmd, "touch")) cmd_operands(g, args, na, "dtr", GUESS_CHANGE);
-        else if (!strcmp(cmd, "truncate")) cmd_operands(g, args, na, "sr", GUESS_CHANGE);
+        else if (!strcmp(cmd, "tee")) cmd_operands(g, args, na, "", NULL, GUESS_CHANGE);
+        else if (!strcmp(cmd, "touch")) cmd_operands(g, args, na, "dtr", NULL, GUESS_CHANGE);
+        else if (!strcmp(cmd, "truncate")) cmd_operands(g, args, na, "sr", NULL, GUESS_CHANGE);
         else if (!strcmp(cmd, "rm")) {
             bool rec = false;
             for (int i = 0; i < na; i++) rec |= cluster_has(args[i].s, "rR") || !strcmp(args[i].s, "--recursive");
-            if (!rec) cmd_operands(g, args, na, "", GUESS_DELETE); /* a tree: which files, unknown */
+            if (!rec) cmd_operands(g, args, na, "", NULL, GUESS_DELETE); /* a tree: which files, unknown */
         } else if (!strcmp(cmd, "mv")) cmd_move(g, args, na, true);
         else if (!strcmp(cmd, "cp")) cmd_move(g, args, na, false);
+        else if (!strcmp(cmd, "cat") || !strcmp(cmd, "more")) cmd_operands(g, args, na, "", NULL, GUESS_READ);
+        else if (!strcmp(cmd, "tac")) cmd_operands(g, args, na, "s", NULL, GUESS_READ);
+        else if (!strcmp(cmd, "less")) cmd_operands(g, args, na, "bhjkopPtTxyz", NULL, GUESS_READ);
+        else if (!strcmp(cmd, "bat") || !strcmp(cmd, "batcat")) cmd_operands(g, args, na, "lrHm", bat_long, GUESS_READ);
+        else if (!strcmp(cmd, "head") || !strcmp(cmd, "tail")) cmd_operands(g, args, na, "ncs", head_long, GUESS_READ);
+        else if (!strcmp(cmd, "nl")) cmd_operands(g, args, na, "bdfhilnsvw", NULL, GUESS_READ);
     }
     for (int i = 0; i < n; i++) free(a[i].s);
     g->n = 0;
@@ -321,14 +356,14 @@ static size_t skip_blank(const char *s, size_t i) {
     return i;
 }
 
-/* A redirect's target word from s[i]; `write`: emit it. */
-static size_t redir_target(G *g, const char *s, size_t i, bool write) {
+/* A redirect's target word from s[i]: emitted as `kind` when `emit_it`. */
+static size_t redir_target(G *g, const char *s, size_t i, bool emit_it, GuessKind kind) {
     i = skip_blank(s, i);
     if (s[i] == '(') return skip_parens(s, i); /* >(cmd) */
     char *w;
     bool dyn;
     i = read_word(s, i, &w, &dyn);
-    if (write && !dyn) emit(g, w, GUESS_CHANGE, NULL);
+    if (emit_it && !dyn) emit(g, w, kind, NULL);
     free(w);
     return i;
 }
@@ -362,7 +397,11 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
         if (c == '#') { while (s[i] && s[i] != '\n') i++; continue; }
         if (c == '&' && s[i + 1] == '>') { /* &> and &>>: stdout and stderr to a file */
             i += 2 + (s[i + 2] == '>');
-            i = redir_target(&g, s, i, true);
+            i = redir_target(&g, s, i, true, GUESS_CHANGE);
+            continue;
+        }
+        if (c == '(' && s[i + 1] == '(') { /* (( arithmetic )): < and > compare */
+            i = skip_parens(s, i);
             continue;
         }
         if (c == '(' || c == ')') { /* a subshell: cd inside it ends with it */
@@ -387,7 +426,7 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
         size_t j = i;
         while (s[j] >= '0' && s[j] <= '9') j++;
         if (s[j] == '<') {
-            if (s[j + 1] == '<' && s[j + 2] == '<') { i = redir_target(&g, s, j + 3, false); continue; } /* here-string */
+            if (s[j + 1] == '<' && s[j + 2] == '<') { i = redir_target(&g, s, j + 3, false, GUESS_READ); continue; } /* here-string */
             if (s[j + 1] == '<') { /* here-document: its body follows the line */
                 size_t k = j + 2;
                 bool tabs = s[k] == '-';
@@ -399,7 +438,9 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
                 else free(d);
                 continue;
             }
-            i = s[j + 1] == '(' ? skip_parens(s, j + 1) : redir_target(&g, s, j + 1 + (s[j + 1] == '&'), false);
+            if (s[j + 1] == '(') i = skip_parens(s, j + 1); /* <(cmd) */
+            else if (s[j + 1] == '&') i = redir_target(&g, s, j + 2, false, GUESS_READ); /* <&3 */
+            else i = redir_target(&g, s, j + 1, true, GUESS_READ);
             continue;
         }
         if (s[j] == '>') {
@@ -408,10 +449,10 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
             if (s[k] == '&') { /* >&2 duplicates a descriptor; >&file is &>file */
                 size_t t = skip_blank(s, k + 1);
                 bool fd = s[t] == '-' || (s[t] >= '0' && s[t] <= '9' && is_delim(s[t + 1]));
-                i = redir_target(&g, s, k + 1, !fd);
+                i = redir_target(&g, s, k + 1, !fd, GUESS_CHANGE);
                 continue;
             }
-            i = redir_target(&g, s, k, true);
+            i = redir_target(&g, s, k, true, GUESS_CHANGE);
             continue;
         }
         char *w;
@@ -422,6 +463,7 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
     end_cmd(&g);
     for (int h = 0; h < g.nhd; h++) free(g.hd[h].delim);
     for (int k = 0; k < g.nsub; k++) free(g.sub[k].dir);
+    for (int k = 0; k < g.npush; k++) free(g.push[k].dir);
     free(g.w);
     free(g.dir);
 }
