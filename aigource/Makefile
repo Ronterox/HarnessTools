@@ -13,6 +13,27 @@ OBJ := $(SRC:src/%.c=build/%.o) build/yyjson.o build/tree-sitter.o
 build/aigource: $(OBJ)
 	$(CC) $(CFLAGS) -o $@ $(OBJ) $(LDLIBS)
 
+# AddressSanitizer + UBSan build, from its own objects: build/asan/aigource.
+ASAN_CFLAGS := -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -Wall -Wextra -std=c11
+ASAN_OBJ := $(OBJ:build/%=build/asan/%)
+
+asan: build/asan/aigource
+
+build/asan/aigource: $(ASAN_OBJ)
+	$(CC) $(ASAN_CFLAGS) -o $@ $(ASAN_OBJ) $(LDLIBS)
+
+build/asan/%.o: src/%.c src/*.h $(STAMP) | build/asan
+	$(CC) $(ASAN_CFLAGS) $(CPPFLAGS) -c -o $@ $<
+
+build/asan/yyjson.o: $(STAMP) | build/asan
+	$(CC) $(ASAN_CFLAGS) -w -c -o $@ $(YYJSON)/yyjson.c
+
+build/asan/tree-sitter.o: $(STAMP) | build/asan
+	$(CC) $(ASAN_CFLAGS) -w -D_GNU_SOURCE -I$(TS)/src -I$(TS)/include -c -o $@ $(TS)/src/lib.c
+
+build/asan:
+	mkdir -p build/asan
+
 release: build/aigource
 	strip build/aigource
 
@@ -40,4 +61,4 @@ test-watch: build/aigource
 clean:
 	rm -rf build
 
-.PHONY: test test-watch clean release
+.PHONY: test test-watch clean release asan

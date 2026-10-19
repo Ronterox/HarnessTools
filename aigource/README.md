@@ -141,6 +141,10 @@ unit-tests the timeline's time mapping (`tests/test_timeline.c`) and syntax
 highlighting against the installed grammars (`tests/test_syntax.c`, skipped
 for a language with none).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
+`make asan` builds `build/asan/aigource` with AddressSanitizer and UBSan (its
+own objects, the normal build is untouched); run it with the same flags, e.g.
+`--shot` on a hand-made transcript. Exit-time leak reports from ingest/model
+are long-lived allocations the app never frees, not errors.
 
 ## Roadmap
 
