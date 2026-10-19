@@ -50,6 +50,7 @@ enum {
     VIA_TRANSCRIPT, /* recorded by Claude Code */
     VIA_GUESS,      /* guessed from a failed command's text (nothing was recorded) */
     VIA_WATCH,      /* seen by the filesystem watcher */
+    VIA_CMD,        /* a read by a command (cat, sed -n, ...), from its text */
 };
 
 const char *ev_kind_name(EvKind k);

@@ -8,6 +8,8 @@
 #include <unistd.h>
 
 #define DIR_GAP 40.0f       /* free space between a dir and its child dirs */
+#define CONE_MAX 2.6f       /* widest cone a dir's subtree gets (radians, under a half turn) */
+#define TAU 6.2831853f
 #define FADE_IN 0.4f
 #define FADE_OUT 1.5f
 #define FLASH_DECAY 0.8f    /* per second */
@@ -19,7 +21,6 @@
 #define PRIOR_FILES 5
 #define PRIOR_LINES 200.0
 #define SIZE_CAP 4000
-#define MAX_SPEED 1500.0f   /* world units/s: keeps the explicit integrator stable */
 
 static const Color ACTOR_COLORS[] = {
     {255, 184, 108, 255}, {139, 233, 253, 255}, {255, 121, 198, 255}, {189, 147, 249, 255},
@@ -117,7 +118,12 @@ static int ensure_dir(Scene *m, const char *path) {
     int parent = ensure_dir(m, parent_path);
     free(parent_path);
     i = add_node(m, path, parent, true);
-    m->nodes[parent].ndirs++;
+    Node *p = &m->nodes[parent];
+    if (p->ndirs == p->capdirs) {
+        p->capdirs = p->capdirs ? p->capdirs * 2 : 4;
+        p->dirs = xrealloc(p->dirs, p->capdirs * sizeof *p->dirs);
+    }
+    p->dirs[p->ndirs++] = i;
     return i;
 }
 
@@ -273,6 +279,7 @@ void model_free(Scene *m) {
         free(m->nodes[i].name);
         free(m->nodes[i].path);
         free(m->nodes[i].kids);
+        free(m->nodes[i].dirs);
     }
     for (int i = 0; i < m->nactors; i++) {
         free(m->actors[i].id);
@@ -285,6 +292,12 @@ void model_free(Scene *m) {
     strmap_free(&m->index);
     free(m->root);
     free(m);
+}
+
+bool dir_merged(const Scene *m, const Node *n) {
+    if (!dir_passes(n)) return false;
+    const Node *c = &m->nodes[n->dirs[0]];
+    return fabsf(c->pos.x - n->pos.x) + fabsf(c->pos.y - n->pos.y) < 1;
 }
 
 int model_find(const Scene *m, bool is_dir, const char *path) {
@@ -300,6 +313,7 @@ void model_adopt_layout(Scene *m, const Scene *old) {
         n->pos = o->pos;
         n->radius = o->radius;
         n->size = o->size;
+        n->placed = true;
         n->disp_lines = o->disp_lines;
         n->alpha = n->deleted ? 0 : 1;
     }
@@ -419,6 +433,59 @@ static Vector2 slot_offset(int i, float spacing, float inner) {
     return (Vector2){cosf(a) * r, sinf(a) * r};
 }
 
+/* Dirs are laid out in nested cones, so no edge crosses another. Each child
+ * dir owns a cone from its parent's center, a share of the parent's own cone
+ * by subtree weight, and sits on its axis far enough out for its files to fit
+ * inside it. Its children split a cone from where it sits, which stays inside
+ * its own as far as its subtree reaches (ext): the same angle always would (a
+ * cone moved forward along its axis does), and a wider one does when the
+ * subtree is small next to its distance, which keeps big trees from spreading
+ * level after level. The root's children share the whole circle; no cone is
+ * wider than CONE_MAX, so each opens away from the edge it hangs from. */
+static float balloon_measure(Scene *m, int i) {
+    Node *d = &m->nodes[i];
+    float w = 0;
+    d->ext = d->radius;
+    for (int k = 0; k < d->ndirs; k++) {
+        Node *c = &m->nodes[d->dirs[k]];
+        w += balloon_measure(m, d->dirs[k]);
+        d->ext = fmaxf(d->ext, hypotf(c->pos.x - d->pos.x, c->pos.y - d->pos.y) + c->ext);
+    }
+    return d->weight = fmaxf(1, w) + 0.3f + d->radius / 60; /* its subdirs, then its own files */
+}
+
+static void balloon_place(Scene *m, int i, float facing, float cone, float ease) {
+    Node *d = &m->nodes[i];
+    if (dir_passes(d)) { /* merged into its only subdir, which sits right here (sliding in) */
+        Node *c = &m->nodes[d->dirs[0]];
+        float e = c->placed ? ease : 1;
+        c->placed = true;
+        c->pos.x += (d->pos.x - c->pos.x) * e;
+        c->pos.y += (d->pos.y - c->pos.y) * e;
+        balloon_place(m, d->dirs[0], facing, cone, ease);
+        return;
+    }
+    float total = 0;
+    for (int k = 0; k < d->ndirs; k++) total += m->nodes[d->dirs[k]].weight;
+    float a = facing - cone / 2;
+    for (int k = 0; k < d->ndirs; k++) {
+        Node *c = &m->nodes[d->dirs[k]], *end = c; /* a merged chain is as big as its last dir */
+        while (dir_passes(end)) end = &m->nodes[end->dirs[0]];
+        float share = cone * c->weight / total, w = fminf(share, CONE_MAX), th = a + share / 2;
+        float dist = fmaxf(d->radius + DIR_GAP + end->radius, (end->radius + DIR_GAP / 4) / sinf(w / 2));
+        Vector2 t = {d->pos.x + cosf(th) * dist, d->pos.y + sinf(th) * dist};
+        float e = c->placed ? ease : 1; /* a new dir starts in its place, not sweeping across others */
+        c->placed = true;
+        c->pos.x += (t.x - c->pos.x) * e;
+        c->pos.y += (t.y - c->pos.y) * e;
+        /* Within the subtree's reach x <= ext, a cone of half-angle b from here
+         * stays in this one while x tan b <= (dist + x) tan(w/2). */
+        float b = atanf(tanf(w / 2) * (1 + dist / fmaxf(c->ext, 1)));
+        balloon_place(m, d->dirs[k], th, 2 * fminf(b, CONE_MAX / 2), ease);
+        a += share;
+    }
+}
+
 void model_update(Scene *m, float dt, double now) {
     (void)now;
     float real_dt = dt; /* labels keep real time even on slow frames */
@@ -474,43 +541,9 @@ void model_update(Scene *m, float dt, double now) {
         }
     }
 
-    /* Dirs: overlap repulsion between all dirs, spring to parent. O(dirs^2). */
-    for (int i = 1; i < m->nnodes; i++) {
-        Node *a = &N[i];
-        if (!a->is_dir) continue;
-        Vector2 f = {0, 0};
-        Node *p = &N[a->parent];
-        float dx = a->pos.x - p->pos.x, dy = a->pos.y - p->pos.y;
-        float dist = sqrtf(dx * dx + dy * dy) + 1e-3f;
-        float rest = p->radius + a->radius + DIR_GAP;
-        float k = (dist - rest) * 4.0f;
-        f.x -= dx / dist * k;
-        f.y -= dy / dist * k;
-        for (int j = 0; j < m->nnodes; j++) {
-            Node *b = &N[j];
-            if (j == i || !b->is_dir) continue;
-            float ex = a->pos.x - b->pos.x, ey = a->pos.y - b->pos.y;
-            float d2 = ex * ex + ey * ey;
-            float min = a->radius + b->radius + DIR_GAP * 0.75f;
-            if (d2 < 1e-4f) { ex = frand() - 0.5f; ey = frand() - 0.5f; d2 = 0.01f; }
-            float d = sqrtf(d2);
-            float push = d < min ? (min - d) * 12.0f : 0;
-            /* spread siblings; distance floored so near-coincident spawns don't explode */
-            push += 4000.0f / fmaxf(d2, 400.0f) * (b->parent == a->parent ? 3.0f : 1.0f);
-            f.x += ex / d * push;
-            f.y += ey / d * push;
-        }
-        a->vel.x = (a->vel.x + f.x * dt) * powf(0.05f, dt);
-        a->vel.y = (a->vel.y + f.y * dt) * powf(0.05f, dt);
-        float sp = sqrtf(a->vel.x * a->vel.x + a->vel.y * a->vel.y);
-        if (sp > MAX_SPEED) { a->vel.x *= MAX_SPEED / sp; a->vel.y *= MAX_SPEED / sp; }
-    }
-    for (int i = 1; i < m->nnodes; i++) {
-        Node *a = &N[i];
-        if (!a->is_dir) continue;
-        a->pos.x += a->vel.x * dt;
-        a->pos.y += a->vel.y * dt;
-    }
+    /* Dirs: a balloon tree from the root, which stays put. */
+    balloon_measure(m, 0);
+    balloon_place(m, 0, -TAU / 4, TAU, fminf(1, dt * 4));
 
     /* Actors: spring toward the side of their target node. */
     for (int i = 0; i < m->nactors; i++) {

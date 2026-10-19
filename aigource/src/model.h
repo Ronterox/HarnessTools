@@ -16,7 +16,7 @@ typedef struct {
     bool is_dir;
     bool deleted; /* fading out */
     bool attached; /* files: listed in the parent's layout slots */
-    Vector2 pos, vel;
+    Vector2 pos;
     float radius;     /* files: drawn size; dirs: extent of their files */
     float size;       /* dirs: drawn size, the average of their children's */
     float kids_sum;   /* dirs: scratch for that average */
@@ -35,7 +35,10 @@ typedef struct {
     int last_actor, last_add, last_del;
     int add, del;     /* session totals */
     int *kids, nkids, capkids; /* dirs: child files (layout slots) */
-    int ndirs;        /* dirs: child dir count */
+    int *dirs, ndirs, capdirs; /* dirs: child dirs, in the order they appeared */
+    float weight;     /* dirs, layout scratch: how much angle its subtree wants */
+    float ext;        /* dirs, layout scratch: how far its subtree reaches from it */
+    bool placed;      /* dirs: has a place in the layout (a new one starts there) */
 } Node;
 
 typedef struct {
@@ -89,6 +92,13 @@ typedef struct {
     int nsized;
     int files_created, files_edited, files_deleted, reads, searches, commands;
 } Scene;
+
+/* A dir with no files of its own and a single subdir: merged into it, so a
+ * chain a -> b -> c shows as one node "a/b/c". The subdir sits (or slides to)
+ * where it is. */
+static inline bool dir_passes(const Node *n) { return n->is_dir && !n->nkids && n->ndirs == 1; }
+/* ...and once there, only the subdir is drawn. */
+bool dir_merged(const Scene *m, const Node *n);
 
 Scene *model_new(const char *root);
 void model_free(Scene *m);

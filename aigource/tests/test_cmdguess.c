@@ -1,4 +1,4 @@
-/* cmd_guess: which files a shell command writes or removes. */
+/* cmd_guess: which files a shell command writes, removes (-) or reads (@). */
 #include <stdio.h>
 #include <string.h>
 
@@ -9,7 +9,7 @@ static char got[2048];
 static void on(void *ud, const char *dir, const char *path, GuessKind kind, const char *into) {
     (void)ud;
     char one[512];
-    snprintf(one, sizeof one, "%s%s%s%s%s%s", *got ? " | " : "", kind == GUESS_DELETE ? "-" : "", dir ? dir : "",
+    snprintf(one, sizeof one, "%s%s%s%s%s%s", *got ? " | " : "", kind == GUESS_DELETE ? "-" : kind == GUESS_READ ? "@" : "", dir ? dir : "",
              dir ? ":" : "", path, into ? "" : "");
     if (into) snprintf(one + strlen(one), sizeof one - strlen(one), "<%s", into);
     strncat(got, one, sizeof got - strlen(got) - 1);
@@ -18,7 +18,7 @@ static void on(void *ud, const char *dir, const char *path, GuessKind kind, cons
 int main(void) {
     static const char *cases[][2] = {
         {"sed -i 's/a/b/' f.c", "f.c"},
-        {"sed -n 's/a/b/p' f.c", ""},
+        {"sed -n 's/a/b/p' f.c", "@f.c"},
         {"sed -i.bak -e 's/a/b/' -e 's/c/d/' a.c b.c && false", "a.c | b.c"},
         {"sed -Ei '1,2d' src/x.c", "src/x.c"},
         {"sed -i '' -e 's/x/y/' mac.c", "mac.c"},
@@ -26,7 +26,19 @@ int main(void) {
         {"cd sub; cd deeper; echo hi > out.txt", "sub/deeper:out.txt"},
         {"cd $X && touch a", ""},
         {"cd $X && touch /abs/a", "/abs/a"},
-        {"echo x > a.txt 2>/dev/null; cat b >> c.txt 2>&1 >&2", "a.txt | c.txt"},
+        {"echo x > a.txt 2>/dev/null; cat b >> c.txt 2>&1 >&2", "a.txt | c.txt | @b"},
+        /* Reads. */
+        {"cat -n src/a.c | head -40; sed -n '120,200p' src/b.c", "@src/a.c | @src/b.c"},
+        {"cd aigource && head -n 20 README.md && tail -5 Makefile && nl -ba x.h", "@aigource:README.md | @aigource:Makefile | @aigource:x.h"},
+        {"sed -e 's/a/b/' -n in.c > out.c", "out.c | @in.c"},
+        {"while read l; do echo $l; done < list.txt; grep x <<< \"$v\"; wc -l <&3", "@list.txt"},
+        {"cat <<EOF\nnot read\nEOF\ncat $F *.c", ""},
+        {"perl -ne 'print' q.pl; less -R log.txt", "@log.txt"},
+        {"head --lines 5 f1; tail --pid 123 -f f2; bat -l rust -r 1:2 f3; less -p pat +G f4; more +10 f5", "@f1 | @f2 | @f3 | @f4 | @f5"},
+        {"cat - f6; sed p -; tac -s x f7; less -o log.txt f8", "@f6 | @f7 | @f8"},
+        {"(( i < n )) && for ((i=0;i<10;i++)); do cat a; done; (( $# < 2 )) || true", "@a"},
+        {"(( x > 5 )) && false", ""},
+        {"pushd sub && cat Makefile; popd; cat top.txt; popd; cat lost.txt", "@sub:Makefile | @top.txt"},
         {"make 2> err.log &> all.log", "err.log | all.log"},
         {"cat <<'EOF' > gen.h\necho no > nope\nsed -i x y\nEOF\nrm old.h", "gen.h | -old.h"},
         {"python3 - <<EOF\nopen('a','w')\nEOF", ""},

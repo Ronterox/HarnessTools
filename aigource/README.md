@@ -18,7 +18,7 @@ Sessions launched in a subdirectory of the repo are included.
 | | |
 |---|---|
 | file | size = length in lines; color = what last happened to it (edit, create, delete, changed by a command; dim blue = only read), brighter the more often it changed |
-| folder | the average size of what's in it (files and folders), its files around it |
+| folder | the average size of what's in it (files and folders), its files around it; folders fan out from the repo root, each subtree in a slice of its own, so once settled no two folder lines cross; a chain of folders with no files of their own shows as one node (`examples/java/src`) until a file lands in the middle |
 | beam actor → file | the action, colored: read, search, create, edit, delete, changed by a command; thickness = diff size |
 | rings | diff pulse: green = lines added, red = lines removed; shape = how big next to the file (below) |
 | name | each file touched shows its name and last change (+added −removed) for 4 seconds, at any replay speed (after a seek, the files touched just before) |
@@ -133,7 +133,10 @@ Keys: `Esc` close the top window (step, then turn; quits when none is open), `sp
 Claude Code's transcripts in `~/.claude/projects/<repo-slug>/` (or
 `$CLAUDE_CONFIG_DIR`): `Read`/`Grep`/`Glob`/`Edit`/`Write` calls with their
 results, and `bashEditDiff`, where Claude Code records the files a Bash command
-created, changed or deleted, generated files included. The transcript format
+created, changed or deleted, generated files included. Files a command read (`cat`,
+`head`, `tail`, `sed` without `-i`, `nl`, `less`, `<` redirects, following
+`cd`) count as reads, marked "by the command" in the turn window, when the
+command succeeded and the file is still there. The transcript format
 is internal to Claude Code; every assumption about it lives in
 `src/transcript.c`.
 
@@ -151,7 +154,8 @@ only: nothing records past filesystem changes, so replays don't have them.
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
 unit-tests the timeline's time mapping (`tests/test_timeline.c`), change ring
-sizing (`tests/test_rings.c`) and syntax
+sizing (`tests/test_rings.c`), the folder layout (`tests/test_layout.c`: no
+crossing lines on random trees) and syntax
 highlighting against the installed grammars (`tests/test_syntax.c`, skipped
 for a language with none).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.

@@ -361,12 +361,13 @@ static void bash_files(Transcript *t, yyjson_val *diff, double ts) {
     strmap_free(&seen);
 }
 
-/* ---- failed commands ---------------------------------------------------- */
+/* ---- files from a command's text ---------------------------------------- */
 
 typedef struct {
     Transcript *t;
     const char *cwd;
     double ts;
+    bool reads; /* the files it read (a command that ran fine), else wrote */
     StrMap seen; /* repo path -> index in rel/kind: the last action on a file wins */
     char **rel;
     GuessKind *kind;
@@ -379,10 +380,12 @@ static char *cat3(const char *a, const char *b, const char *c) {
     return s;
 }
 
-/* A file a failed command probably wrote or removed: resolved like the shell
- * would from the session's cwd and the command's own cds; kept when in the repo. */
+/* A file a command read, or a failed one probably wrote or removed: resolved
+ * like the shell would from the session's cwd and the command's own cds; kept
+ * when in the repo. */
 static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind, const char *into) {
     GuessCtx *g = ud;
+    if ((kind == GUESS_READ) != g->reads) return;
     Transcript *t = g->t;
     const char *home = getenv("HOME");
     const char *cwd = g->cwd ? g->cwd : t->root;
@@ -403,7 +406,11 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
         abs = in_dir;
         is_dir = !stat(abs, &st) && S_ISDIR(st.st_mode);
     }
-    char *rel = is_dir ? NULL : rel_path(t, abs); /* a directory: a tree, not a file */
+    /* A read counts only for a file that's there: `cat f 2>/dev/null` probes for
+     * one that may not be. "There" is now, not then: no beam for a file deleted
+     * since, and a probe before a file was created reads it early. */
+    bool gone = g->reads && (stat(abs, &st) || !S_ISREG(st.st_mode));
+    char *rel = is_dir || gone ? NULL : rel_path(t, abs); /* a directory: a tree, not a file */
     free(abs);
     if (!rel || !*rel) { free(rel); return; }
     int k = strmap_get(&g->seen, rel);
@@ -424,10 +431,10 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
 
 static void emit_guesses(GuessCtx *g) {
     Transcript *t = g->t;
-    t->ev_via = VIA_GUESS;
+    t->ev_via = g->reads ? VIA_CMD : VIA_GUESS;
     for (int i = 0; i < g->n; i++)
-        emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : EV_TOUCH, g->ts, g->rel[i], NULL, 0, 0,
-             g->kind[i] == GUESS_DELETE ? 0 : -1);
+        emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : g->kind[i] == GUESS_READ ? EV_READ : EV_TOUCH, g->ts,
+             g->rel[i], NULL, 0, 0, g->kind[i] == GUESS_DELETE ? 0 : -1);
     t->ev_via = 0;
     free(g->rel);
     free(g->kind);
@@ -481,6 +488,11 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     t->ev_notes = p.notes;
 
     if (!strcmp(name, "Bash")) {
+        if (!err && p.cmd) { /* what it read (cat, sed -n, ...), before what it changed */
+            GuessCtx g = {.t = t, .cwd = p.cwd, .ts = ts, .reads = true};
+            cmd_guess(p.cmd, on_guess, &g);
+            emit_guesses(&g);
+        }
         /* A failing command may still have changed files: no error check. */
         yyjson_val *diff = yyjson_obj_get(res, "bashEditDiff");
         if (yyjson_is_obj(diff)) bash_files(t, diff, ts);

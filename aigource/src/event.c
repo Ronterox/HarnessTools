@@ -35,7 +35,7 @@ void ev_print_json(FILE *f, const Event *e) {
     if (e->lines >= 0) fprintf(f, ",\"lines\":%d", e->lines);
     fprintf(f, ",\"turn\":%d", e->turn);
     if (e->text) { fputs(",\"text\":", f); json_str(f, e->text); }
-    if (e->via) fprintf(f, ",\"via\":\"%s\"", e->via == VIA_GUESS ? "guess" : "watch");
+    if (e->via) fprintf(f, ",\"via\":\"%s\"", e->via == VIA_GUESS ? "guess" : e->via == VIA_CMD ? "cmd" : "watch");
     fputs("}\n", f);
 }
 

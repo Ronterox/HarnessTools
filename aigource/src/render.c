@@ -13,6 +13,7 @@
 #include "syntax.h"
 #include "transcript.h"
 #include "raylib.h"
+#include "rlgl.h"
 #include "timeline.h"
 #include "util.h"
 
@@ -118,12 +119,72 @@ static void load_mono(void) {
     if (!load_mono_face(&g_mono_bold, bold)) g_mono_bold = g_mono;
 }
 
+/* raylib's DrawTextEx and MeasureTextEx, but finding ASCII glyphs directly
+ * (raylib scans the font's ~1000 glyphs for every character) and drawing a
+ * string as one batch of quads: the same vertices, a fraction of the CPU.
+ * Text with a newline goes to raylib, whose line spacing is its own. */
+static int glyph_ix(Font f, int cp) {
+    if (cp >= 32 && cp <= 126 && f.glyphCount > cp - 32 && f.glyphs[cp - 32].value == cp) return cp - 32;
+    return GetGlyphIndex(f, cp);
+}
+
+static void draw_text(Font f, const char *s, Vector2 pos, float size, float spacing, Color tint) {
+    if (strchr(s, '\n') || !f.texture.id) {
+        DrawTextEx(f, s, pos, size, spacing, tint);
+        return;
+    }
+    float scale = size / (float)f.baseSize, x = 0, pad = (float)f.glyphPadding;
+    float tw = (float)f.texture.width, th = (float)f.texture.height;
+    bool open = false;
+    for (int i = 0; s[i];) {
+        int n = 0, cp = GetCodepointNext(s + i, &n), ix = glyph_ix(f, cp);
+        i += n;
+        Rectangle r = f.recs[ix];
+        if (cp != ' ' && cp != '\t') {
+            Rectangle d = {pos.x + x + ((float)f.glyphs[ix].offsetX - pad) * scale,
+                           pos.y + ((float)f.glyphs[ix].offsetY - pad) * scale, (r.width + 2 * pad) * scale,
+                           (r.height + 2 * pad) * scale};
+            float u0 = (r.x - pad) / tw, v0 = (r.y - pad) / th;
+            float u1 = (r.x + r.width + pad) / tw, v1 = (r.y + r.height + pad) / th;
+            if (!open) {
+                rlSetTexture(f.texture.id);
+                rlBegin(RL_QUADS);
+                open = true;
+            }
+            rlColor4ub(tint.r, tint.g, tint.b, tint.a);
+            rlNormal3f(0, 0, 1);
+            rlTexCoord2f(u0, v0); rlVertex2f(d.x, d.y);
+            rlTexCoord2f(u0, v1); rlVertex2f(d.x, d.y + d.height);
+            rlTexCoord2f(u1, v1); rlVertex2f(d.x + d.width, d.y + d.height);
+            rlTexCoord2f(u1, v0); rlVertex2f(d.x + d.width, d.y);
+        }
+        x += (f.glyphs[ix].advanceX ? (float)f.glyphs[ix].advanceX : r.width) * scale + spacing;
+    }
+    if (open) {
+        rlEnd();
+        rlSetTexture(0);
+    }
+}
+
+static float measure_text(Font f, const char *s, float size, float spacing) {
+    if (!*s) return 0;
+    if (strchr(s, '\n') || !f.texture.id) return MeasureTextEx(f, s, size, spacing).x;
+    float w = 0;
+    int count = 0;
+    for (int i = 0; s[i]; count++) {
+        int n = 0, cp = GetCodepointNext(s + i, &n), ix = glyph_ix(f, cp);
+        i += n;
+        w += f.glyphs[ix].advanceX > 0 ? (float)f.glyphs[ix].advanceX : f.recs[ix].width + (float)f.glyphs[ix].offsetX;
+    }
+    return w * size / (float)f.baseSize + (float)(count - 1) * spacing;
+}
+
 static void text(const char *s, float x, float y, float size, Color c) {
-    DrawTextEx(g_font, s, (Vector2){x, y}, size, size * (g_font_ok ? 0.02f : 0.1f), c);
+    draw_text(g_font, s, (Vector2){x, y}, size, size * (g_font_ok ? 0.02f : 0.1f), c);
 }
 
 static float text_w(const char *s, float size) {
-    return MeasureTextEx(g_font, s, size, size * (g_font_ok ? 0.02f : 0.1f)).x;
+    return measure_text(g_font, s, size, size * (g_font_ok ? 0.02f : 0.1f));
 }
 
 static float dist2d(Vector2 a, Vector2 b) { return hypotf(a.x - b.x, a.y - b.y); }
@@ -698,7 +759,7 @@ static void draw_scene(Viz *v) {
         if (n->alpha <= 0) continue;
         float a = n->alpha * hl_alpha(v, i);
         if (n->is_dir) {
-            DrawCircleV(n->pos, dir_r(n, px), fade(n->color, 0.8f * a));
+            if (!dir_merged(m, n)) DrawCircleV(n->pos, dir_r(n, px), fade(n->color, 0.8f * a));
             continue;
         }
         Color hc = heat_color(n);
@@ -761,6 +822,16 @@ static void file_label(const Node *n, float x, float y, float a) {
     }
 }
 
+/* A dir's label: its name, or at the end of a merged chain (a/b/c, no files
+ * on the way) its path from the chain's top. */
+static const char *dir_name(const Scene *m, const Node *n) {
+    const Node *top = n;
+    while (top->parent >= 0 && dir_merged(m, &m->nodes[top->parent])) top = &m->nodes[top->parent];
+    if (top == n) return n->name;
+    const char *above = top->parent >= 0 ? m->nodes[top->parent].path : "";
+    return n->path + (*above ? strlen(above) + 1 : 0);
+}
+
 static void draw_labels(Viz *v) {
     Scene *m = v->m;
     for (int i = 0; i < m->nnodes; i++) {
@@ -769,8 +840,9 @@ static void draw_labels(Viz *v) {
         Vector2 s = GetWorldToScreen2D(n->pos, v->cam);
         if (s.x < -200 || s.y < -50 || s.x > GetScreenWidth() + 200 || s.y > GetScreenHeight() + 50) continue;
         if (n->is_dir) {
+            if (dir_merged(m, n)) continue; /* its chain's last dir is labeled */
             float r = dir_r(n, 1 / v->cam.zoom) * v->cam.zoom * 0.7f; /* up and right of its circle */
-            text(n->name, s.x + r + 4, s.y - r - 16, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
+            text(dir_name(m, n), s.x + r + 4, s.y - r - 16, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
         } else if (v->turn_open && v->hl[i]) { /* the open turn's files stay labeled */
             file_label(n, s.x + n->radius * v->cam.zoom + 4, s.y - 8, n->alpha);
         } else if (n->label > 0 && !v->turn_open) {
@@ -970,6 +1042,7 @@ static void step_label(char *line, size_t n, const Event *e) {
                  e->path ? e->path : "");
     else snprintf(line, n, "%s  %s%s", kind_verb(e->kind), e->path ? e->path : "",
                   e->via == VIA_GUESS ? "  \xC2\xB7  guessed"
+                  : e->via == VIA_CMD ? "  \xC2\xB7  by the command"
                   : e->via == VIA_WATCH && e->src ? "  \xC2\xB7  seen by --watch" : "");
 }
 
@@ -1497,7 +1570,7 @@ static void draw_det_row(const DetailLine *dl, const unsigned char *st, const st
         if (n && (k == end || st[k] != run || n >= (int)sizeof buf - 5)) {
             buf[n] = 0;
             Color rc = style_color(run & ST_COLOR, c);
-            DrawTextEx(run & ST_BOLD ? g_mono_bold : g_mono, buf, (Vector2){x + (float)cells * cw, y}, DET_FONT, 0, rc);
+            draw_text(run & ST_BOLD ? g_mono_bold : g_mono, buf, (Vector2){x + (float)cells * cw, y}, DET_FONT, 0, rc);
             cells += run_cells;
             n = run_cells = 0;
         }
@@ -1643,10 +1716,10 @@ static void draw_detail(Viz *v, Vector2 mouse) {
         if (det_line_syntax(&v->det_style, row->line)) c = TEXT; /* the row's tint says added/removed */
         if (!cont && dl->no > 0) {
             snprintf(buf, sizeof buf, "%6d", dl->no);
-            DrawTextEx(g_mono, buf, (Vector2){x + 10, ry + 1}, DET_FONT, 0, fade(DIM, 0.7f));
+            draw_text(g_mono, buf, (Vector2){x + 10, ry + 1}, DET_FONT, 0, fade(DIM, 0.7f));
         }
         if (!cont && (dl->kind == DL_ADD || dl->kind == DL_DEL))
-            DrawTextEx(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, mark_c);
+            draw_text(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, mark_c);
         draw_det_row(dl, det_line_style(&v->det_style, d, row->line), row, tx, ry + 1, cw, c);
     }
     EndScissorMode();
@@ -1979,7 +2052,7 @@ static void update_hover(Viz *v, Vector2 mouse) {
     if (v->hover) return;
     for (int i = 0; i < m->nnodes; i++) {
         Node *n = &m->nodes[i];
-        if (n->alpha <= 0) continue;
+        if (n->alpha <= 0 || dir_merged(m, n)) continue;
         Vector2 s = GetWorldToScreen2D(n->pos, v->cam);
         float r = (n->is_dir ? dir_r(n, 1 / v->cam.zoom) : n->radius) * v->cam.zoom + 5;
         float d = dist2d(s, mouse);
