@@ -5,6 +5,7 @@ set -eu
 cd "$(dirname "$0")/.."
 BIN=./build/aigource
 OUT=tests/out
+RAYLIB_INC=vendor/raylib-5.5_linux_amd64/include
 mkdir -p "$OUT"
 fail=0
 cfg=$(mktemp -d)
@@ -39,6 +40,10 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_cmdguess" tests/test_cmdguess.c sr
 # Timeline mapping unit test.
 cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_timeline" tests/test_timeline.c src/timeline.c src/event.c src/util.c -lm -lpthread
 "$OUT/test_timeline" || fail=1
+
+# Change rings: sizing and tiers, label timing.
+cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -o "$OUT/test_rings" tests/test_rings.c src/model.c src/util.c -lm -lpthread
+"$OUT/test_rings" || fail=1
 
 # Syntax highlighting with Neovim's grammars (skipped where none is installed).
 TS=vendor/tree-sitter-0.25.10/lib

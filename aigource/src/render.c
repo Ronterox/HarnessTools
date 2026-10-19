@@ -38,7 +38,6 @@
 #define TYPE_TEXT (Color){148, 226, 213, 255}
 #define BUILTIN_TEXT (Color){245, 194, 231, 255}
 #define IDLE_GAP_REAL 0.4  /* replay: longest real-time pause between events */
-#define LABEL_SECS 6.0     /* file labels show this long after a touch (sim time) */
 #define DIM_SECS 120.0     /* actors dim after this much sim-time idleness */
 #define GONE_SECS 600.0    /* ...and leave the stage after this */
 #define PANEL_MAX 6        /* actors listed in the bottom-left panel */
@@ -434,6 +433,17 @@ static void apply_until(Viz *v, double t, bool effects) {
 }
 
 /* Jump the scene to time t: forward = apply, backward = rebuild keeping layout. */
+/* Labels the files touched just before now, as playing up to it would have
+ * (label time counts in real seconds): after a seek, which applies quietly. */
+static void label_recent(Viz *v) {
+    double rate = v->live ? 1 : v->speed;
+    for (int i = 0; i < v->m->nnodes; i++) {
+        Node *n = &v->m->nodes[i];
+        double age = (v->sim - n->last_touch) / rate;
+        if (!n->is_dir && n->last_touch > 0 && age >= 0 && age < LABEL_SECS) n->label = (float)(LABEL_SECS - age);
+    }
+}
+
 static void seek(Viz *v, double t) {
     double now = now_wall();
     if (v->h.n && t < v->h.ev[0].ts - 1) t = v->h.ev[0].ts - 1;
@@ -453,6 +463,7 @@ static void seek(Viz *v, double t) {
         v->nrows = 0; /* panel rows index the old scene's actors */
     }
     v->sim = t;
+    label_recent(v);
 }
 
 /* A failed-call marker: flag its command's BASH event (in this batch or the
@@ -606,6 +617,57 @@ static void draw_turn_areas(Viz *v, float px) {
     }
 }
 
+/* A dir's drawn radius: its children's average size, never under a few
+ * screen pixels (px = one pixel in world units). */
+static float dir_r(const Node *n, float px) { return fmaxf(n->size, 3.5f * px + 2); }
+
+static float ease_out(float t) { return 1 - (1 - t) * (1 - t) * (1 - t); }
+
+/* A change's pulse around a file of radius r0, t of the way through its life.
+ * Minor: one thin dim ripple. Notable: two rings in full color, one trailing.
+ * Major: a thick shockwave with a white-hot core, rays ahead of it and a glow
+ * that stays a while. Sizes are world units with a floor in screen pixels
+ * (px), so even a minor ring stays visible zoomed out; k scales how far it
+ * grows (the legend's are small). */
+static void draw_pulse(Vector2 p, float r0, RingTier tier, float s, float t, float phase, Color c, float px,
+                       float k, float al) {
+    float u = 1 - t;
+    Color hot = ColorLerp(c, WHITE, 0.6f);
+    switch (tier) {
+    case RING_MINOR: {
+        float r = r0 + k * fmaxf(4 + 12 * s, (5 + 8 * s) * px) * ease_out(t);
+        DrawRing(p, fmaxf(r - 1.5f * px, r0), r, 0, 360, 36, fade(ColorBrightness(c, -0.25f), u * (0.35f + 0.2f * s) * al));
+        break;
+    }
+    case RING_NOTABLE: {
+        float grow = k * fmaxf(22 + 40 * s, (20 + 24 * s) * px);
+        float r1 = r0 + grow * ease_out(t), r2 = r0 + grow * ease_out(fmaxf(0, t - 0.2f) / 0.8f);
+        float w = (3 + 1.5f * s) * px;
+        DrawRing(p, fmaxf(r1 - w, r0), r1, 0, 360, 48, fade(c, u * (0.7f + 0.2f * s) * al));
+        DrawRing(p, fmaxf(r2 - w * 0.6f, r0), r2, 0, 360, 48, fade(c, u * 0.45f * al));
+        break;
+    }
+    case RING_MAJOR: {
+        float grow = k * fmaxf(50 + 90 * s, (45 + 40 * s) * px);
+        float r = r0 + grow * ease_out(fminf(1, t * 1.6f)); /* out fast, then the glow lingers */
+        float w = (7 + 6 * s) * px * (1 - 0.6f * t);
+        float wave = fmaxf(0, 1 - t * 1.4f);
+        DrawCircleV(p, r0 * 2 + (10 + 10 * s) * px, fade(c, u * u * 0.3f * al));
+        DrawCircleV(p, r0 * 1.4f, fade(hot, fmaxf(0, 1 - t * 4) * 0.7f * al)); /* the flash */
+        DrawRing(p, fmaxf(r - w, r0), r, 0, 360, 64, fade(c, wave * al));
+        DrawRing(p, fmaxf(r - w * 0.7f, r0), fmaxf(r - w * 0.3f, r0), 0, 360, 64, fade(hot, wave * 0.8f * al));
+        for (int i = 0; i < 8; i++) {
+            float a = phase + (float)i * 0.7854f;
+            Vector2 d = {cosf(a), sinf(a)};
+            float a0 = r + k * 3 * px, a1 = r + k * (10 + 18 * s) * px + grow * 0.15f;
+            DrawLineEx((Vector2){p.x + d.x * a0, p.y + d.y * a0}, (Vector2){p.x + d.x * a1, p.y + d.y * a1},
+                       (2 + s) * px, fade(hot, wave * 0.85f * al));
+        }
+        break;
+    }
+    }
+}
+
 static void draw_scene(Viz *v) {
     Scene *m = v->m;
     float px = 1.0f / v->cam.zoom; /* one screen pixel in world units */
@@ -626,10 +688,8 @@ static void draw_scene(Viz *v) {
         Fx *f = &m->fx[(m->fx_head + k) % MAX_FX];
         if (f->kind != FX_PULSE || f->age >= f->life) continue;
         Node *n = &N[f->node];
-        float t = f->age / f->life;
-        float r = n->radius + (12 + 90 * f->strength) * t;
-        DrawRing(n->pos, r - (2 + 6 * f->strength) * px * 2, r, 0, 360, 48,
-                 fade(f->color, (1 - t) * (0.35f + 0.65f * f->strength) * hl_alpha(v, f->node)));
+        draw_pulse(n->pos, n->radius, f->tier, f->strength, f->age / f->life, f->phase, f->color, px, 1,
+                   hl_alpha(v, f->node));
     }
     EndBlendMode();
 
@@ -638,7 +698,7 @@ static void draw_scene(Viz *v) {
         if (n->alpha <= 0) continue;
         float a = n->alpha * hl_alpha(v, i);
         if (n->is_dir) {
-            DrawCircleV(n->pos, 3.5f * px + 2, fade(n->color, 0.8f * a));
+            DrawCircleV(n->pos, dir_r(n, px), fade(n->color, 0.8f * a));
             continue;
         }
         Color hc = heat_color(n);
@@ -676,11 +736,28 @@ static void draw_scene(Viz *v) {
     /* Hover highlight. */
     if (v->hover == HOVER_NODE) {
         Node *n = &N[v->hover_i];
-        float r = (n->is_dir ? 3.5f * px + 2 : n->radius) + 4 * px;
+        float r = (n->is_dir ? dir_r(n, px) : n->radius) + 4 * px;
         DrawRing(n->pos, r, r + 2 * px, 0, 360, 48, TEXT);
     } else if (v->hover == HOVER_ACTOR) {
         Actor *a = &m->actors[v->hover_i];
         DrawRing(a->pos, 9 * px + 6, 9 * px + 6 + 2 * px, 0, 360, 48, TEXT);
+    }
+}
+
+/* A file's name, with its last change (+added -removed) while it's fresh. */
+static void file_label(const Node *n, float x, float y, float a) {
+    char num[32];
+    text(n->name, x + 1, y + 1, 15, fade(BG, 0.8f * a)); /* readable over rings and beams */
+    text(n->name, x, y, 15, fade(TEXT, a));
+    if (n->label <= 0 || n->last_kind == EV_READ) return;
+    x += text_w(n->name, 15) + 6;
+    for (int k = 0; k < 2; k++) {
+        int c = k ? n->last_del : n->last_add;
+        if (!c) continue;
+        snprintf(num, sizeof num, k ? "\xE2\x88\x92%d" : "+%d", c);
+        text(num, x + 1, y + 1, 15, fade(BG, 0.8f * a));
+        text(num, x, y, 15, fade(kind_color(k ? EV_DELETE : EV_CREATE), a));
+        x += text_w(num, 15) + 4;
     }
 }
 
@@ -692,15 +769,12 @@ static void draw_labels(Viz *v) {
         Vector2 s = GetWorldToScreen2D(n->pos, v->cam);
         if (s.x < -200 || s.y < -50 || s.x > GetScreenWidth() + 200 || s.y > GetScreenHeight() + 50) continue;
         if (n->is_dir) {
-            text(n->name, s.x + 6, s.y - 18, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
+            float r = dir_r(n, 1 / v->cam.zoom) * v->cam.zoom * 0.7f; /* up and right of its circle */
+            text(n->name, s.x + r + 4, s.y - r - 16, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
         } else if (v->turn_open && v->hl[i]) { /* the open turn's files stay labeled */
-            text(n->name, s.x + n->radius * v->cam.zoom + 4, s.y - 8, 15, fade(TEXT, n->alpha));
-        } else {
-            double age = v->sim - n->last_touch;
-            if (age < LABEL_SECS && age >= 0 && !v->turn_open) {
-                float a = (float)(1 - age / LABEL_SECS);
-                text(n->name, s.x + n->radius * v->cam.zoom + 4, s.y - 8, 15, fade(TEXT, a * n->alpha));
-            }
+            file_label(n, s.x + n->radius * v->cam.zoom + 4, s.y - 8, n->alpha);
+        } else if (n->label > 0 && !v->turn_open) {
+            file_label(n, s.x + n->radius * v->cam.zoom + 4, s.y - 8, fminf(1, n->label / LABEL_FADE) * n->alpha);
         }
     }
     for (int i = 0; i < m->nactors; i++) {
@@ -752,7 +826,7 @@ static void draw_counters(Viz *v) {
 static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 8, 5, c); }
 
 #define LEGEND_Y 84
-#define LEGEND_H (22 + 6 * 20 + 26 + 2 * 20 + 26 + 20 + 20 + 26 + 5 * 17 + 10)
+#define LEGEND_H (22 + 6 * 20 + 26 + 2 * 20 + 20 + 40 + 20 + 20 + 26 + 5 * 17 + 10)
 
 /* Shown, and room for it above the panel. The turn window replaces it. */
 static bool legend_shown(Viz *v) {
@@ -781,14 +855,31 @@ static void draw_legend(Viz *v) {
         text(names[i], cx + 20, cy, 15, TEXT);
     }
     cy += 6;
-    text("RINGS  (size = lines)", cx, cy, 13, DIM);
+    text("RINGS  (size next to the file)", cx, cy, 13, DIM);
     cy += 20;
     DrawRing((Vector2){cx + 6, cy + 8}, 3, 6, 0, 360, 24, kind_color(EV_CREATE));
     text("lines added", cx + 20, cy, 15, TEXT);
     cy += 20;
     DrawRing((Vector2){cx + 6, cy + 8}, 3, 6, 0, 360, 24, kind_color(EV_DELETE));
     text("lines removed", cx + 20, cy, 15, TEXT);
-    cy += 26;
+    cy += 20;
+    /* The three tiers, frozen early in their pulse, scaled to fit a row (the
+     * minor one brighter than it is, to be seen at all). */
+    static const char *tiers[] = {"minor", "notable", "major"};
+    static const float at_t[] = {0.25f, 0.45f, 0.3f}, scale[] = {1, 0.35f, 0.25f}, boost[] = {2.2f, 1, 1};
+    static const float reach[] = {7, 11, 17}; /* icon radius, rays included */
+    float tx = cx, ix[3];
+    for (int i = 0; i < 3; i++) {
+        ix[i] = tx + reach[i];
+        tx += 2 * reach[i] + 4 + text_w(tiers[i], 14) + 8;
+    }
+    BeginBlendMode(BLEND_ADDITIVE);
+    for (int i = 0; i < 3; i++)
+        draw_pulse((Vector2){ix[i], cy + 18}, 2, (RingTier)i, 0, at_t[i], 0.4f, kind_color(EV_CREATE), 1, scale[i],
+                   boost[i]);
+    EndBlendMode();
+    for (int i = 0; i < 3; i++) text(tiers[i], ix[i] + reach[i] + 4, cy + 10, 14, TEXT);
+    cy += 40;
     text("FILES  (color = last action)", cx, cy, 13, DIM);
     cy += 20;
     /* Brightness scale: an edited file at 1, 5 and 20 changes. */
@@ -1890,7 +1981,7 @@ static void update_hover(Viz *v, Vector2 mouse) {
         Node *n = &m->nodes[i];
         if (n->alpha <= 0) continue;
         Vector2 s = GetWorldToScreen2D(n->pos, v->cam);
-        float r = (n->is_dir ? 4 : n->radius * v->cam.zoom) + 5;
+        float r = (n->is_dir ? dir_r(n, 1 / v->cam.zoom) : n->radius) * v->cam.zoom + 5;
         float d = dist2d(s, mouse);
         if (d < r && d / r < best) { best = d / r; v->hover = HOVER_NODE; v->hover_i = i; }
     }
@@ -2144,6 +2235,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         seek(&v, tl_from_v(&v.h, o->seek * tl_length(&v.h, end), end));
         v.paused = true;
         for (int i = 0; i < 240; i++) model_update(v.m, 1.0f / 60, v.sim);
+        label_recent(&v); /* settling took their time */
     }
 
     int frame = 0;
