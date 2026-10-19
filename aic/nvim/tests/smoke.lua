@@ -1472,6 +1472,12 @@ do
   ok(wait(3000, function()
     return line_with('◆ This worker message') ~= nil
   end), 'long text event rendered')
+  -- turns start collapsed (config history_turns = 'closed'); <CR> on the header opens one, remembered
+  local t9 = line_with('▸ Turn 9')
+  ok(t9 and vim.fn.foldclosed(t9) == t9, 'a new turn arrives collapsed')
+  vim.api.nvim_win_set_cursor(tw, { t9, 0 })
+  trace.enter()
+  ok(vim.fn.foldclosed(t9) == -1, '<CR> on a turn header opens it')
   local width = vim.api.nvim_win_get_width(tw)
   local hl, head = line_with('◆ This worker message')
   ok(head:sub(-3) == '…' and vim.fn.strdisplaywidth(head) < width, 'a long head line is cut to the window with …: ' .. head)
@@ -1555,6 +1561,7 @@ do
   ok(wait(3000, function()
     return line_with('Bash: ls') ~= nil
   end), 'backend-cut tool titles rendered')
+  ok(vim.fn.foldclosed((line_with('▸ Turn 9'))) == -1, 'an opened turn stays open when events arrive')
   local cl = line_with('cat Mak…')
   ok(vim.fn.foldclosed(cl) == cl, 'a title cut by the backend has details')
   vim.api.nvim_win_set_cursor(tw, { cl, 0 })

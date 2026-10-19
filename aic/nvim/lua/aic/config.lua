@@ -13,6 +13,9 @@ M.defaults = {
   keymaps = true,
   -- usage winbar on the aic views (history, questions, docs)
   winbar = true,
+  -- history view: turns start 'closed' (headers only) or 'open'; <CR> on a
+  -- turn's header opens/closes it, and that is remembered
+  history_turns = 'closed',
   -- new docs compile when saved: 'ask' (asked on :AicDocNew), true or false
   new_doc_compile = 'ask',
   -- debounce for file-watch refreshes (ms)
