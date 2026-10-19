@@ -1,0 +1,239 @@
+#!/usr/bin/env -S python3 -S
+"""undograft: a Claude Code hook that puts the AI's file edits into Neovim's
+undo tree, one undo step per Write/Edit/MultiEdit.
+
+PreToolUse   every running Neovim that has the file loaded guards that buffer
+             (no 'autoread' reload in between); if none has it loaded and the
+             file has an undofile, the file is snapshotted.
+PostToolUse  those Neovims apply the change as diff hunks (an undo step); or,
+             with a snapshot, a headless Neovim adds the change to the file's
+             undofile, so the history is still there the next time it's opened.
+
+Neovims are found by their default server sockets ($XDG_RUNTIME_DIR/nvim.PID.0)
+and driven with `nvim --server S --remote-expr`. The Lua side is
+../nvim/lua/undograft.lua. Never blocks or fails the tool call: every error is
+swallowed, and a busy Neovim is given up on after a second (its guard, if any,
+syncs on its own when it notices the change).
+"""
+import glob
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+LUA = os.path.join(ROOT, "nvim", "lua", "undograft.lua")
+TOOLS = ("Write", "Edit", "MultiEdit")
+RUNTIME = os.environ.get("XDG_RUNTIME_DIR")  # private to the user; unset: do nothing
+STATE = os.path.join(RUNTIME or "", "undograft")
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "undograft.json")
+NVIM = os.environ.get("UNDOGRAFT_NVIM", "nvim")
+RPC_TIMEOUT = 1.0
+MAX_SNAPSHOT = 32 << 20
+
+
+def servers():
+    """Sockets of the running Neovims (not ours: the headless one listens elsewhere)."""
+    out = []
+    for sock in glob.glob(os.path.join(RUNTIME, "nvim.*.0")):
+        try:
+            os.kill(int(os.path.basename(sock).split(".")[1]), 0)
+        except (ValueError, ProcessLookupError):
+            continue  # left behind by a crash
+        except PermissionError:
+            pass
+        out.append(sock)
+    return out
+
+
+def vimstr(s):
+    return "'" + s.replace("'", "''") + "'"
+
+
+# Loads the module once per Neovim, and again when the file changed.
+LOADER = ("luaeval(\"(function(a) local m = package.loaded.undograft if not m or m.version ~= a[3] then "
+          "m = dofile(a[1]) m.version = a[3] end return m[a[4]](a[2], a[5]) end)(_A)\", [%s, %s, %s, %s, %s])")
+
+
+def call_all(func, path, tool_use_id):
+    """`func(path)` of the Lua module in every running Neovim, in parallel:
+    (the decoded results of those that answered in time, whether any didn't)."""
+    try:
+        version = str(os.stat(LUA).st_mtime_ns)
+    except OSError:
+        return [], False
+    expr = LOADER % (vimstr(LUA), vimstr(path), vimstr(version), vimstr(func), vimstr(tool_use_id))
+    procs = []
+    for sock in servers():
+        try:
+            procs.append(subprocess.Popen([NVIM, "--server", sock, "--remote-expr", expr], stdin=subprocess.DEVNULL,
+                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+        except OSError:
+            pass
+    deadline = time.monotonic() + RPC_TIMEOUT
+    results, missed = [], False
+    for p in procs:
+        try:
+            out, err = p.communicate(timeout=max(0.0, deadline - time.monotonic()))
+            if b"E247" in err:
+                continue  # not a server (a socket left behind, its pid reused)
+            results.append(json.loads(out))
+        except subprocess.TimeoutExpired:
+            p.kill()  # busy (a prompt, a long command): the request goes with the connection
+            p.wait()
+            missed = True
+        except ValueError:
+            missed = True  # it answered, but not with a result: count it as maybe loaded
+    return results, missed
+
+
+def nvim_options(results):
+    """{'undodir', 'undolevels'} as the user's Neovim has them: from a running
+    one (and remembered), else remembered, else asked of a headless one with
+    the user's config, once."""
+    for r in results:
+        if r.get("undodir") is not None:
+            opts = {"undodir": r["undodir"], "undolevels": r.get("undolevels", 1000)}
+            try:
+                with open(CACHE) as f:
+                    if json.load(f) == opts:
+                        return opts
+            except (OSError, ValueError):
+                pass
+            write_json(CACHE, opts)
+            return opts
+    try:
+        with open(CACHE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass
+    try:
+        os.makedirs(STATE, mode=0o700, exist_ok=True)
+        out = subprocess.run([NVIM, "--headless", "-i", "NONE", "-n",
+                              "--listen", os.path.join(STATE, "probe.%d" % os.getpid()), "-c",
+                              "lua io.stdout:write(vim.json.encode({undodir = vim.o.undodir, "
+                              "undolevels = vim.o.undolevels}))", "-c", "qa!"],
+                             stdin=subprocess.DEVNULL, capture_output=True, timeout=10).stdout
+        opts = json.loads(out[out.index(b"{"):])
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    write_json(CACHE, opts)
+    return opts
+
+
+def write_json(path, obj):
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w") as f:
+            json.dump(obj, f)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass
+
+
+def undofile(path, undodir):
+    """The existing undofile of `path` under 'undodir' (Neovim's naming), or None."""
+    for d in undodir.split(","):
+        d = d.strip()
+        if not d:
+            continue
+        if d == ".":
+            f = os.path.join(os.path.dirname(path), "." + os.path.basename(path) + ".un~")
+        else:
+            f = os.path.join(os.path.expandvars(os.path.expanduser(d)), path.replace("/", "%"))
+        if os.path.isfile(f):
+            return f
+    return None
+
+
+def snapshot_path(data):
+    return os.path.join(STATE, "%s.snap" % (data.get("tool_use_id") or data.get("session_id") or "x"))
+
+
+def sweep():
+    """Snapshots whose PostToolUse never came."""
+    now = time.time()
+    for f in glob.glob(os.path.join(STATE, "*.snap*")):
+        try:
+            if now - os.path.getmtime(f) > 3600:
+                os.unlink(f)
+        except OSError:
+            pass
+
+
+def pre(data, path):
+    results, missed = call_all("prepare", path, data.get("tool_use_id") or "")
+    if missed or any(r.get("state") != "absent" for r in results) or not os.path.isfile(path):
+        return  # loaded somewhere (or maybe, in a Neovim that didn't answer)
+    if os.path.getsize(path) > MAX_SNAPSHOT:
+        return
+    opts = nvim_options(results)
+    if not opts or not undofile(path, opts["undodir"]):
+        return  # no history to keep
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    sweep()
+    shutil.copyfile(path, snapshot_path(data))
+    write_json(snapshot_path(data) + ".json", opts)
+
+
+def post(data, path):
+    results, missed = call_all("graft", path, data.get("tool_use_id") or "")
+    snap = snapshot_path(data)
+    if not os.path.exists(snap):
+        return
+    try:
+        with open(snap + ".json") as f:
+            opts = json.load(f)
+        if os.path.isfile(path) and not missed and not any(r.get("state") != "absent" for r in results):
+            graft_file(path, snap, opts)
+    finally:
+        for f in (snap, snap + ".json"):
+            try:
+                os.unlink(f)
+            except OSError:
+                pass
+
+
+def graft_file(path, snap, opts):
+    env = dict(os.environ, UNDOGRAFT_LUA=LUA, UNDOGRAFT_PATH=path, UNDOGRAFT_SNAP=snap,
+               UNDOGRAFT_UNDODIR=opts["undodir"], UNDOGRAFT_UNDOLEVELS=str(opts.get("undolevels", 1000)))
+    env.pop("NVIM", None)
+    subprocess.run([NVIM, "--headless", "-u", "NONE", "-i", "NONE", "-n",
+                    "--listen", os.path.join(STATE, "headless.%d" % os.getpid()),
+                    "--cmd", "lua vim.o.undofile = true; vim.o.undodir = os.getenv('UNDOGRAFT_UNDODIR')",
+                    "-c", "lua dofile(os.getenv('UNDOGRAFT_LUA')).graft_file(os.getenv('UNDOGRAFT_PATH'), "
+                          "os.getenv('UNDOGRAFT_SNAP'), os.getenv('UNDOGRAFT_UNDOLEVELS'))",
+                    "-c", "qa!"],
+                   stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   env=env, timeout=10)
+
+
+def handle(data):
+    if not RUNTIME or data.get("tool_name") not in TOOLS:
+        return
+    inp = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
+    target = inp.get("file_path")
+    if not isinstance(target, str) or not target:
+        return
+    path = os.path.realpath(os.path.join(data.get("cwd") or os.getcwd(), os.path.expanduser(target)))
+    event = data.get("hook_event_name")
+    if event == "PreToolUse":
+        pre(data, path)
+    elif event in ("PostToolUse", "PostToolUseFailure"):
+        post(data, path)
+
+
+def main():
+    try:
+        data = json.load(sys.stdin)
+        if isinstance(data, dict):
+            handle(data)
+    except Exception as e:  # never break the tool call
+        sys.stderr.write("undograft: %s\n" % e)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
