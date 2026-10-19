@@ -18,14 +18,27 @@ Sessions launched in a subdirectory of the repo are included.
 | | |
 |---|---|
 | file | size = length in lines; color = what last happened to it (edit, create, delete, changed by a command; dim blue = only read), brighter the more often it changed |
+| folder | the average size of what's in it (files and folders), its files around it |
 | beam actor → file | the action, colored: read, search, create, edit, delete, changed by a command; thickness = diff size |
-| rings | diff pulse: green = lines added, red = lines removed, size = how many |
+| rings | diff pulse: green = lines added, red = lines removed; shape = how big next to the file (below) |
+| name | each file touched shows its name and last change (+added −removed) for 4 seconds, at any replay speed (after a seek, the files touched just before) |
 | bubble | the command it's running, or the pattern it's searching |
 | HUD | total lines written / removed, file and command counts |
 | panel | active actors with their lines and current turn's prompt |
 | legend | right side; `H` toggles it |
 
 Actors dim after 2 minutes idle and leave the stage after 10.
+
+**How big a change is** is its lines (added and removed each get their ring)
+over the file's length before it, or over the average file when that's bigger:
+a new file or a small one is weighed against a usual file, not itself. The
+average is over the files seen so far and not deleted, each counted up to 4000
+lines, with five 200-line files mixed in so the first few don't set it alone.
+A delete with no count (an `rm` from a command) removed the whole file. Under 0.15 is
+**minor**: one thin dim ripple (10 lines of a 1000-line file). Up to a whole
+file is **notable**: two rings in full color, one trailing. A file's worth and
+more is **major**: a shockwave with a white-hot core, rays and a lingering glow
+(a new 500-line file where files run 200).
 
 **Click an actor** (in the graph or the panel) to open its current turn: the
 prompt, then one line per step (read, edit, create, delete, search, `$`
@@ -137,7 +150,8 @@ only: nothing records past filesystem changes, so replays don't have them.
 
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
-unit-tests the timeline's time mapping (`tests/test_timeline.c`) and syntax
+unit-tests the timeline's time mapping (`tests/test_timeline.c`), change ring
+sizing (`tests/test_rings.c`) and syntax
 highlighting against the installed grammars (`tests/test_syntax.c`, skipped
 for a language with none).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.

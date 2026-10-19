@@ -13,6 +13,12 @@
 #define FLASH_DECAY 0.8f    /* per second */
 #define BUBBLE_SECS 4.0f
 #define GOLDEN_ANGLE 2.39996323f
+#define DIR_MIN 4.0f        /* drawn size of a dir with nothing in it */
+/* The average file size starts as PRIOR_FILES files of PRIOR_LINES, so the
+ * first few files seen don't set it alone; no file counts past SIZE_CAP. */
+#define PRIOR_FILES 5
+#define PRIOR_LINES 200.0
+#define SIZE_CAP 4000
 #define MAX_SPEED 1500.0f   /* world units/s: keeps the explicit integrator stable */
 
 static const Color ACTOR_COLORS[] = {
@@ -51,7 +57,9 @@ static int add_node(Scene *m, const char *path, int parent, bool is_dir) {
     n->parent = parent;
     n->is_dir = is_dir;
     n->lines = -1;
+    n->counted = -1;
     n->radius = is_dir ? 10 : 5;
+    n->size = DIR_MIN;
     if (parent >= 0) {
         /* Sprout away from the grandparent so the tree grows outward. */
         Node *p = &m->nodes[parent];
@@ -201,15 +209,45 @@ static int actor_for(Scene *m, const Event *e) {
     return m->nactors++;
 }
 
-static void add_fx(Scene *m, FxKind kind, EvKind ev, int actor, int node, float strength,
-                   float life, Color c) {
+static Fx *add_fx(Scene *m, FxKind kind, EvKind ev, int actor, int node, float strength,
+                  float life, Color c) {
     int slot = (m->fx_head + m->fx_count) % MAX_FX;
     if (m->fx_count == MAX_FX) m->fx_head = (m->fx_head + 1) % MAX_FX; /* drop oldest */
     else m->fx_count++;
-    m->fx[slot] = (Fx){kind, ev, actor, node, strength, 0, life, c};
+    m->fx[slot] = (Fx){kind, ev, actor, node, strength, 0, life, c, RING_MINOR, 0};
+    return &m->fx[slot];
 }
 
 static float diff_strength(int n) { return fminf(1.0f, log2f(1.0f + (float)n) / 9.0f); }
+
+/* Keeps the average file size current after n's length or state changed. */
+static void recount(Scene *m, Node *n) {
+    if (n->counted >= 0) { m->sum_lines -= n->counted; m->nsized--; }
+    n->counted = n->deleted || n->lines < 0 ? -1 : n->lines < SIZE_CAP ? n->lines : SIZE_CAP;
+    if (n->counted >= 0) { m->sum_lines += n->counted; m->nsized++; }
+}
+
+/* How big a change of `lines` lines is: over the file's length before it, or
+ * over the average file when that's bigger (a new file, a small one). 10
+ * lines in a 1000-line file are 0.01; a new file of 500 where files run 200
+ * is 2.5. */
+static float change_size(const Scene *m, int lines, int before) {
+    double avg = (m->sum_lines + PRIOR_FILES * PRIOR_LINES) / (m->nsized + PRIOR_FILES);
+    return (float)(lines / fmax(fmax(before, avg), 1));
+}
+
+/* A pulse for a change of that size: minor, notable from RING_NOTABLE_AT,
+ * major from a whole file's worth up; strength is how far into its tier. */
+static void add_ring(Scene *m, EvKind ev, int actor, int node, float size, Color c) {
+    static const float life[] = {0.7f, 1.3f, 2.2f};
+    RingTier t = size < RING_NOTABLE_AT ? RING_MINOR : size < RING_MAJOR_AT ? RING_NOTABLE : RING_MAJOR;
+    float s = t == RING_MINOR ? size / RING_NOTABLE_AT
+            : t == RING_NOTABLE ? (size - RING_NOTABLE_AT) / (RING_MAJOR_AT - RING_NOTABLE_AT)
+                                : (size - RING_MAJOR_AT) / (RING_MAJOR_TOP - RING_MAJOR_AT);
+    Fx *f = add_fx(m, FX_PULSE, ev, actor, node, fminf(1, s), life[t], c);
+    f->tier = t;
+    f->phase = frand() * 6.2832f;
+}
 
 static void set_bubble(Actor *a, const char *text) {
     free(a->bubble);
@@ -261,6 +299,7 @@ void model_adopt_layout(Scene *m, const Scene *old) {
         const Node *o = &old->nodes[j];
         n->pos = o->pos;
         n->radius = o->radius;
+        n->size = o->size;
         n->disp_lines = o->disp_lines;
         n->alpha = n->deleted ? 0 : 1;
     }
@@ -311,9 +350,13 @@ void model_apply(Scene *m, const Event *e, bool effects) {
     n->last_kind = e->kind;
     n->last_actor = ai;
     n->last_add = e->add;
-    n->last_del = e->del;
     a->target = ni;
 
+    int old = n->lines;
+    /* A delete with no count (an `rm` guessed from a command) removed what the
+     * file had, when that's known. */
+    int del = e->kind == EV_DELETE && !e->del && old > 0 ? old : e->del;
+    n->last_del = del;
     if (e->kind == EV_DELETE) {
         n->deleted = true;
         n->lines = 0;
@@ -324,6 +367,13 @@ void model_apply(Scene *m, const Event *e, bool effects) {
     } else {
         n->lines = disk_lines(m, e->path);
     }
+    /* Sized against the file as it was and the average before this change.
+     * A file first seen here sized from disk is approximate: in a replay
+     * that's its length now, not then. */
+    int before = old >= 0 ? old : n->lines >= 0 ? n->lines - e->add + del : 0;
+    if (before < 0) before = 0;
+    float add_size = change_size(m, e->add, before), del_size = change_size(m, del, before);
+    recount(m, n);
 
     switch (e->kind) {
     case EV_READ: m->reads++; a->reads++; break;
@@ -344,13 +394,14 @@ void model_apply(Scene *m, const Event *e, bool effects) {
     }
     if (!effects) return; /* quiet replay (seek, backlog): no flashes either */
     n->flash = e->kind == EV_READ ? fmaxf(n->flash, 0.35f) : 1;
+    n->label = LABEL_SECS;
     float s = diff_strength(e->add + e->del);
     add_fx(m, FX_BEAM, e->kind, ai, ni, e->kind == EV_READ ? 0.1f : 0.25f + 0.75f * s, 1.4f,
            kind_color(e->kind));
-    if (e->add) add_fx(m, FX_PULSE, e->kind, ai, ni, diff_strength(e->add), 1.2f, kind_color(EV_CREATE));
-    if (e->del) add_fx(m, FX_PULSE, e->kind, ai, ni, diff_strength(e->del), 1.2f, kind_color(EV_DELETE));
-    if (!e->add && !e->del && e->kind != EV_READ)
-        add_fx(m, FX_PULSE, e->kind, ai, ni, 0.3f, 1.0f, kind_color(e->kind));
+    if (e->add) add_ring(m, e->kind, ai, ni, add_size, kind_color(EV_CREATE));
+    if (del) add_ring(m, e->kind, ai, ni, del_size, kind_color(EV_DELETE));
+    if (!e->add && !del && e->kind != EV_READ) /* size unknown */
+        add_ring(m, e->kind, ai, ni, 0.1f, kind_color(e->kind));
 }
 
 /* ---- layout ------------------------------------------------------------- */
@@ -360,15 +411,17 @@ static float file_radius(const Node *n) {
     return fminf(26.0f, 3.0f + 2.0f * sqrtf(fmaxf(n->disp_lines, 0) / 10.0f));
 }
 
-/* Files sit on a sunflower spiral around their dir; the dir's radius is its extent. */
-static Vector2 slot_offset(int i, float spacing) {
-    float r = spacing * 0.62f * sqrtf((float)i + 0.5f);
+/* Files sit on a sunflower spiral around their dir, starting past `inner`
+ * (the dir's own circle); the dir's radius is its extent. */
+static Vector2 slot_offset(int i, float spacing, float inner) {
+    float r = inner + spacing * 0.62f * sqrtf((float)i + 0.5f);
     float a = (float)i * GOLDEN_ANGLE;
     return (Vector2){cosf(a) * r, sinf(a) * r};
 }
 
 void model_update(Scene *m, float dt, double now) {
     (void)now;
+    float real_dt = dt; /* labels keep real time even on slow frames */
     if (dt > 1.0f / 20) dt = 1.0f / 20;
     Node *N = m->nodes;
 
@@ -376,6 +429,7 @@ void model_update(Scene *m, float dt, double now) {
     for (int i = 0; i < m->nnodes; i++) {
         Node *n = &N[i];
         n->flash = fmaxf(0, n->flash - FLASH_DECAY * dt);
+        n->label = fmaxf(0, n->label - real_dt);
         if (n->is_dir) continue;
         if (n->lines >= 0) n->disp_lines += ((float)n->lines - n->disp_lines) * fminf(1, dt * 4);
         n->radius = file_radius(n);
@@ -386,21 +440,33 @@ void model_update(Scene *m, float dt, double now) {
             n->alpha = fminf(1, n->alpha + dt / FADE_IN);
         }
     }
+    /* Dirs are drawn at the average size of their children, files and dirs
+     * (a child dir as it was last frame). */
+    for (int i = 0; i < m->nnodes; i++) N[i].kids_sum = 0, N[i].kids_n = 0;
+    for (int i = 1; i < m->nnodes; i++) {
+        Node *n = &N[i];
+        if (n->alpha <= 0 && !n->is_dir) continue; /* faded out */
+        N[n->parent].kids_sum += n->is_dir ? n->size : n->radius;
+        N[n->parent].kids_n++;
+    }
     for (int d = 0; d < m->nnodes; d++) {
         Node *dir = &N[d];
         if (!dir->is_dir) continue;
         if (dir->alpha < 1) dir->alpha = fminf(1, dir->alpha + dt / FADE_IN);
+        float size = dir->kids_n ? fmaxf(DIR_MIN, dir->kids_sum / (float)dir->kids_n) : DIR_MIN;
+        dir->size += (size - dir->size) * fminf(1, dt * 4);
+        float inner = dir->size + 2;
         float maxr = 0, sum = 0;
         for (int k = 0; k < dir->nkids; k++) {
             sum += N[dir->kids[k]].radius;
             maxr = fmaxf(maxr, N[dir->kids[k]].radius);
         }
         float spacing = dir->nkids ? fmaxf(12.0f, 2.2f * sum / dir->nkids + 4) : 12;
-        float target_r = 10 + (dir->nkids ? spacing * 0.62f * sqrtf((float)dir->nkids) + maxr : 0);
+        float target_r = 10 + dir->size + (dir->nkids ? spacing * 0.62f * sqrtf((float)dir->nkids) + maxr : 0);
         dir->radius += (target_r - dir->radius) * fminf(1, dt * 3);
         for (int k = 0; k < dir->nkids; k++) {
             Node *f = &N[dir->kids[k]];
-            Vector2 o = slot_offset(k, spacing);
+            Vector2 o = slot_offset(k, spacing, inner);
             Vector2 t = {dir->pos.x + o.x, dir->pos.y + o.y};
             float ease = fminf(1, dt * 6);
             f->pos.x += (t.x - f->pos.x) * ease;
