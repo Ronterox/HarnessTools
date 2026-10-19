@@ -90,13 +90,21 @@ Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCom
 
 | key | action |
 |---|---|
-| `<CR>` | on a turn, or a node with details (why, diff hunks): show/hide them (showing marks it seen). On a hunk line or a node without details: jump to its file:line |
+| `<CR>` | on a turn, or a node with details (why, diff hunks, the rest of a long text, a tool's full input): show/hide them (showing marks it seen). On a hunk line or a node without details: jump to its file:line; with nothing to show or open: mark it seen |
 | `gf` | jump to file:line of the node or hunk line (marks the node seen) |
 | `za` `zo` `zc` … | normal folds (turns open, details hidden); what you open or close survives new events |
 | `]u` / `[u` | next / previous unseen node |
 | `m` / `M` | toggle seen on the node / mark all seen |
 | `a` / `W` | ask / what-if at cursor |
 | `R` | re-resolve the session and reload everything |
+
+Lines don't wrap. A line wider than the window ends in `…`, and the whole
+text (the worker's message, your prompt, the tool's why) is in its details,
+wrapped to the window: `<CR>` shows it. A tool's details also hold its full
+input: the whole Bash command (under its description), an Agent's prompt,
+other tools' arguments. The turn header
+keeps its time visible and shows the whole prompt under it while the turn is
+open. Resizing the window re-wraps.
 
 Glyphs: `●` unseen, `○` seen, `✎` human save, `⇢` submit, `⏸`/`▶`
 hold/release, `◆` end-of-turn text, `⇣` the worker's context was compacted
@@ -368,8 +376,11 @@ All are defined with `default = true` links, so you can override them:
 
 ## nvim-ufo
 
-The trace buffer uses its own `foldexpr`. If `ufo` is installed, it is detached
-from the trace buffer.
+The trace buffer uses its own `foldexpr`. If `ufo` is loaded, it is detached
+from the trace buffer before the trace is first shown. aic never loads a lazy
+`ufo` itself. If `ufo` (or anything else) still changes the trace window's
+`foldmethod`, `foldexpr` or `foldtext`, aic detaches it again and puts its own
+back. ufo's `foldtext` showed every closed node as `0` there.
 
 ## Human edits
 

@@ -208,10 +208,12 @@ function M.set_lines(buf, lines)
   vim.bo[buf].modifiable = mod
 end
 
--- Detach nvim-ufo from a buffer so our own folds work.
+-- Detach nvim-ufo from a buffer so our own folds work. Only when ufo is
+-- already loaded: requiring it would load a lazy ufo, which then attaches to
+-- every shown window and leaves its own 'foldtext' there.
 function M.detach_ufo(buf)
-  local ok, ufo = pcall(require, 'ufo')
-  if ok and type(ufo) == 'table' and ufo.detach then
+  local ufo = package.loaded['ufo']
+  if type(ufo) == 'table' and ufo.detach then
     pcall(ufo.detach, buf)
   end
 end

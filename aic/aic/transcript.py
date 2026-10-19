@@ -32,6 +32,27 @@ def _short(obj, n=300):
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+MAX_DETAIL = 4000
+FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit", "Read")
+
+
+def _detail(name, inp):
+    """A tool's input as a person reads it (its title shows only the start):
+    a Bash command with its description, an Agent's prompt, else the input as
+    JSON. None for file tools (their file and diff say it)."""
+    if name in FILE_TOOLS or not isinstance(inp, dict) or not inp:
+        return None
+    if name == "Bash":
+        cmd = inp.get("command")
+        parts = [inp.get("description"), ("$ " + cmd) if isinstance(cmd, str) else None]
+    elif name in ("Agent", "Task"):
+        parts = [inp.get("description"), inp.get("prompt")]
+    else:
+        parts = [json.dumps(inp, ensure_ascii=False, indent=1)]
+    text = "\n".join(p.strip() for p in parts if isinstance(p, str) and p.strip())
+    return (text if len(text) <= MAX_DETAIL else text[: MAX_DETAIL - 1] + "…") or None
+
+
 def hunks_from_result(result):
     """Normalized hunks from an Edit/Write toolUseResult."""
     if not isinstance(result, dict):
@@ -225,8 +246,8 @@ class Parser:
         return {
             "id": "t-" + (tid or ""), "ts": t["ts"] or ts, "kind": "tool", "turn": self.turn,
             "tool": name, "title": self._title(name, inp, rel, hunks), "why": t["why"],
-            "file": rel if name in ("Edit", "Write", "MultiEdit", "NotebookEdit", "Read") else None,
-            "hunks": hunks, "input": _short(inp), "error": bool(block.get("is_error")),
+            "file": rel if name in FILE_TOOLS else None,
+            "hunks": hunks, "input": _short(inp), "detail": _detail(name, inp), "error": bool(block.get("is_error")),
         }
 
     def pending_tools(self):

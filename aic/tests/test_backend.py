@@ -53,6 +53,30 @@ class ParserTest(unittest.TestCase):
         self.assertEqual(tool["hunks"][0]["lines"], [" x", "+y"])
         self.assertEqual(evs[2]["text"], "Done.")
 
+    def test_tool_detail_is_the_full_input(self):
+        p = Parser("/proj")
+        p.feed(rec_user("go", "u1", "r0"))
+        long_cmd = "cd /proj && " + "x" * 200 + " && echo done"
+        evs = []
+        for tid, name, inp in (("B1", "Bash", {"command": long_cmd, "description": "Run it"}),
+                               ("B2", "Bash", {"command": "ls"}),
+                               ("A1", "Agent", {"description": "Review", "prompt": "Look at the diff.\nCarefully."}),
+                               ("G1", "Grep", {"pattern": "foo", "path": "src"}),
+                               ("E1", "Edit", {"file_path": "/proj/a.py", "old_string": "a", "new_string": "b"})):
+            p.feed(rec_asst([{"type": "tool_use", "id": tid, "name": name, "input": inp}], "a" + tid, "tool_use"))
+            evs += p.feed(rec_result(tid, "ok", "u" + tid))
+        d = {e["id"]: e for e in evs if e["kind"] == "tool"}
+        self.assertEqual(d["t-B1"]["title"], "Bash: Run it")
+        self.assertEqual(d["t-B1"]["detail"], "Run it\n$ " + long_cmd)  # the whole command, not the title's start
+        self.assertEqual(d["t-B2"]["detail"], "$ ls")
+        self.assertEqual(d["t-A1"]["detail"], "Review\nLook at the diff.\nCarefully.")
+        self.assertEqual(json.loads(d["t-G1"]["detail"]), {"pattern": "foo", "path": "src"})
+        self.assertIsNone(d["t-E1"]["detail"])  # file tools: the file and diff say it
+        p.feed(rec_asst([{"type": "tool_use", "id": "B3", "name": "Bash", "input": {"command": "y" * 5000}}], "aB3",
+                        "tool_use"))
+        big = p.feed(rec_result("B3", "ok", "uB3"))[0]
+        self.assertEqual((len(big["detail"]), big["detail"][-1]), (4000, "…"))
+
     def test_resent_prompt_same_turn_and_commands(self):
         p = Parser("/proj")
         a = p.feed(rec_user("hello", "u1", "root"))

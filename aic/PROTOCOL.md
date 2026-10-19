@@ -64,7 +64,7 @@ Common fields: `id` (string, stable, e.g. `"e17"`), `seq` (int), `ts` (unix floa
 | kind | extra fields |
 |---|---|
 | `prompt` | `text` — the user prompt that started turn `turn` (truncated to 2000 chars). `midturn: true` = sent while busy, absorbed inside the turn; `system: true` = harness-generated (e.g. background task finished); `resent: true` = the human re-sent/edited the prompt |
-| `tool` | `via: "Bash"` + `id "<bash id>:<file>"` when the change was found by diffing the tree after a worker Bash call; `tool` (name), `title` (one line, e.g. `Edit src/app.js:14-22`), `why` (assistant visible text preceding the call, may be `""`), `file` (rel path or null), `hunks` (see below, may be `[]`), `input` (short string summary of tool input), `error` (bool) |
+| `tool` | `via: "Bash"` + `id "<bash id>:<file>"` when the change was found by diffing the tree after a worker Bash call; `tool` (name), `title` (one line, e.g. `Edit src/app.js:14-22`), `why` (assistant visible text preceding the call, may be `""`), `file` (rel path or null), `hunks` (see below, may be `[]`), `input` (short string summary of tool input), `detail` (the input as a person reads it, at most 4000 characters: a Bash command as `$ <command>` under its description, an Agent's description and prompt, else JSON; null for file tools; absent in traces written before it existed), `error` (bool) |
 | `text` | `text` — assistant visible text that was NOT followed by a tool call (end-of-turn message) |
 | `human` | `file`, `hunks` — a code save by the human |
 | `submit` | `text` — what aic delivered to the worker |
