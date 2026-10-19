@@ -17,6 +17,7 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
   watch.pid               pid of the running `aic watch`
   docs/<name>.md          the human's docs, shared by all worker sessions (editor writes; see Docs)
   prompts/<name>.md       project prompt templates (see Prompt templates)
+  prompts/compiler/<name>.md  project compiler templates (see Compiler templates)
   sessions/<sid>/
     sent.<doc>.md         what this worker last received of doc <doc> as work (marker stripped): set by a `marks_sent` send
     trace.jsonl           normalized events (written ONLY by `aic watch`)
@@ -70,7 +71,7 @@ Common fields: `id` (string, stable, e.g. `"e17"`), `seq` (int), `ts` (unix floa
 | `hold` / `release` | — |
 | `held` | `tool` — the gate stopped the worker before this tool |
 | `hold-expired` | the turn ended before any tool call; the hold was dropped |
-| `guarded` | `tool`, `file` — the hook refused a worker file tool aimed at `.aic/docs/` or `.aic/prompts/` |
+| `guarded` | `tool`, `file` — the hook refused a worker file tool (or a writing Bash command) aimed at `.aic/docs/` or `.aic/prompts/` |
 | `compact` | the worker's context was compacted: `trigger` (manual/auto), `pre`, `post` tokens |
 
 Hunk: `{"start": <new-file first line, 1-based>, "count": <new line count>, "lines": ["+added", "-removed", " context"]}`.
@@ -87,6 +88,9 @@ Ranges are in **current** file coordinates (later edits shift earlier ranges).
 - `.aic/docs/<name>.md`; name `[A-Za-z_][A-Za-z0-9_.-]*`, no `/`, no `..`
   (checked on every `--doc`).
 - Optional first-line marker: `<!-- aic: compile prompt=<template> -->`.
+  `compile=<name>` instead of `compile`: compiled with compiler template
+  `<name>` (a `task: compile` one, see Compiler templates). `aic docs --json`
+  reports it as `compile_template`.
   `compile` = the editor runs `aic compile --doc <name>` on save. The marker
   is never sent to the worker; compile numbers the file as it is (marker
   line included), so line numbers are always file lines.
@@ -172,6 +176,101 @@ the body, pasted under the header: {{doc}}, {{diff}}, … anywhere
   change what is recorded as sent: a `marks_sent` send records the doc as
   rendered.
 
+## Compiler templates
+
+What compile, ask, what-if and fix tell the compiler (`aic/compiler_prompts.py`).
+Same language as prompt templates, in a `compiler/` subdirectory of the same
+three places: `.aic/prompts/compiler/` (project),
+`$XDG_CONFIG_HOME/aic/prompts/compiler/` (user), `aic/prompts/compiler/`
+(built-in: `compile`, `ask`, `whatif`, `fix`). The compiler's role (system
+prompt: read-only, never edits files, never talks to the worker) is not a
+template.
+
+```markdown
+---
+description: one line for the pickers
+task: ask        # compile | ask | whatif | fix (a built-in name implies it)
+model: haiku     # optional, user/built-in templates only: overrides AIC_COMPILE_MODEL / AIC_ASK_MODEL / AIC_FIX_MODEL
+---
+instructions, with the data placed anywhere: {{doc}} … {{activity}}
+```
+
+- **Which template runs:**
+  - compile: the doc marker's `compile=<name>`, else `compile`.
+  - ask: `aic ask --template <name>` (a `task: ask` one), else `ask`.
+  - what-if: `whatif`.
+  - fix: `fix`.
+  - A same-named project or user file overrides a built-in. A template whose
+    `task` is not the one asked for is an error (for a compile, it is recorded
+    in that doc's diagnostics).
+- **Variables.** Each data variable is a whole block with its `== HEADING ==`
+  line, or empty when there is nothing (for example `diagnostics` before any
+  compile), so `{{#var}}` sections work. The exception is `question`, the
+  human's raw text. All tasks also have `doc.name`.
+
+| task | data variables, in append order |
+|---|---|
+| compile | `doc` (numbered), `previous_items`, `anchors`, `activity` |
+| ask, whatif | `doc`, `diagnostics`, `activity`, `pointing` (context at the cursor, trace event), `question`, `anchors` |
+| fix | `doc` (numbered, as the editor has it), `items` |
+
+- **A template places the data; it can't drop it.** Every non-empty data
+  variable the template doesn't emit is appended after it, in the order above
+  (`question` as `== QUESTION ==\n<text>`). "Emitted" means actually rendered,
+  as with prompt templates.
+- **Trust rule.** A template is instructions, so whatever is in it can talk
+  the compiler into ignoring data. aic can't prevent that; it limits who can
+  write templates and makes the ones in use visible.
+  - **Who can write them.** Project templates live under `.aic/prompts/`, in
+    the worker's reach. The hook refuses the worker's file tools there, and
+    Bash commands that write there.
+    - The command is read the way a shell reads it: quoted text is one word,
+      and paths resolve against the cwd, following `cd`.
+    - Only this project's `.aic/docs` and `.aic/prompts` count, and `.aic`
+      itself only for what replaces or removes it. They count only as a
+      destination:
+      - a `>`/`>>`/`&>` redirect
+      - the target of `cp`/`rsync`/`install`/`ln`
+      - the files of `mv`/`rm`/`touch`/`tee`/`mkdir`/…
+      - `dd of=`
+      - in-place `sed`/`perl`/`awk`
+      - `find -delete`, or `find -exec` running any of these
+      - a command's own output flag (`curl -o`, `wget -O`, `sort -o`,
+        `unzip -d`, `tar -x -C`, `cp -t`)
+      - a `git` subcommand that writes files (not `--cached`/`--staged`)
+    - `$(…)` and backticks outside single quotes are read too, and so is
+      `sh -c`/`bash -lc`. Wrappers and their options (`env -u X`, `sudo -u`,
+      `nice -n`, `timeout -s`) are skipped.
+    - An inline python/node/ruby/perl script counts when it names such a path
+      and calls something that writes files.
+    - Reading and mentioning go through: grep, cat, ls, copies out, commit
+      messages, test strings, heredoc bodies.
+    - Not followed: variables, globs, script files, scripts fed on stdin or
+      through a here-string, `eval`, `pushd`, `find . -name … -delete`. This
+      is a speed bump, not a sandbox.
+  - **What a project template can't change.** It shapes instructions only: its
+    `model:` is ignored, and its own `@anchors` resolve inside the project only
+    (no outside files, no `--add-dir`). User and built-in templates can do both.
+  - **Data stays in the prompt.** Nothing the task has is dropped (see above).
+    After a template that is not built-in, aic adds a closing block the template
+    doesn't control (`== FROM AIC, NOT FROM THE TEMPLATE ==`, always the last
+    one): its instructions may change how the compiler works, never what it
+    reviews. Compiler templates with invisible characters (control, format,
+    zero-width, bidi, private use) are refused.
+  - **The ones in use are named.**
+    - The usage note and the `chat.md` heading carry ` [name, source]`.
+    - A project template that hides a user one adds `, shadows user`.
+    - The compile's `diagnostics.<doc>.json` records `template: {name, source, shadows?}`.
+    - The editor names such a template on every compile and when diagnostics load.
+  - **Out of scope.** A worker whose shell can write anywhere you can (the
+    user template dir, aic itself) can get around all of this. The rule guards
+    against an overeager worker and against text that merely looks like
+    instructions, not against a hostile one with an unrestricted shell.
+- `aic compile --print`, `aic ask --print …` and `aic fix --print [--json]`
+  print the prompt and model without asking or recording anything. After a
+  compact, the next real call also gets the handoff summary in front of it,
+  which `--print` does not show.
+
 ## diagnostics.\<doc\>.json
 
 ```json
@@ -179,7 +278,8 @@ the body, pasted under the header: {{doc}}, {{diff}}, … anywhere
  "items": [{"kind": "mismatch|incoherent|model|unspecified",
             "severity": "error|warning|info",
             "file": "doc" | "<rel path>", "line": 12,
-            "spec_line": 12 | null, "message": "..."}]}
+            "spec_line": 12 | null, "message": "..."}],
+ "template": {"name": "compile", "source": "built-in"}}
 ```
 `file == "doc"` means the line is a line of that doc (`"spec"` in files
 written before docs existed). `spec_line` = a related doc line.
@@ -318,11 +418,12 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic attach <sid>` / `aic attach --auto` | pin / unpin worker | message |
 | `aic status --json` | `{"root","session_id","dir","worker":{...}\|null,"hold":bool,"compiling":bool,"watching":bool}` | JSON |
 | `aic watch` | long-running: tails transcript + human.jsonl → trace.jsonl, touched.json. Follows `current`/auto attach. Exits when stdin closes or on SIGTERM. Writes watch.pid. | log lines |
-| `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, prompt}]`, newest first |
-| `aic compile [--doc D]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json. Busy: queues one more run of D and prints `compile queued: …` | summary line |
-| `aic ask [--doc D] [--context-file F] [--whatif] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet); appends to chat.md | answer markdown |
-| `aic fix [--doc D] [--from N --to M] [--content-file F] [--json]` | the compile session proposes edits to doc D that fix its diagnostics (with a range: only the items about those doc lines). F = the doc's text as the editor has it, unsaved edits included (default: the saved doc). Never edits anything. Errors if there are no diagnostics to fix | `fixes.D.json` content (`--json`), else a readable list |
+| `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, compile_template, prompt}]`, newest first |
+| `aic compile [--doc D] [--print]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json, through D's compile template (see Compiler templates). Busy: queues one more run of D and prints `compile queued: …`. `--print`: the prompt only | summary line |
+| `aic ask [--doc D] [--context-file F] [--whatif] [--template T] [--print] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet), through compiler template T (default `ask`; `whatif` with `--whatif`); appends to chat.md | answer markdown |
+| `aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]` | the compile session proposes edits to doc D that fix its diagnostics (with a range: only the items about those doc lines). F = the doc's text as the editor has it, unsaved edits included (default: the saved doc). Never edits anything. Errors if there are no diagnostics to fix | `fixes.D.json` content (`--json`), else a readable list |
 | `aic prompts [--json]` | list templates (the winning one per name) | JSON `[{name, source, overrides, path, description, header, requires, input, uses_input, marks_sent}]` (`overrides`: the sources it shadows); a broken one has `error` instead |
+| `aic prompts --compiler [--json]` | list compiler templates | JSON `[{name, source, overrides, path, builtin?, description, task, model}]` (`builtin`: the built-in of that name; `model`: the one that counts, null for project templates); a broken one has `error` |
 | `aic render --prompt P [--doc D] [--from N --to M] [--input TEXT] [--json]` | render template P for doc D: what a submit would send | `{header, body, receipt}` |
 | `aic submit [--doc D] [--prompt P] [--from N --to M] [--input TEXT] [--now]` | render **built-in** template P (default `selection` with a range, else `spec`; project/user templates are never sent unseen: render them and use `--rendered`) and send it: type the header + paste the body into the worker pane; queued if busy (absorbed at the next tool call); `--now` = Claude Code send-now (interrupts the running tool). Refuses while a dialog is open. | message |
 | `aic submit --rendered FILE [--now]` | send a rendered prompt (`aic render --json`, header/body possibly edited); applies its receipt | message |
@@ -331,7 +432,7 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic usage [--json]` | per-session context/cost + account quota (see Usage) | text / JSON |
 | `aic compact compile\|ask\|worker [--reset]` | summarize-and-restart (or reset) a compiler session; `worker` types `/compact` into the worker pane (no reset) | message |
 | `aic anchor [--json] TEXT` | resolve every anchor in TEXT (see Anchors) | blocks / JSON |
-| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook`. Records the worker (pane, tmux socket, pid, state), enforces holds, and denies the worker's Write/Edit/MultiEdit/NotebookEdit into `.aic/docs/` and `.aic/prompts/` (symlinks resolved; the turn goes on). Never runs for the compiler (`AIC_ROLE=compiler`, project hooks off) | hook JSON |
+| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook`. Records the worker (pane, tmux socket, pid, state), enforces holds, and denies the worker's Write/Edit/MultiEdit/NotebookEdit into `.aic/docs/` and `.aic/prompts/` (symlinks resolved), plus Bash commands that write there (see Compiler templates, Trust rule); the turn goes on. Never runs for the compiler (`AIC_ROLE=compiler`, project hooks off) | hook JSON |
 
 Exit code non-zero ⇒ stderr holds a one-line human-readable error.
 

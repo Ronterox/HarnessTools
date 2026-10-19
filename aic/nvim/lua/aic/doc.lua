@@ -77,14 +77,16 @@ function M.bufnr(name)
   end
 end
 
--- Settings from a doc's first line: { compile = bool, prompt = name|nil }.
+-- Settings from a doc's first line: { compile = bool, prompt = name|nil,
+-- compile_template = name|nil } (`compile=NAME`: compiled with that template).
 function M.marker(first)
   local out = { compile = false }
   local body = type(first) == 'string' and first:match('^%s*<!%-%-%s*aic:(.-)%-%->%s*$')
   for tok in (body or ''):gmatch('%S+') do
     local k, v = tok:match('^([^=]+)=?(.*)$')
-    if k == 'compile' and v == '' then
+    if k == 'compile' then
       out.compile = true
+      out.compile_template = v ~= '' and v or nil
     elseif k == 'prompt' and v ~= '' then
       out.prompt = v
     end
@@ -387,6 +389,17 @@ function M.apply_all()
 end
 
 -- state 'diagnostics' listener: doc `name`'s result changed (d = nil: removed).
+-- ` [name, source(, shadows user)]` for a compile through a template that is
+-- not the built-in `compile`, else ''.
+function M.template_tag(d)
+  local t = type(d) == 'table' and type(d.template) == 'table' and d.template or {}
+  if not t.name or (t.name == 'compile' and t.source == 'built-in') then
+    return ''
+  end
+  local sh = type(t.shadows) == 'table' and #t.shadows > 0 and (', shadows ' .. table.concat(t.shadows, '/')) or ''
+  return (' [%s, %s%s]'):format(t.name, t.source or '?', sh)
+end
+
 function M.on_diagnostics(name, d, initial)
   local b = M.bufnr(name)
   if b then
@@ -398,6 +411,9 @@ function M.on_diagnostics(name, d, initial)
   local stamp = d.compiled_at
   if initial then
     last_compiled_at[name] = stamp
+    if M.template_tag(d) ~= '' then -- (not the built-in: say so from the start too)
+      util.notify(('aic: %s was last compiled with template%s'):format(name, M.template_tag(d)))
+    end
     return
   end
   if stamp ~= nil and stamp == last_compiled_at[name] then
@@ -411,8 +427,9 @@ function M.on_diagnostics(name, d, initial)
   M.load_qf(name)
   local c = M.counts(d)
   local summary = util.first_line(d.summary)
+  local tag = M.template_tag(d) -- (not the built-in: always say so)
   util.notify(
-    util.oneline(('aic compile %s: %dE %dW %dI%s'):format(name, c.error, c.warning, c.info,
+    util.oneline(('aic compile %s%s: %dE %dW %dI%s'):format(name, tag, c.error, c.warning, c.info,
       summary ~= '' and (' — ' .. summary) or '')),
     c.error > 0 and vim.log.levels.WARN or vim.log.levels.INFO
   )

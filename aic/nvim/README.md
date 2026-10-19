@@ -62,10 +62,11 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>D` | `:AicDocNew [name]`: new doc | `(aic-doc-new)` |
 | `<prefix>s` (n, x) | `:AicSubmit`: submit the current doc through a prompt template, with a preview (see [Submit](#submit)); with a visual range (in a doc), just those lines | `(aic-submit)` |
 | `<prefix>S` (n, x) | `:AicSubmitNow`: same, sent with `--now` (interrupts the running tool) | `(aic-submit-now)` |
-| `<prefix>p` | `:AicPrompts`: edit a prompt template (a built-in is copied to the project or user dir first) or make one | `(aic-prompts)` |
+| `<prefix>p` | `:AicPrompts`: edit a prompt template or a compiler template (`compiler/NAME`; a built-in is copied to the project or user dir first) or make one | `(aic-prompts)` |
 | `<prefix>h` | `:AicHold` | `(aic-hold)` |
 | `<prefix>c` | `:AicContinue [msg]` | `(aic-continue)` |
 | `<prefix>?` | `:AicAsk`: ask about the thing under the cursor (any buffer) | `(aic-ask)` |
+| `<prefix>A` | `:AicAskTemplate [name]`: pick the compiler template that questions and ask-at-cursor use (`ask` = the default; see [Compiler templates](#compiler-templates)) | `(aic-ask-template)` |
 | `<prefix>w` | `:AicWhatIf` | `(aic-whatif)` |
 | `<prefix>b` | `:AicBlame`: trace event for the touched range under the cursor | `(aic-blame)` |
 | `<prefix>a` | `:AicAttach`: pick the worker session (or auto) | `(aic-attach)` |
@@ -151,6 +152,37 @@ goes into the buffer and you save it yourself. In both floats:
 - `gd` follows anchors in the answer; they are highlighted.
 
 The footer lists the keys.
+
+## Compiler templates
+
+What the compiler is told for compile, ask, what-if and fix is a template too:
+`aic/prompts/compiler/{compile,ask,whatif,fix}.md`, overridden by a file of the
+same name in `.aic/prompts/compiler/` (project) or
+`~/.config/aic/prompts/compiler/` (user). Format and variables: PROTOCOL.md
+"Compiler templates". `:AicPrompts` lists them as `compiler/NAME`. Its
+`+ new compiler template` starts from a copy of the current `ask` or
+`compile` template.
+
+- **Ask styles**: any template with `task: ask` (for example `eli5`, or
+  `critique` with `model: opus`). `:AicAskTemplate` (`<prefix>A`) picks one
+  for the questions view and ask-at-cursor, and the questions footer shows it
+  (`## You  template: eli5`). What-if always uses `whatif`.
+- **Per-doc compiles**: `<!-- aic: compile=plan -->` compiles that doc with
+  template `plan` (`task: compile`), for example a plan reviewed for missing
+  steps instead of checked against the worker. The diagnostics format stays
+  the same.
+- A template places the data but never drops it: whatever it leaves out
+  (doc, activity, …) is appended after it.
+- Whenever a compile used a template that is not the built-in `compile`, the
+  compile notice names it (`aic compile notes [plan, user]: …`), also when
+  Neovim starts. A project one that hides your user template of the same name
+  says `shadows user`. A project template you didn't write is worth a look.
+  The hook refuses the worker's writes there, but a shell can always find a
+  way.
+- A project template's `model:` is ignored and its `@anchors` stay inside the
+  project. Put a template in `~/.config/aic/prompts/compiler/` for those.
+- `aic compile --print` (also `ask`, `fix`) shows the exact prompt without
+  calling the compiler.
 
 ## Fixes
 

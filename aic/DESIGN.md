@@ -13,7 +13,7 @@ It never writes code.
 
 | Role | What it is | Can do |
 |---|---|---|
-| **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs and prompt templates with its file tools (the hook refuses; Bash is not covered) |
+| **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs and prompt templates: the hook refuses its file tools there, and Bash commands that visibly write there (a speed bump, not a sandbox) |
 | **Compiler** | Persistent headless `claude -p --resume` session | Read/Grep/Glob only. Advises; **never** stops the worker. On request (`:AicFix`) it proposes doc edits as data; you pick them, and the editor applies them |
 | **Human** | You, in Neovim | Sole authority over the worker (submit / hold / redirect) |
 
@@ -125,6 +125,17 @@ The daemon:
   *reconstructed* (the real alternatives aren't recorded in transcripts). One
   key folds the sketch into the spec; from there it reaches the worker only via
   a normal submit.
+- **Compiler templates**: what compile, ask, what-if and fix tell the
+  compiler is a template too (`prompts/compiler/`), overridable per project or
+  user. Extra `task: ask` templates are styles of asking, and `task: compile`
+  ones are picked per doc (`<!-- aic: compile=plan -->`), since not every doc
+  is a spec. Trust: a template is instructions and can always talk the
+  compiler out of something, so aic limits and shows rather than promises.
+  The worker's writes to `.aic/prompts/` are refused (file tools, and Bash that
+  visibly writes there). A project template can't pick the model or reach
+  outside the project. Data is never dropped. A closing line the template
+  doesn't control follows it. Every non-built-in template is named on each
+  compile and at load. A worker with an unrestricted shell is out of scope.
 - **Fixes** (opt-in, `:AicFix`): the compile session proposes edits to the doc
   that resolve its diagnostics. A float lists them; you pick (overlapping
   fixes are radio alternatives) and they are applied to your buffer in one

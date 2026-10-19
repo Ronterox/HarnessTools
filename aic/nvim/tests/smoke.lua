@@ -141,13 +141,18 @@ case "$1" in
   status) printf '{"root":"%s","session_id":"%s","dir":".aic/sessions/%s","worker":{"session_id":"%s","state":"busy"},"hold":false,"compiling":false,"watching":true}\n' ;;
   sessions) printf '[{"session_id":"%s","updated":%d,"state":"busy","title":"greeting","pane":null,"attached":true}]\n' ;;
   watch) cat >/dev/null ;;
-  prompts) cat <<'EOT'
+  prompts) if [ "$2" = --compiler ]; then cat <<EOT
+[{"name":"ask","source":"built-in","path":"$PWD/builtin-ask.md","overrides":[],"description":"Answer a question","task":"ask","model":null},
+ {"name":"compile","source":"built-in","path":"/x/compile.md","overrides":[],"description":"Compile","task":"compile","model":null},
+ {"name":"explain","source":"user","path":"/x/explain.md","overrides":[],"description":"Explain simply","task":"ask","model":"sonnet"}]
+EOT
+  else cat <<'EOT'
 [{"name":"review","source":"built-in","path":"/x/review.md","description":"Review only","header":"Review:","requires":[],"input":null,"uses_input":false,"marks_sent":false},
  {"name":"spec","source":"built-in","path":"/x/spec.md","description":"The doc","header":"Here:","requires":["changed"],"input":null,"uses_input":false,"marks_sent":true},
  {"name":"message","source":"user","path":"/x/message.md","description":"A message","header":"Read:","requires":[],"input":"Message","uses_input":true,"marks_sent":false},
  {"name":"bad","source":"project","path":"/x/bad.md","error":"template bad: unknown key"}]
 EOT
-;;
+  fi ;;
   render) case "$*" in
     *refuse*) echo "aic: nothing to send" >&2; exit 1 ;;
   esac
@@ -498,11 +503,18 @@ do
   end) and (read(root .. '/.aic/prompts/review.md') or ''):find('^%-%-%-\ndescription:') ~= nil,
     ':AicPrompts on a built-in copies it to .aic/prompts and opens it here')
   single(':AicPrompts')
-  pick_name = 'none' -- -> the last item: + new template
+  pick_name = 'none'
   local real_items_last = vim.ui.select
+  local new_kind = 'submit'
   vim.ui.select = function(items, o, cb)
     if o.prompt == 'aic: prompt templates' then
-      return cb(items[#items])
+      for _, it in ipairs(items) do
+        if it.new == new_kind then
+          return cb(it)
+        end
+      end
+    elseif o.prompt == 'aic: a compiler template for' then
+      return cb('ask')
     end
     return real_items_last(items, o, cb)
   end
@@ -514,6 +526,27 @@ do
     return vim.api.nvim_buf_get_name(0) == root .. '/.aic/prompts/mine.md'
   end) and (read(root .. '/.aic/prompts/mine.md') or ''):find('{{content}}', 1, true) ~= nil,
     '+ new template: skeleton in .aic/prompts/mine.md, opened here')
+  -- a new compiler template starts as a copy of the current one for its task
+  write(root .. '/builtin-ask.md', '---\ndescription: Answer a question\ntask: ask\n---\n== QUESTION ==\n{{question}}\n')
+  new_kind = 'compiler'
+  vim.ui.input = function(_, cb)
+    cb('terse')
+  end
+  vim.cmd('AicPrompts')
+  ok(wait(3000, function()
+    return vim.api.nvim_buf_get_name(0) == root .. '/.aic/prompts/compiler/terse.md'
+  end) and read(root .. '/.aic/prompts/compiler/terse.md') == '---\ndescription: terse\ntask: ask\n---\n== QUESTION ==\n{{question}}\n',
+    '+ new compiler template (ask): a copy of the ask template in .aic/prompts/compiler/, opened here')
+  single(':AicPrompts compiler')
+  -- a built-in's name is refused for another task (it would break every compile)
+  vim.ui.input = function(_, cb)
+    cb('compile')
+  end
+  local n1 = #notes
+  vim.cmd('AicPrompts')
+  ok(wait(3000, function()
+    return #notes > n1 and notes[#notes]:find('compile is the built-in compile template', 1, true) ~= nil
+  end) and not vim.uv.fs_stat(root .. '/.aic/prompts/compiler/compile.md'), 'a reserved name is refused')
   vim.ui.select = real_select
   pick_name = 'review'
 end
@@ -1626,6 +1659,93 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- compiler templates: ask with a template; compile=NAME; the compile notice names a non-built-in template
+do
+  local ask = require('aic.ask')
+  local chat = require('aic.chat')
+  local doc = require('aic.doc')
+  local real_select = vim.ui.select
+  local offered
+  vim.ui.select = function(items, o, cb)
+    if o.prompt == 'aic: ask with' then
+      offered = vim.tbl_map(function(t)
+        return o.format_item(t)
+      end, items)
+      return cb(items[2])
+    end
+    return real_select(items, o, cb)
+  end
+  vim.cmd('AicAskTemplate')
+  ok(wait(3000, function()
+    return ask.template == 'explain'
+  end), ':AicAskTemplate picks an ask template')
+  ok(offered and #offered == 2 and offered[1]:find('* [built-in] ask', 1, true) == 1
+    and offered[2]:find('[user] explain — Explain simply', 1, true) ~= nil, 'only ask templates are offered, the current one starred')
+  vim.ui.select = real_select
+  aic.show('questions')
+  local marks = vim.api.nvim_buf_get_extmarks(chat.buf, -1, 0, -1, { details = true })
+  local shown = false
+  for _, m in ipairs(marks) do
+    for _, c in ipairs(m[4].virt_text or {}) do
+      shown = shown or c[1]:find('template: explain', 1, true) ~= nil
+    end
+  end
+  ok(shown, 'the questions footer shows the template')
+  chat.ask('templated?')
+  ok(wait(3000, function()
+    return (read(log) or ''):find('ask %-%-doc %S+ %-%-template explain %-%- templated%?') ~= nil
+  end), 'questions are asked with --template: ' .. table.concat(vim.tbl_filter(function(l)
+    return l:find('templated', 1, true) ~= nil
+  end, vim.split(read(log) or '', '\n')), ' | '))
+  vim.ui.input = function(_, cb)
+    cb('at cursor?')
+  end
+  aic.ask()
+  ok(wait(3000, function()
+    return (read(log) or ''):find('ask %-%-doc %S+ %-%-context%-file %S+ %-%-template explain %-%- at cursor%?') ~= nil
+  end), 'ask at cursor uses the template too')
+  vim.cmd('close')
+  vim.ui.input = function(_, cb)
+    cb('instead?')
+  end
+  aic.whatif()
+  ok(wait(3000, function()
+    return (read(log) or ''):find('%-%-whatif %-%- instead%?') ~= nil
+  end) and not (read(log) or ''):find('template explain --whatif', 1, true), 'what-if never takes the ask template')
+  vim.cmd('silent! close')
+  local n0 = #notes
+  vim.cmd('AicAskTemplate compile')
+  ok(wait(3000, function()
+    return #notes > n0 and notes[#notes]:find('no usable ask template compile', 1, true) ~= nil
+  end) and ask.template == 'explain', ':AicAskTemplate refuses a template that is not for asking')
+  vim.cmd('AicAskTemplate ask')
+  ok(wait(3000, function()
+    return ask.template == nil
+  end), ':AicAskTemplate ask goes back to the default')
+  -- compile=NAME
+  local m = doc.marker('<!-- aic: compile=plan prompt=review -->')
+  ok(m.compile == true and m.compile_template == 'plan' and m.prompt == 'review', 'marker compile=NAME: compiles, with that template')
+  -- the notice names a template that is not the built-in compile
+  write(dir .. '/diagnostics.notes.json', vim.json.encode({ doc = 'notes', compiled_at = 77, summary = 'plan ok', items = {},
+    template = { name = 'plan', source = 'project', shadows = { 'user' } } }))
+  ok(wait(3000, function()
+    for _, n in ipairs(notes) do -- (cut to the screen width)
+      if n:find('aic compile notes [plan, project, shadows user]', 1, true) == 1 then
+        return true
+      end
+    end
+  end), 'the compile notice names a non-built-in template (and what it shadows)')
+  local n2 = #notes
+  doc.on_diagnostics('notes', { compiled_at = 77, items = {}, template = { name = 'plan', source = 'user' } }, true)
+  ok(notes[n2 + 1] == 'aic: notes was last compiled with template [plan, user]', 'and at load time')
+  write(dir .. '/diagnostics.notes.json', vim.json.encode({ doc = 'notes', compiled_at = 78, summary = 'std', items = {},
+    template = { name = 'compile', source = 'built-in' } }))
+  ok(wait(3000, function()
+    return vim.tbl_contains(notes, 'aic compile notes: 0E 0W 0I — std')
+  end), '... and not the built-in one')
+end
+
+---------------------------------------------------------------------------
 -- sweep: no command or key ever adds a tab, a split or the quickfix window,
 -- and no view pins its window
 do
@@ -1656,8 +1776,8 @@ do
   end
   local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicDoc', 'AicToggle', 'AicToggle', 'AicDiagnostics',
     'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
-    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue', 'AicFix', 'AicFix!' }
-  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p', 'f' }
+    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue', 'AicFix', 'AicFix!', 'AicAskTemplate' }
+  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p', 'f', 'A' }
   for _, c in ipairs(steps) do
     pcall(vim.cmd, c)
     vim.wait(50)

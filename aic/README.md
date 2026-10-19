@@ -101,13 +101,13 @@ cd your-project
 aic init | sessions | attach [sid|--auto] | status
 aic watch                    # trace builder (the plugin starts it)
 aic docs [--json]            # list docs (migrates the old spec.md once)
-aic compile [--doc D]        # doc vs worker activity -> diagnostics.D.json (queues if busy)
-aic fix [--doc D] [--from N --to M] [--content-file F] [--json]   # proposed doc edits for its diagnostics
+aic compile [--doc D] [--print]   # doc vs worker activity -> diagnostics.D.json (queues if busy)
+aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]   # proposed doc edits for its diagnostics
 aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will see)
 aic usage [--json]           # context/cost per session + account quota
 aic compact compile|ask [--reset]
-aic ask [--doc D] [--whatif] [--context-file F] QUESTION
-aic prompts [--json]         # prompt templates
+aic ask [--doc D] [--whatif] [--template T] [--print] [--context-file F] QUESTION
+aic prompts [--compiler] [--json]   # prompt templates (--compiler: the compiler's)
 aic render --prompt P [--doc D] [--from N --to M] [--input T] [--json]
 aic submit [--doc D] [--prompt P] [--from N --to M] [--input T] [--now] | --rendered F
 aic hold | continue [MESSAGE]

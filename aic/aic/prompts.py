@@ -178,8 +178,10 @@ def _standalone(text):
     return "".join(out)
 
 
-def _tree(text, name="?"):
-    """-> nested list of str | ("var", name) | ("sec", name, inverted, children)."""
+def _tree(text, name="?", known=None):
+    """-> nested list of str | ("var", name) | ("sec", name, inverted, children).
+    known: the variable names (default: the submit template ones)."""
+    known = known or VARS
     text = _standalone(text)
     root, stack, pos = [], [], 0
     cur = root
@@ -191,8 +193,8 @@ def _tree(text, name="?"):
             cur.append("{{")
             continue
         kind, var = m.group(1), m.group(2)
-        if var not in VARS:
-            raise PromptError("template %s: unknown {{%s}} (known: %s)" % (name, var, ", ".join(VARS)))
+        if var not in known:
+            raise PromptError("template %s: unknown {{%s}} (known: %s)" % (name, var, ", ".join(known)))
         if kind in ("#", "^"):
             if any(s[0] == var for s in stack):
                 raise PromptError("template %s: {{%s%s}} nested inside itself" % (name, kind, var))

@@ -1,0 +1,102 @@
+{
+ "compile_first": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "compile spec",
+  "schema": true,
+  "add_dirs": [],
+  "prompt": "Compile the doc named below (\"the spec\") against the repository and the worker's recent activity.\nEmit diagnostics of these kinds:\n- mismatch: the spec says X but the worker did Y, or has not done it yet\n- incoherent: the spec contradicts itself, is ambiguous, or has a hole the worker would have to guess\n- model: the spec assumes something about the existing code that is not true\n- unspecified: the worker changed things the spec does not mention (scope creep, side effects)\nFor each item set file=\"doc\" and line=<doc line> when it is about a line of the doc being compiled, otherwise file=<repo-relative path> and line=<code line> (and spec_line=<doc line> if a doc line is related).\nseverity: error = will produce wrong behaviour or contradicts the spec; warning = likely problem or unclear; info = worth knowing.\nReport every item that still holds after the new activity: your list replaces this doc's previous list (shown below); items of other docs are not affected.\nAn empty or nearly empty spec is fine: then only report 'unspecified' items that the human should know about.\nA heading containing \"[done]\" marks a finished requirement: verify it still holds (report it if\nthe code broke it), but never report it as pending work or ask the human to remove it.\nPseudocode is intent: do not report syntax, naming or missing-detail nits in it; report only where its\nlogic is wrong, contradicts itself, or disagrees with the code. For box diagrams, check that every box\nexists in the code and every arrow is a real call/data path (and flag real paths the diagram omits).\nIf the code has an obvious logic bug (off-by-one, inverted condition, wrong variable, missing await,\nstate not persisted...) report it even when the spec does not mention that area, as kind=mismatch\nwhen it contradicts the spec's intent, otherwise kind=unspecified, severity=error.\nsummary: 1-3 sentences on the state of things.\n\n== THIS COMPILE IS FOR DOC `spec` (.aic/docs/spec.md, with line numbers) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== YOUR PREVIOUS ITEMS FOR DOC `spec` (your new list replaces exactly these) ==\n(none)\n\n== ANCHORED CONTEXT (resolved from @anchors in the doc) ==\n### @app.py:1-2\n```\n    1| def load(path):\n    2|     return open(path).read()\n```\n\n== ALL WORKER ACTIVITY SO FAR ==\n\n[turn 1] USER PROMPT TO WORKER:\ngo\nWORKER TOOL: Edit app.py:5-6\n  why: add save\n  @@ line 5\n  +def save(path, text):\n  +    open(path, 'w').write(text)"
+ },
+ "compile_again": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "compile spec",
+  "schema": true,
+  "add_dirs": [],
+  "prompt": "Compile the doc named below (\"the spec\") against the repository and the worker's recent activity.\nEmit diagnostics of these kinds:\n- mismatch: the spec says X but the worker did Y, or has not done it yet\n- incoherent: the spec contradicts itself, is ambiguous, or has a hole the worker would have to guess\n- model: the spec assumes something about the existing code that is not true\n- unspecified: the worker changed things the spec does not mention (scope creep, side effects)\nFor each item set file=\"doc\" and line=<doc line> when it is about a line of the doc being compiled, otherwise file=<repo-relative path> and line=<code line> (and spec_line=<doc line> if a doc line is related).\nseverity: error = will produce wrong behaviour or contradicts the spec; warning = likely problem or unclear; info = worth knowing.\nReport every item that still holds after the new activity: your list replaces this doc's previous list (shown below); items of other docs are not affected.\nAn empty or nearly empty spec is fine: then only report 'unspecified' items that the human should know about.\nA heading containing \"[done]\" marks a finished requirement: verify it still holds (report it if\nthe code broke it), but never report it as pending work or ask the human to remove it.\nPseudocode is intent: do not report syntax, naming or missing-detail nits in it; report only where its\nlogic is wrong, contradicts itself, or disagrees with the code. For box diagrams, check that every box\nexists in the code and every arrow is a real call/data path (and flag real paths the diagram omits).\nIf the code has an obvious logic bug (off-by-one, inverted condition, wrong variable, missing await,\nstate not persisted...) report it even when the spec does not mention that area, as kind=mismatch\nwhen it contradicts the spec's intent, otherwise kind=unspecified, severity=error.\nsummary: 1-3 sentences on the state of things.\n\n== THIS COMPILE IS FOR DOC `spec` (.aic/docs/spec.md, with line numbers) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== YOUR PREVIOUS ITEMS FOR DOC `spec` (your new list replaces exactly these) ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== ANCHORED CONTEXT (resolved from @anchors in the doc) ==\n### @app.py:1-2\n```\n    1| def load(path):\n    2|     return open(path).read()\n```\n\n== NEW ACTIVITY SINCE YOUR LAST COMPILE (of any doc) ==\nWORKER SAID: Done."
+ },
+ "ask_no_doc": {
+  "key": "ask",
+  "model": "opus",
+  "note": "chat",
+  "schema": false,
+  "add_dirs": [],
+  "prompt": "== THE HUMAN'S CURRENT DOC ==\n(none yet)\n\n== WORKER ACTIVITY SO FAR ==\n\n[turn 1] USER PROMPT TO WORKER:\ngo\nWORKER TOOL: Edit app.py:5-6\n  why: add save\n  @@ line 5\n  +def save(path, text):\n  +    open(path, 'w').write(text)\nWORKER SAID: Done.\n\n== QUESTION ==\nwhat is missing?"
+ },
+ "ask": {
+  "key": "ask",
+  "model": "opus",
+  "note": "ask trace",
+  "schema": false,
+  "add_dirs": [],
+  "prompt": "== THE HUMAN'S CURRENT DOC `spec` (.aic/docs/spec.md) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== WORKER ACTIVITY SINCE WE LAST TALKED ==\n(no worker activity yet)\n\n== THE HUMAN IS POINTING AT (trace) ==\n{\"where\": \"trace\"}\n\nTrace event under cursor:\nWORKER TOOL: Edit app.py:5-6\n  why: add save\n  @@ line 5\n  +def save(path, text):\n  +    open(path, 'w').write(text)\n\n== QUESTION ==\nwhy @app.py:save?"
+ },
+ "ask_code_ctx": {
+  "key": "ask",
+  "model": "opus",
+  "note": "ask code app.py:2",
+  "schema": false,
+  "add_dirs": [],
+  "prompt": "== THE HUMAN'S CURRENT DOC `spec` (.aic/docs/spec.md) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== WORKER ACTIVITY SINCE WE LAST TALKED ==\n(no worker activity yet)\n\n== THE HUMAN IS POINTING AT (code app.py:2) ==\n{\"where\": \"code\", \"file\": \"app.py\", \"line\": 2, \"excerpt\": \"see @app.py:1\"}\n\n== QUESTION ==\nand this?\n\n== ANCHORED CONTEXT (resolved from @anchors in the question/excerpt) ==\n### @app.py:1\n```\n    1| def load(path):\n    2|     return open(path).read()\n    3| \n    4| \n    5| def save(path, text):\n    6|     open(path, 'w').write(text)\n```"
+ },
+ "whatif": {
+  "key": "ask",
+  "model": "opus",
+  "note": "what-if",
+  "schema": false,
+  "add_dirs": [],
+  "prompt": "== THE HUMAN'S CURRENT DOC `spec` (.aic/docs/spec.md) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== WORKER ACTIVITY SINCE WE LAST TALKED ==\n(no worker activity yet)\n\n== THE HUMAN IS POINTING AT (trace) ==\n{\"where\": \"trace\"}\n\nTrace event under cursor:\nWORKER TOOL: Edit app.py:5-6\n  why: add save\n  @@ line 5\n  +def save(path, text):\n  +    open(path, 'w').write(text)\n\n== WHAT-IF ==\nThe human asks: at the decision above, what if the worker had done this instead:\nwrite to a tmp file first\n\nSketch the alternative as a short indented outline tree in the spec's pseudocode style, titled '(reconstructed alternative)'. Then list the concrete consequences vs what was actually done (files that would differ, risks, what it would make easier/harder). This is a hypothetical: real alternatives are not recorded, so say what you are inferring."
+ },
+ "fix": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "fix spec",
+  "schema": true,
+  "add_dirs": [],
+  "prompt": "The human asked you to FIX doc `spec`: propose edits to that doc that resolve the diagnostic items below.\nYou still never edit files: your edits are data. aic shows them to the human, who picks which ones to apply.\nRules:\n- Edit only this doc: never code, never other docs, never its first line when that is an `<!-- aic: ... -->` marker.\n- Fix an item only where changing the doc is the right resolution: the doc is ambiguous, contradicts itself, has a\n  hole, assumes something false about the code, or omits something the worker did that the human should decide on.\n  When the worker is the one that is wrong and the doc is right, do not change the doc: list the item under skipped.\n- One fix per item; a fix that also resolves related items names the main one. item = the item's number; null for a\n  fix no item names (only when it is needed for the others to make sense).\n- Each edit replaces `old` with `new`. Copy `old` verbatim from the doc text WITHOUT the \"  12| \" line-number prefix,\n  long enough to occur exactly once in the doc; prefer whole lines. To insert, put the neighbouring line in `old` and\n  repeat it in `new`. The edits of one fix never overlap; different fixes should not touch the same lines.\n- Keep the human's voice and form (outline, pseudocode, box diagrams); make the smallest edit that resolves the item.\n  Verify what you write about the code with Read/Grep/Glob first.\n- title: imperative, under 70 characters. why: one sentence.\n\n== DOC `spec` (.aic/docs/spec.md as the human sees it now, with line numbers) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== ITEMS TO FIX (from your last compile of this doc; lines may have moved since) ==\n#1 [incoherent/warning] doc:5 atomic how?\n#2 [model/error] app.py:5 no tmp file (doc line 4)"
+ },
+ "fix_range": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "fix spec",
+  "schema": true,
+  "add_dirs": [],
+  "prompt": "The human asked you to FIX doc `spec`: propose edits to that doc that resolve the diagnostic items below.\nYou still never edit files: your edits are data. aic shows them to the human, who picks which ones to apply.\nRules:\n- Edit only this doc: never code, never other docs, never its first line when that is an `<!-- aic: ... -->` marker.\n- Fix an item only where changing the doc is the right resolution: the doc is ambiguous, contradicts itself, has a\n  hole, assumes something false about the code, or omits something the worker did that the human should decide on.\n  When the worker is the one that is wrong and the doc is right, do not change the doc: list the item under skipped.\n- One fix per item; a fix that also resolves related items names the main one. item = the item's number; null for a\n  fix no item names (only when it is needed for the others to make sense).\n- Each edit replaces `old` with `new`. Copy `old` verbatim from the doc text WITHOUT the \"  12| \" line-number prefix,\n  long enough to occur exactly once in the doc; prefer whole lines. To insert, put the neighbouring line in `old` and\n  repeat it in `new`. The edits of one fix never overlap; different fixes should not touch the same lines.\n- Keep the human's voice and form (outline, pseudocode, box diagrams); make the smallest edit that resolves the item.\n  Verify what you write about the code with Read/Grep/Glob first.\n- title: imperative, under 70 characters. why: one sentence.\n\n== DOC `spec` (.aic/docs/spec.md as the human sees it now, with line numbers) ==\n   1| <!-- aic: compile -->\n   2| # Spec\n   3| \n   4| - load reads @app.py:1-2\n   5| - save is atomic\n\n== ITEMS TO FIX (from your last compile of this doc; lines may have moved since) ==\n#2 [model/error] app.py:5 no tmp file (doc line 4)"
+ },
+ "compile_plain": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "compile plain",
+  "schema": true,
+  "add_dirs": [],
+  "prompt": "Compile the doc named below (\"the spec\") against the repository and the worker's recent activity.\nEmit diagnostics of these kinds:\n- mismatch: the spec says X but the worker did Y, or has not done it yet\n- incoherent: the spec contradicts itself, is ambiguous, or has a hole the worker would have to guess\n- model: the spec assumes something about the existing code that is not true\n- unspecified: the worker changed things the spec does not mention (scope creep, side effects)\nFor each item set file=\"doc\" and line=<doc line> when it is about a line of the doc being compiled, otherwise file=<repo-relative path> and line=<code line> (and spec_line=<doc line> if a doc line is related).\nseverity: error = will produce wrong behaviour or contradicts the spec; warning = likely problem or unclear; info = worth knowing.\nReport every item that still holds after the new activity: your list replaces this doc's previous list (shown below); items of other docs are not affected.\nAn empty or nearly empty spec is fine: then only report 'unspecified' items that the human should know about.\nA heading containing \"[done]\" marks a finished requirement: verify it still holds (report it if\nthe code broke it), but never report it as pending work or ask the human to remove it.\nPseudocode is intent: do not report syntax, naming or missing-detail nits in it; report only where its\nlogic is wrong, contradicts itself, or disagrees with the code. For box diagrams, check that every box\nexists in the code and every arrow is a real call/data path (and flag real paths the diagram omits).\nIf the code has an obvious logic bug (off-by-one, inverted condition, wrong variable, missing await,\nstate not persisted...) report it even when the spec does not mention that area, as kind=mismatch\nwhen it contradicts the spec's intent, otherwise kind=unspecified, severity=error.\nsummary: 1-3 sentences on the state of things.\n\n== THIS COMPILE IS FOR DOC `plain` (.aic/docs/plain.md, with line numbers) ==\n   1| # Plain\n   2| \n   3| - no anchors here\n\n== YOUR PREVIOUS ITEMS FOR DOC `plain` (your new list replaces exactly these) ==\n(none)\n\n== NEW ACTIVITY SINCE YOUR LAST COMPILE (of any doc) ==\n(no worker activity yet)"
+ },
+ "whatif_no_ctx": {
+  "key": "ask",
+  "model": "opus",
+  "note": "what-if",
+  "schema": false,
+  "add_dirs": [],
+  "prompt": "== THE HUMAN'S CURRENT DOC `plain` (.aic/docs/plain.md) ==\n   1| # Plain\n   2| \n   3| - no anchors here\n\n== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== WORKER ACTIVITY SINCE WE LAST TALKED ==\n(no worker activity yet)\n\n== WHAT-IF ==\nThe human asks: at the decision above, what if the worker had done this instead:\nskip it\n\nSketch the alternative as a short indented outline tree in the spec's pseudocode style, titled '(reconstructed alternative)'. Then list the concrete consequences vs what was actually done (files that would differ, risks, what it would make easier/harder). This is a hypothetical: real alternatives are not recorded, so say what you are inferring."
+ },
+ "compile_outside": {
+  "key": "compile",
+  "model": "sonnet",
+  "note": "compile outside",
+  "schema": true,
+  "add_dirs": [
+   "<OUT>"
+  ],
+  "prompt": "Compile the doc named below (\"the spec\") against the repository and the worker's recent activity.\nEmit diagnostics of these kinds:\n- mismatch: the spec says X but the worker did Y, or has not done it yet\n- incoherent: the spec contradicts itself, is ambiguous, or has a hole the worker would have to guess\n- model: the spec assumes something about the existing code that is not true\n- unspecified: the worker changed things the spec does not mention (scope creep, side effects)\nFor each item set file=\"doc\" and line=<doc line> when it is about a line of the doc being compiled, otherwise file=<repo-relative path> and line=<code line> (and spec_line=<doc line> if a doc line is related).\nseverity: error = will produce wrong behaviour or contradicts the spec; warning = likely problem or unclear; info = worth knowing.\nReport every item that still holds after the new activity: your list replaces this doc's previous list (shown below); items of other docs are not affected.\nAn empty or nearly empty spec is fine: then only report 'unspecified' items that the human should know about.\nA heading containing \"[done]\" marks a finished requirement: verify it still holds (report it if\nthe code broke it), but never report it as pending work or ask the human to remove it.\nPseudocode is intent: do not report syntax, naming or missing-detail nits in it; report only where its\nlogic is wrong, contradicts itself, or disagrees with the code. For box diagrams, check that every box\nexists in the code and every arrow is a real call/data path (and flag real paths the diagram omits).\nIf the code has an obvious logic bug (off-by-one, inverted condition, wrong variable, missing await,\nstate not persisted...) report it even when the spec does not mention that area, as kind=mismatch\nwhen it contradicts the spec's intent, otherwise kind=unspecified, severity=error.\nsummary: 1-3 sentences on the state of things.\n\n== THIS COMPILE IS FOR DOC `outside` (.aic/docs/outside.md, with line numbers) ==\n   1| - follow @<OUT>/guide.md\n   2| - may read @<OUT>/\n\n== YOUR PREVIOUS ITEMS FOR DOC `outside` (your new list replaces exactly these) ==\n(none)\n\n== ANCHORED CONTEXT (resolved from @anchors in the doc) ==\n### @<OUT>/guide.md\n```\n    1| OUTSIDE GUIDE\n```\n\n### @<OUT>/\n```\nguide.md\n```\n\n== NEW ACTIVITY SINCE YOUR LAST COMPILE (of any doc) ==\n(no worker activity yet)"
+ },
+ "ask_outside": {
+  "key": "ask",
+  "model": "opus",
+  "note": "ask code app.py:1",
+  "schema": false,
+  "add_dirs": [
+   "<OUT>"
+  ],
+  "prompt": "== THE HUMAN'S CURRENT DOC `outside` (.aic/docs/outside.md) ==\n   1| - follow @<OUT>/guide.md\n   2| - may read @<OUT>/\n\n== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n[{\"kind\": \"incoherent\", \"severity\": \"warning\", \"file\": \"doc\", \"line\": 5, \"message\": \"atomic how?\"}, {\"kind\": \"model\", \"severity\": \"error\", \"file\": \"app.py\", \"line\": 5, \"spec_line\": 4, \"message\": \"no tmp file\"}]\n\n== WORKER ACTIVITY SINCE WE LAST TALKED ==\n(no worker activity yet)\n\n== THE HUMAN IS POINTING AT (code app.py:1) ==\n{\"where\": \"code\", \"file\": \"app.py\", \"line\": 1, \"excerpt\": \"see @<OUT>/guide.md\"}\n\n== QUESTION ==\ncompare with @<OUT>/guide.md and @<OUT>/\n\n== ANCHORED CONTEXT (resolved from @anchors in the question/excerpt) ==\n### @<OUT>/guide.md\n```\n    1| OUTSIDE GUIDE\n```\n\n### @<OUT>/\n```\nguide.md\n```"
+ }
+}

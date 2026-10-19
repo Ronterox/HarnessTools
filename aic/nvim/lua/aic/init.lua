@@ -153,6 +153,7 @@ local function setup_keymaps(prefix)
   map('n', 'h', '<Plug>(aic-hold)', 'hold')
   map('n', 'c', '<Plug>(aic-continue)', 'continue')
   map('n', '?', '<Plug>(aic-ask)', 'ask at cursor')
+  map('n', 'A', '<Plug>(aic-ask-template)', 'ask with which compiler template')
   map('n', 'l', '<Plug>(aic-last-answer)', 'reopen last answer')
   map('n', 'w', '<Plug>(aic-whatif)', 'what-if')
   map('n', 'b', '<Plug>(aic-blame)', 'blame')
@@ -302,6 +303,13 @@ function M.fix(o)
     else
       mod('fix').start(o)
     end
+  end)
+end
+
+-- :AicAskTemplate [name]: the compiler template questions and ask-at-cursor use.
+function M.ask_template(name)
+  ensure(function()
+    mod('ask').choose_template(name)
   end)
 end
 

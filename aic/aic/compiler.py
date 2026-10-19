@@ -11,7 +11,7 @@ import os
 import subprocess
 import uuid
 
-from . import anchors, docs, paths, usage
+from . import anchors, compiler_prompts, docs, paths, prompts, usage
 
 COMPILE_MODEL = os.environ.get("AIC_COMPILE_MODEL", "sonnet")
 ASK_MODEL = os.environ.get("AIC_ASK_MODEL", "opus")
@@ -32,25 +32,7 @@ Rules:
 - The worker's thinking is not visible; a tool call's "why" is the text it wrote before the call.
 - Be terse and concrete. Point at exact lines."""
 
-COMPILE_TASK = """Compile the doc named below ("the spec") against the repository and the worker's recent activity.
-Emit diagnostics of these kinds:
-- mismatch: the spec says X but the worker did Y, or has not done it yet
-- incoherent: the spec contradicts itself, is ambiguous, or has a hole the worker would have to guess
-- model: the spec assumes something about the existing code that is not true
-- unspecified: the worker changed things the spec does not mention (scope creep, side effects)
-For each item set file="doc" and line=<doc line> when it is about a line of the doc being compiled, otherwise file=<repo-relative path> and line=<code line> (and spec_line=<doc line> if a doc line is related).
-severity: error = will produce wrong behaviour or contradicts the spec; warning = likely problem or unclear; info = worth knowing.
-Report every item that still holds after the new activity: your list replaces this doc's previous list (shown below); items of other docs are not affected.
-An empty or nearly empty spec is fine: then only report 'unspecified' items that the human should know about.
-A heading containing "[done]" marks a finished requirement: verify it still holds (report it if
-the code broke it), but never report it as pending work or ask the human to remove it.
-Pseudocode is intent: do not report syntax, naming or missing-detail nits in it; report only where its
-logic is wrong, contradicts itself, or disagrees with the code. For box diagrams, check that every box
-exists in the code and every arrow is a real call/data path (and flag real paths the diagram omits).
-If the code has an obvious logic bug (off-by-one, inverted condition, wrong variable, missing await,
-state not persisted...) report it even when the spec does not mention that area, as kind=mismatch
-when it contradicts the spec's intent, otherwise kind=unspecified, severity=error.
-summary: 1-3 sentences on the state of things."""
+# The task instructions are compiler templates: prompts/compiler/*.md (compiler_prompts.py).
 
 SCHEMA = {
     "type": "object",
@@ -338,43 +320,72 @@ def _record_error(sdir, doc, e):
         pass
 
 
+def _template(root, name, task):
+    try:
+        return compiler_prompts.find(root, name, task)
+    except prompts.PromptError as e:
+        raise CompilerError(str(e))
+
+
+_tag = compiler_prompts.tag
+
+
+def _template_info(t):
+    shadows = [s for s in t["shadows"] if s != "built-in"]
+    return dict({"name": t["name"], "source": t["source"]}, **({"shadows": shadows} if shadows else {}))
+
+
+def compile_prompt(root, sid, doc=docs.DEFAULT):
+    """-> dict(prompt, model, add_dirs, note, template, seq) for compiling `doc`
+    (its marker may name a compile template: `compile=NAME`)."""
+    sdir = paths.session_dir(root, sid)
+    trace = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
+    st = _state(sdir)
+    # one compiler session for all docs: activity is sent once, whichever doc compiles
+    upto = st.get("compile_upto_seq", 0)
+    new = [e for e in trace if e.get("seq", 0) > upto]
+    first = not st.get("compile")
+    text = docs.read(root, doc)
+    t = _template(root, docs.marker(text).get("compile_template") or "compile", "compile")
+    prev = paths.read_json(docs.diag_path(sdir, doc), {}) or {}
+    anchored = anchors.blocks(text, root, sid)
+    own, own_dirs = compiler_prompts.own_anchors(t, root, sid)
+    values = {
+        "doc.name": doc,
+        "doc": "== THIS COMPILE IS FOR DOC `%s` (.aic/docs/%s.md, with line numbers) ==\n%s" % (doc, doc, numbered(text)),
+        "previous_items": "== YOUR PREVIOUS ITEMS FOR DOC `%s` (your new list replaces exactly these) ==\n%s" % (
+            doc, json.dumps(prev.get("items"), ensure_ascii=False)[:8000] if prev.get("items") else "(none)"),
+        "anchors": "\n\n".join(x for x in (
+            ("== ANCHORED CONTEXT (resolved from @anchors in the doc) ==\n" + anchored) if anchored else "", own) if x),
+        "activity": ("== ALL WORKER ACTIVITY SO FAR ==\n" if first else
+                     "== NEW ACTIVITY SINCE YOUR LAST COMPILE (of any doc) ==\n") + fmt_events(new if not first else trace),
+    }
+    return {"prompt": compiler_prompts.render(t, values), "model": compiler_prompts.model(t, COMPILE_MODEL),
+            "add_dirs": anchors.add_dirs([text], root) + own_dirs,
+            "note": "compile " + doc + _tag(t, "compile"), "template": t,
+            "seq": trace[-1]["seq"] if trace else 0}
+
+
 def _compile_once(root, sid, doc=docs.DEFAULT):
     sdir = paths.session_dir(root, sid)
     dpath = docs.diag_path(sdir, doc)
     try:
-        trace = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
-        st = _state(sdir)
-        # one compiler session for all docs: activity is sent once, whichever doc compiles
-        upto = st.get("compile_upto_seq", 0)
-        new = [e for e in trace if e.get("seq", 0) > upto]
-        first = not st.get("compile")
-        text = docs.read(root, doc)
-        prev = paths.read_json(dpath, {}) or {}
-        parts = [
-            COMPILE_TASK,
-            "== THIS COMPILE IS FOR DOC `%s` (.aic/docs/%s.md, with line numbers) ==\n%s" % (doc, doc, numbered(text)),
-            "== YOUR PREVIOUS ITEMS FOR DOC `%s` (your new list replaces exactly these) ==\n%s" % (
-                doc, json.dumps(prev.get("items"), ensure_ascii=False)[:8000] if prev.get("items") else "(none)"),
-            ("== ALL WORKER ACTIVITY SO FAR ==\n" if first else
-             "== NEW ACTIVITY SINCE YOUR LAST COMPILE (of any doc) ==\n") + fmt_events(new if not first else trace),
-        ]
-        anchored = anchors.blocks(text, root, sid)
-        if anchored:
-            parts.insert(3, "== ANCHORED CONTEXT (resolved from @anchors in the doc) ==\n" + anchored)
-        out = run_claude(root, sdir, "compile", COMPILE_MODEL, "\n\n".join(parts), schema=SCHEMA,
-                         add_dirs=anchors.add_dirs([text], root), note="compile " + doc)
+        c = compile_prompt(root, sid, doc)
+        out = run_claude(root, sdir, "compile", c["model"], c["prompt"], schema=SCHEMA,
+                         add_dirs=c["add_dirs"], note=c["note"])
         res = out.get("structured_output")
         if not isinstance(res, dict):
             try:
                 res = json.loads(out.get("result") or "")
             except ValueError:
                 raise CompilerError("compiler returned no diagnostics")
-        seq = trace[-1]["seq"] if trace else 0
-        diag = {"doc": doc, "compiled_at": paths.now(), "upto_seq": seq,
+        t = c["template"]
+        diag = {"doc": doc, "compiled_at": paths.now(), "upto_seq": c["seq"],
                 "summary": res.get("summary", ""), "items": res.get("items") or [],
+                "template": _template_info(t),
                 "cost_usd": out.get("total_cost_usd")}
         paths.write_json(dpath, diag)
-        _set_state(sdir, compile_upto_seq=seq)
+        _set_state(sdir, compile_upto_seq=c["seq"])
         return diag
     except CompilerError as e:
         prev = paths.read_json(dpath, {}) or {}
@@ -394,50 +405,59 @@ def _where(ctx):
     return w
 
 
-def ask(root, sid, question, ctx=None, whatif=False, doc=docs.DEFAULT):
+def ask_prompt(root, sid, question, ctx=None, whatif=False, doc=docs.DEFAULT, template=None):
+    """-> dict(prompt, model, add_dirs, note, template, seq) for a question
+    (template: a `task: ask` compiler template; with whatif, a `task: whatif` one)."""
     sdir = paths.session_dir(root, sid)
     trace = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
-    st = _state(sdir)
-    seen_upto = st.get("ask_upto_seq", 0)
+    seen_upto = _state(sdir).get("ask_upto_seq", 0)
     new = [e for e in trace if e.get("seq", 0) > seen_upto]
+    task = "whatif" if whatif else "ask"
+    t = _template(root, template or task, task)
     diag = paths.read_json(docs.diag_path(sdir, doc), {}) or {}
     spec = docs.read(root, doc)
-    if os.path.isfile(docs.path(root, doc)):
-        parts = ["== THE HUMAN'S CURRENT DOC `%s` (.aic/docs/%s.md) ==\n%s" % (doc, doc, numbered(spec))]
-    else:
-        parts = ["== THE HUMAN'S CURRENT DOC ==\n(none yet)"]
-    if diag.get("items"):
-        parts.append("== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n" + json.dumps(diag["items"], ensure_ascii=False)[:8000])
-    parts.append("== WORKER ACTIVITY %s ==\n" % ("SO FAR" if not seen_upto else "SINCE WE LAST TALKED")
-                 + fmt_events(new, budget=30000))
+    pointing = []
     if ctx:
         c = dict(ctx)
         ev = c.pop("event", None)
-        parts.append("== THE HUMAN IS POINTING AT (%s) ==\n%s" % (_where(ctx), json.dumps(c, ensure_ascii=False)[:6000]))
+        pointing.append("== THE HUMAN IS POINTING AT (%s) ==\n%s" % (_where(ctx), json.dumps(c, ensure_ascii=False)[:6000]))
         if ev:
-            parts.append("Trace event under cursor:\n" + fmt_event(ev, hunk_lines=120))
-    if whatif:
-        parts.append(
-            "== WHAT-IF ==\nThe human asks: at the decision above, what if the worker had done this instead:\n"
-            + question + "\n\nSketch the alternative as a short indented outline tree in the spec's "
-            "pseudocode style, titled '(reconstructed alternative)'. Then list the concrete consequences "
-            "vs what was actually done (files that would differ, risks, what it would make easier/harder). "
-            "This is a hypothetical: real alternatives are not recorded, so say what you are inferring.")
-    else:
-        parts.append("== QUESTION ==\n" + question)
+            pointing.append("Trace event under cursor:\n" + fmt_event(ev, hunk_lines=120))
     # Outside-project anchors only from what the human typed: the excerpt is
     # code/chat text that the worker or the compiler may have written.
     anchored = "\n\n".join(x for x in (
         anchors.blocks(question, root, sid),
         anchors.blocks((ctx or {}).get("excerpt") or "", root, sid, allow_outside=False)) if x)
-    if anchored:
-        parts.append("== ANCHORED CONTEXT (resolved from @anchors in the question/excerpt) ==\n" + anchored)
-    out = run_claude(root, sdir, "ask", ASK_MODEL, "\n\n".join(parts), add_dirs=anchors.add_dirs([question], root),
-                     note="what-if" if whatif else ("ask " + _where(ctx)).strip() if ctx else "chat")
+    own, own_dirs = compiler_prompts.own_anchors(t, root, sid)
+    values = {
+        "doc.name": doc,
+        "doc": ("== THE HUMAN'S CURRENT DOC `%s` (.aic/docs/%s.md) ==\n%s" % (doc, doc, numbered(spec))
+                if os.path.isfile(docs.path(root, doc)) else "== THE HUMAN'S CURRENT DOC ==\n(none yet)"),
+        "diagnostics": ("== LATEST COMPILE DIAGNOSTICS OF THAT DOC ==\n"
+                        + json.dumps(diag["items"], ensure_ascii=False)[:8000]) if diag.get("items") else "",
+        "activity": "== WORKER ACTIVITY %s ==\n" % ("SO FAR" if not seen_upto else "SINCE WE LAST TALKED")
+                    + fmt_events(new, budget=30000),
+        "pointing": "\n\n".join(pointing),
+        "question": question,
+        "anchors": "\n\n".join(x for x in (
+            ("== ANCHORED CONTEXT (resolved from @anchors in the question/excerpt) ==\n" + anchored)
+            if anchored else "", own) if x),
+    }
+    note = "what-if" if whatif else ("ask " + _where(ctx)).strip() if ctx else "chat"
+    return {"prompt": compiler_prompts.render(t, values), "model": compiler_prompts.model(t, ASK_MODEL),
+            "add_dirs": anchors.add_dirs([question], root) + own_dirs, "note": note + _tag(t, task),
+            "template": t, "seq": trace[-1]["seq"] if trace else 0}
+
+
+def ask(root, sid, question, ctx=None, whatif=False, doc=docs.DEFAULT, template=None):
+    sdir = paths.session_dir(root, sid)
+    a = ask_prompt(root, sid, question, ctx, whatif, doc, template)
+    out = run_claude(root, sdir, "ask", a["model"], a["prompt"], add_dirs=a["add_dirs"], note=a["note"])
     answer = (out.get("result") or "").strip()
 
-    _set_state(sdir, ask_upto_seq=trace[-1]["seq"] if trace else 0)
-    head = "## You%s%s" % (" (what-if)" if whatif else "", (" — " + _where(ctx)) if ctx else "")
+    _set_state(sdir, ask_upto_seq=a["seq"])
+    head = "## You%s%s%s" % (" (what-if)" if whatif else "", (" — " + _where(ctx)) if ctx else "",
+                             _tag(a["template"], "whatif" if whatif else "ask"))
     with open(os.path.join(sdir, "chat.md"), "a", encoding="utf-8") as f:
         f.write("%s\n%s\n\n## Compiler\n%s\n\n" % (head, question.strip(), answer))
     return answer

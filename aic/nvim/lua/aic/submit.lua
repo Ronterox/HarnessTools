@@ -319,14 +319,16 @@ local function edit_file(path)
   require('aic.view').open_code(path, 1)
 end
 
--- Copy (or create) template `name` into the project or user dir, then edit it.
-local function place(name, text)
-  vim.ui.select({ 'project (.aic/prompts)', 'user (~/.config/aic/prompts)' }, { prompt = 'aic: put ' .. name .. ' in' },
-    function(choice)
+-- Copy (or create) template `name` into the project or user dir (its
+-- `compiler/` subdir for a compiler template), then edit it.
+local function place(name, text, compiler)
+  local sub = compiler and '/compiler' or ''
+  vim.ui.select({ 'project (.aic/prompts' .. sub .. ')', 'user (~/.config/aic/prompts' .. sub .. ')' },
+    { prompt = 'aic: put ' .. name .. ' in' }, function(choice)
       if not choice then
         return
       end
-      local d = choice:match('^project') and (state.root .. '/.aic/prompts') or user_dir()
+      local d = (choice:match('^project') and (state.root .. '/.aic/prompts') or user_dir()) .. sub
       local p = d .. '/' .. name .. '.md'
       if not util.exists(p) then
         vim.fn.mkdir(d, 'p')
@@ -336,7 +338,51 @@ local function place(name, text)
     end)
 end
 
+local function ask_name(cb)
+  vim.ui.input({ prompt = 'aic: new template name: ' }, function(n)
+    n = n and vim.trim(n):gsub('%.md$', '')
+    if n and n ~= '' then
+      if not doc_mod().valid(n) then
+        util.notify('aic: bad template name ' .. n .. ' (letters, digits, _ . -)', vim.log.levels.ERROR)
+        return
+      end
+      cb(n)
+    end
+  end)
+end
+
+local RESERVED = { compile = true, ask = true, whatif = true, fix = true } -- (the built-ins' names)
+
+-- A new compiler template starts as a copy of the built-in one for its task
+-- (never of a project file: the worker can reach those). `ask`: asked with
+-- :AicAskTemplate; `compile`: <!-- aic: compile=NAME -->.
+local function new_compiler(list)
+  vim.ui.select({ 'ask', 'compile' }, { prompt = 'aic: a compiler template for' }, function(task)
+    if not task then
+      return
+    end
+    ask_name(function(n)
+      if RESERVED[n] and n ~= task then
+        util.notify(('aic: %s is the built-in %s template; pick another name'):format(n, n), vim.log.levels.ERROR)
+        return
+      end
+      local base
+      for _, t in ipairs(list) do
+        if t.compiler and t.name == task then
+          base = util.read_file(t.builtin or (t.source == 'built-in' and t.path) or '')
+        end
+      end
+      base = base or ('---\ndescription: x\ntask: ' .. task .. '\n---\n')
+      if not base:match('\ntask:') then
+        base = base:gsub('^%-%-%-\n', '---\ntask: ' .. task .. '\n', 1)
+      end
+      place(n, (base:gsub('\ndescription:[^\n]*', '\ndescription: ' .. n, 1)), true)
+    end)
+  end)
+end
+
 -- <prefix>p: pick a template to edit (built-ins are copied first) or make one.
+-- Lists the submit templates, then the compiler's (`compiler/NAME`).
 function M.manage()
   backend.run({ 'prompts', '--json' }, state.root, function(ok, out, err)
     local list = ok and util.decode(out)
@@ -344,34 +390,37 @@ function M.manage()
       util.notify(util.oneline('aic prompts failed: ' .. vim.trim(err ~= '' and err or out)), vim.log.levels.ERROR)
       return
     end
-    table.insert(list, { new = true })
-    vim.ui.select(list, {
-      prompt = 'aic: prompt templates',
-      format_item = function(t)
-        if t.new then
-          return '+ new template'
-        end
-        return ('%s  [%s]%s'):format(t.name, t.source, t.error and '  (broken)' or '')
-      end,
-    }, function(t)
-      if not t then
-        return
-      elseif t.new then
-        vim.ui.input({ prompt = 'aic: new template name: ' }, function(n)
-          n = n and vim.trim(n):gsub('%.md$', '')
-          if n and n ~= '' then
-            if not doc_mod().valid(n) then
-              util.notify('aic: bad template name ' .. n .. ' (letters, digits, _ . -)', vim.log.levels.ERROR)
-              return
-            end
-            place(n, SKELETON)
-          end
-        end)
-      elseif t.source == 'built-in' then -- read-only: edit a copy that overrides it
-        place(t.name, util.read_file(t.path) or SKELETON)
-      else
-        edit_file(t.path)
+    backend.run({ 'prompts', '--compiler', '--json' }, state.root, function(ok2, out2)
+      for _, t in ipairs(ok2 and util.decode(out2) or {}) do
+        t.compiler = true
+        table.insert(list, t)
       end
+      table.insert(list, { new = 'submit' })
+      table.insert(list, { new = 'compiler' })
+      vim.ui.select(list, {
+        prompt = 'aic: prompt templates',
+        format_item = function(t)
+          if t.new then
+            return '+ new ' .. t.new .. ' template'
+          end
+          return ('%s%s  [%s%s]%s'):format(t.compiler and 'compiler/' or '', t.name, t.source,
+            t.task and (', ' .. t.task) or '', t.error and '  (broken)' or '')
+        end,
+      }, function(t)
+        if not t then
+          return
+        elseif t.new == 'submit' then
+          ask_name(function(n)
+            place(n, SKELETON)
+          end)
+        elseif t.new then
+          new_compiler(list)
+        elseif t.source == 'built-in' then -- read-only: edit a copy that overrides it
+          place(t.name, util.read_file(t.path) or SKELETON, t.compiler)
+        else
+          edit_file(t.path)
+        end
+      end)
     end)
   end)
 end
