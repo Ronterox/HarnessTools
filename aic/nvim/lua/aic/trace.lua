@@ -1,4 +1,5 @@
 -- Trace buffer: trace.jsonl rendered as a foldable tree grouped by turn.
+local config = require('aic.config')
 local state = require('aic.state')
 local util = require('aic.util')
 
@@ -9,7 +10,7 @@ M.buf = nil
 M.map = {} -- [lnum] = { ev = event, head = bool, line = target line in file }
 M.levels = {} -- [lnum] = foldexpr value
 -- Fold state the human chose, by node key ('turn:N' or event id); true = open.
--- Unset = default: turns open, an event's details (why, hunks) closed.
+-- Unset = default: turns closed (config `history_turns`), details closed.
 M.folds = {}
 local folds_dir -- session M.folds belongs to (turn numbers repeat across sessions)
 local ns = api.nvim_create_namespace('aic_trace')
@@ -358,24 +359,38 @@ end
 
 -- Recompute folds from scratch (incremental fold updates go wrong when lines
 -- change inside folds) and re-apply the remembered state.
+local function turns_open()
+  return config.options.history_turns == 'open'
+end
+
 local function apply_folds(win)
   api.nvim_win_call(win, function()
     local view = vim.fn.winsaveview()
-    vim.wo[0][0].foldlevel = 1 -- even after a zm/zr: turns open, details closed
+    -- even after a zm/zr: turns as configured ('history_turns'), details closed
+    vim.wo[0][0].foldlevel = turns_open() and 1 or 0
     vim.cmd('silent! normal! zX')
-    local turns = {}
-    for lnum, node in pairs(M.map) do
-      local k = starts_fold(lnum) and fold_key(node)
-      if k ~= nil and M.folds[k] ~= nil then
-        if node.turn then
-          turns[lnum] = M.folds[k]
-        elseif M.folds[k] then
-          vim.cmd(('silent! %dfoldopen'):format(lnum))
+    local lnums = vim.tbl_keys(M.map)
+    table.sort(lnums)
+    local want, turn_l = {}, nil -- turn header line -> open?
+    for _, lnum in ipairs(lnums) do
+      local node = M.map[lnum]
+      if node.turn and node.head then
+        turn_l = lnum
+        local open = M.folds[fold_key(node)]
+        if open == nil then
+          open = turns_open()
         end
+        want[lnum] = open
+      elseif starts_fold(lnum) and M.folds[fold_key(node)] and turn_l then
+        -- details the human opened: open them (inside their turn, opened for it)
+        vim.cmd(('silent! %dfoldopen'):format(turn_l))
+        vim.cmd(('silent! %dfoldopen'):format(lnum))
       end
     end
-    for lnum, open in pairs(turns) do -- after events: :foldclose hits the innermost open fold
-      if not open then
+    for lnum, open in pairs(want) do -- after the details: a turn's own fold is the innermost at its header
+      if open then
+        vim.cmd(('silent! %dfoldopen'):format(lnum))
+      elseif vim.fn.foldclosed(lnum) == -1 then
         vim.cmd(('silent! %dfoldclose'):format(lnum))
       end
     end
@@ -602,7 +617,7 @@ local function setup_window(win)
   wo.foldmethod = 'expr'
   wo.foldexpr = "v:lua.require'aic.trace'.foldexpr(v:lnum)"
   wo.foldtext = ''
-  wo.foldlevel = 1
+  wo.foldlevel = turns_open() and 1 or 0
   wo.foldenable = true
   wo.foldcolumn = '0'
   wo.wrap = false

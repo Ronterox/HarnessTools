@@ -17,6 +17,7 @@ lazy.nvim (local dir):
       -- prefix = '<leader>z',         -- default prefix
       -- keymaps = true,               -- install the default keys below
       -- winbar = true,               -- usage winbar on the aic views
+      -- history_turns = 'closed',    -- history: turns start collapsed ('open': expanded)
     })
   end,
 }
@@ -92,7 +93,7 @@ Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCom
 |---|---|
 | `<CR>` | on a turn, or a node with details (why, diff hunks, the rest of a long text, a tool's full input): show/hide them (showing marks it seen). On a hunk line or a node without details: jump to its file:line; with nothing to show or open: mark it seen |
 | `gf` | jump to file:line of the node or hunk line (marks the node seen) |
-| `za` `zo` `zc` … | normal folds (turns open, details hidden); what you open or close survives new events |
+| `za` `zo` `zc` … | normal folds (turns collapsed, details hidden; config `history_turns = 'open'` starts turns expanded); what you open or close survives new events |
 | `]u` / `[u` | next / previous unseen node |
 | `m` / `M` | toggle seen on the node / mark all seen |
 | `a` / `W` | ask / what-if at cursor |
