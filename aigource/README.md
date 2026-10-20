@@ -104,29 +104,88 @@ color, dark notches are idle stretches squeezed to 2 minutes so multi-day
 histories stay usable. Jumping back rebuilds the scene from history and keeps
 the layout where it was. "go live →" (or `L`) returns to now.
 
+## Structure view
+
+`S` switches between the stage and the **structure screen**: the repo as it is
+today (folders, files, and their functions and classes), coloured by what the
+loaded history did to it. The history is what aigource loaded (`--since`,
+`--all`, explicit files), so it agrees with the stage. The first `S` builds it
+on a worker thread (a few seconds on a big history; the stage keeps running).
+It opens on Floating nodes, heat by turns.
+
+Files come from `git ls-files` (plus untracked files git doesn't ignore), at
+most 5000 with the ones history touched first. Functions and classes are the
+`@function.outer` / `@class.outer` captures of `nvim-treesitter-textobjects`'
+queries, found next to the highlight queries; a language without them has file
+numbers only. `AIG_NO_DEFS=1` turns functions off.
+
+**Live:** while it's open, new events rebuild it about 3 s after the last one
+(or after 15 s while they keep coming), one build at a time; the screen stays
+as it is, with "updating…" in the bar, and keeps the folder, the inspected node
+or turn, the selected turn, view, mode and scroll. While it's closed nothing is
+built; opening it rebuilds if events arrived. `R` rebuilds now instead of
+waiting, dropping a build already running (when events arrived since the last
+build). Quitting stops a build midway. What each number means, and where in the
+code, is in [docs/STRUCTURE.md](docs/STRUCTURE.md).
+
+| | |
+|---|---|
+| views | **Icicle** (`1`): rows by depth below the folder in focus, width by lines. **Treemap** (`2`): nested rectangles, a header strip per group. **Floating nodes** (`3`): one level at a time, the folder (or file) in focus as a hub with its children floating around it (drag one to move it) |
+| heat | turns, lines, risk (turns × complexity), rework (lines rewritten within 2 turns), fixes, context (reads and searches before a change), cost (output tokens), time (agent time), age (newest is hottest), owner (the session or subagent that wrote most of today's lines). Log scale next to the busiest node of the same level; folders are darker. Hover a mode for what it measures |
+| dots | flags: coral corrected / interrupted, yellow untested / failing, purple changed without reading it first, cyan slow |
+| arcs | hover or inspect a file or function: lines to what changed in the same turns (coral: another folder or file); dashed to the nearest thing on screen that holds a partner |
+| inspector | right: hovering a node inspects it, and it stays when the mouse moves on (into the inspector: its code, partners and turns). Flags, the code with a strip per line in the colour of the turn that wrote it (hover a strip for that turn and the agent's comment; hover a legend row to single out its lines), size after each change, fixes, rework, context cost and what was read to change it, partners with `shared/turns (P% match)`, cost and time next to the average, who wrote today's lines and how old they are, the hottest children by the current mode, and the turns that changed it with the agent's comments. Rows and turn titles are clickable |
+| turn strip | bottom: one bar per turn in time order, height = lines changed, width = time taken; coral = a fix, a cyan top = slow. Pick one (click, `[` `]`, ‹ ›) to dim what it didn't touch and inspect it: files and functions it changed, what it read, how much of it survives today, its cost, your next prompt when it was corrected, and what the agent said, in order |
+
+Click a folder to focus it, a file to open its functions; the centre, a path
+segment, `Esc` or `Backspace` go up. Keys: `1` `2` `3` views, `[` `]` turns,
+`Esc` clears the turn, then goes up, then back to the stage; `Backspace` up;
+`R` rebuild now, `S` stage, `Q` quit. The heat modes are picked in the bar
+(click). Wheel scrolls the inspector (inside the code: the code;
+`Shift`+wheel sideways).
+
 ## Options
 
 ```
 -r, --root DIR     repo root (default: current directory)
--s, --since HOURS  sessions written to in the last HOURS (default 2)
+-s, --since HOURS  sessions written to in the last HOURS (default 2; the
+                   newest session when none qualify)
 -a, --all          every session of the repo
 -x, --speed N      replay speed multiplier (default 60)
--l, --live         skip the replay, start at now
--w, --watch        also show filesystem changes not made by an agent (live only)
+-l, --live         skip the replay animation, start at now
+-w, --watch        also show filesystem changes (yours, other tools), live
+                   only; agent commands' changes go to that agent
+-W, --size WxH     window size (default 1600x900)
 --dump             print the normalized event stream as NDJSON and exit
 --follow SECS      with --dump: keep printing new events for SECS seconds
---detail           with --dump: after each step, what its detail window shows
-                   (and its comments)
+--detail           with --dump: after each step, what the detail window shows
+                   and the agent's comments on it
+--structure-dump   print the structure analysis (tree, turns, changes) as JSON
+                   and exit; counts go to stderr
+--metrics FILE     with --structure-dump: also write what the structure view
+                   derives from it (per node and turn) to FILE as JSON;
+                   build times go to stderr
 --shot FILE        render, save a PNG after --frames frames, exit
+--frames N         frames before --shot (default 600)
 --seek F           start paused at fraction F (0..1) of the timeline
 --mouse X,Y        fake mouse position for --shot (hover testing)
 --turn ID          open the turn window of the actor whose id starts with ID
 --step N           with --turn: open its step N in full (negative: from the end)
 --file PATH        open the last change of this file, as a click on it does
+--structure VIEW[:MODE[:PATH]]
+                   open the structure screen: icicle, treemap or floating;
+                   a heat mode (turns, lines, risk, rework, fixes, context,
+                   cost, time, age, owner); a folder to focus, or a file or
+                   function to inspect (path below the root)
+--structure-turn N select its Nth turn in time order (negative: from the end)
 ```
 
+`--structure` and `--structure-turn` are for `--shot` (a `--shot` waits for the
+build): `--structure floating:risk:src/model.c/model_new --structure-turn -1`.
+
 Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
-`H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `Q` quit.
+`H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `Q` quit.
+In the structure screen: `1` `2` `3` views, `[` `]` turns, `Esc`/`Backspace` up, `R` rebuild.
 
 ## Where the data comes from
 
@@ -136,7 +195,8 @@ results, and `bashEditDiff`, where Claude Code records the files a Bash command
 created, changed or deleted, generated files included. Files a command read (`cat`,
 `head`, `tail`, `sed` without `-i`, `nl`, `less`, `<` redirects, following
 `cd`) count as reads, marked "by the command" in the turn window, when the
-command succeeded and the file is still there. The transcript format
+command succeeded and the file is still there. A resumed session's file starts
+with copies of earlier records; those are counted once. The transcript format
 is internal to Claude Code; every assumption about it lives in
 `src/transcript.c`.
 
@@ -155,9 +215,19 @@ only: nothing records past filesystem changes, so replays don't have them.
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
 unit-tests the timeline's time mapping (`tests/test_timeline.c`), change ring
 sizing (`tests/test_rings.c`), the folder layout (`tests/test_layout.c`: no
-crossing lines on random trees) and syntax
-highlighting against the installed grammars (`tests/test_syntax.c`, skipped
-for a language with none).
+crossing lines on random trees), the structure screen's geometry
+(`tests/test_slayout.c`: treemap and partition against d3's numbers, nesting
+on random trees, the floating nodes' simulation), the structure analysis
+(`tests/test_analysis.c`: line alignment, hunks, relocation; `tests/test_change.c`:
+a change read back from the transcript; `tests/test_metrics.c`; expected JSON
+for a hand-built structure fixture, also with `AIG_NO_DEFS=1`) and syntax
+highlighting against the installed grammars (`tests/test_syntax.c`, skipped for
+a language with none). The Python and HTML draft in `draft/` is the oracle for
+two parity checks: `tests/metrics_parity.js` (`--metrics` against the page's own
+JavaScript; part of `make test`, needs node and the d3 that
+`scripts/fetch-deps.sh` fetches, skipped without them, a failure with
+`REQUIRE_PARITY=1`) and `tests/structure_parity.py` (`--structure-dump` against
+`build_data.py` on this repo's transcripts; run by hand).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 `make asan` builds `build/asan/aigource` with AddressSanitizer and UBSan (its
 own objects, the normal build is untouched); run it with the same flags, e.g.

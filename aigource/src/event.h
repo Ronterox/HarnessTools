@@ -1,13 +1,15 @@
 #ifndef AIG_EVENT_H
 #define AIG_EVENT_H
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdio.h>
 
 /* One normalized thing an actor did to the repo. Producers: transcript.c (M1),
  * the filesystem watcher (M2). Consumer: model.c. */
 typedef enum {
-    EV_TURN,   /* a new prompt started a turn; text = prompt */
-    EV_READ,   /* Read of a file */
+    EV_TURN,   /* a new prompt started a turn; text = its first line (140 characters), prompt =
+                * PROMPT_*. For the analysis only human and pasted prompts start turns. */
+    EV_READ,   /* Read of a file; path absolute ("/...") for one outside the repo */
     EV_SEARCH, /* Grep/Glob under path; text = pattern */
     EV_CREATE, /* file created */
     EV_EDIT,   /* file changed with known diff size */
@@ -17,6 +19,21 @@ typedef enum {
     EV_TOOL,   /* any other tool call (MCP, web, agents, ...); text = "name  summary" */
     EV_FAILED, /* the Bash call tool_id failed and recorded no file changes; text = its error.
                 * A marker: the viewer flags that call's BASH event and drops it. */
+    /* From here on: facts for the analysis, not drawn; the stage drops them (ev_staged). */
+    EV_USAGE,     /* tokens of one response (tok); tool_id = its message id. A response's parts
+                   * repeat its usage with output growing: emitted again whenever its output
+                   * grows, always at the response's first-seen ts, so per message id the last
+                   * USAGE in (ts, seq) order is the one that counts (the largest). */
+    EV_COMPACT,   /* the actor's context was compacted (a compact_boundary record or the
+                   * summary that follows it: one compaction can give two) */
+    EV_INTERRUPT, /* the human interrupted the actor; text = the marker ("[Request interrupted...") */
+    EV_TITLE,     /* names the actor: a session's AI title (text; emitted when it changes, the
+                   * last one counts), or a subagent's task (text = its description, who = its
+                   * type and session; ts 0, emitted when its transcript is found) */
+    EV_BASH_END,  /* the Bash call tool_id answered: ts = then, t0 = its start, err = its result
+                   * is marked is_error; text = the whole command (BASH has its first line) */
+    EV_TURN_COPY, /* a prompt a resumed session's file copied from an earlier one: as TURN.
+                   * Not drawn (the original was), but it starts a turn of this session too. */
     EV_KIND_COUNT
 } EvKind;
 
@@ -44,6 +61,16 @@ typedef struct {
     int notes;
     int via;    /* where a file event comes from: VIA_* */
     int failed; /* BASH: the call failed with no recorded changes (set by the viewer) */
+    union {     /* by kind; zero for the others */
+        struct { int out, in, cached; } tok; /* USAGE: output, new input (incl. cache writes), cache reads */
+        struct { int first, last; } range;   /* READ: lines first..last; first 0 = the whole file (a
+                                              * command's read, or unrecorded), last 0 = to the end;
+                                              * first -1 = not text (an image, a PDF): no lines */
+        int prompt;                          /* TURN, TURN_COPY: PROMPT_* */
+        int err;                             /* BASH_END */
+        struct { char *type, *session; } who; /* TITLE of a subagent: its agentType (after the last
+                                               * ':') and the actor id of the session it works for */
+    };
 } Event;
 
 enum {
@@ -53,7 +80,15 @@ enum {
     VIA_CMD,        /* a read by a command (cat, sed -n, ...), from its text */
 };
 
+enum {
+    PROMPT_HUMAN,   /* typed */
+    PROMPT_PASTED,  /* pasted (the <pasted_content> tag dropped) */
+    PROMPT_COMMAND, /* a slash command, e.g. /clear; text = its name */
+    PROMPT_HARNESS, /* written by Claude Code, e.g. a task notification; text = "(kind)" */
+};
+
 const char *ev_kind_name(EvKind k);
+static inline bool ev_staged(EvKind k) { return k < EV_USAGE; } /* drawn on the stage */
 void ev_free(Event *e);
 int ev_cmp(const void *a, const void *b); /* by ts, then seq */
 void ev_print_json(FILE *f, const Event *e);

@@ -1,0 +1,273 @@
+{
+ "tree": {
+  "name": "repo",
+  "kind": "dir",
+  "kids": [
+   {
+    "name": "README.md",
+    "kind": "file",
+    "lines": 1,
+    "kids": [],
+    "ch": [],
+    "lang": "markdown",
+    "rw": [],
+    "tr": [],
+    "blame": [
+     [1, -1]
+    ],
+    "cx": 0
+   },
+   {
+    "name": "src",
+    "kind": "dir",
+    "kids": [
+     {
+      "name": "app.py",
+      "kind": "file",
+      "lines": 8,
+      "kids": [],
+      "ch": [
+       [0, 3, 1, 0],
+       [3, 1, 1, 0],
+       [4, 1, 1, 0],
+       [5, 1, 1, 0]
+      ],
+      "lang": "python",
+      "rw": [
+       [0, 4, 1],
+       [4, 5, 1]
+      ],
+      "tr": [
+       [0, 8, 0],
+       [3, 8, 0],
+       [4, 8, 0],
+       [5, 8, 0]
+      ],
+      "blame": [
+       [1, -1],
+       [1, 0],
+       [1, 5],
+       [1, 0],
+       [3, -1],
+       [1, 3]
+      ],
+      "cx": 0
+     },
+     {
+      "name": "lib.c",
+      "kind": "file",
+      "lines": 5,
+      "kids": [],
+      "ch": [
+       [1, 3, 1, 0]
+      ],
+      "lang": "c",
+      "rw": [],
+      "tr": [
+       [1, 5, 0]
+      ],
+      "blame": [
+       [1, -1],
+       [3, 1],
+       [1, -1]
+      ],
+      "cx": 0
+     },
+     {
+      "name": "new.py",
+      "kind": "file",
+      "lines": 2,
+      "kids": [],
+      "ch": [
+       [2, 2, 0, 0],
+       [6, 1, 1, 0]
+      ],
+      "lang": "python",
+      "rw": [
+       [2, 6, 1]
+      ],
+      "tr": [
+       [2, 2, 0],
+       [6, 2, 0]
+      ],
+      "blame": [
+       [1, 2],
+       [1, 6]
+      ],
+      "cx": 0
+     }
+    ]
+   }
+  ]
+ },
+ "turns": [
+  {
+   "title": "Add a greeting fallback",
+   "ts": "2026-10-14T11:00:10.000Z",
+   "corr": "That's wrong, the greeting broke",
+   "intr": true,
+   "fix": false,
+   "tok": [230, 605, 11000],
+   "actor": 0,
+   "secs": 230
+  },
+  {
+   "title": "That's wrong, the greeting broke",
+   "ts": "2026-10-14T11:04:40.000Z",
+   "corr": null,
+   "intr": false,
+   "fix": true,
+   "tok": [119, 110, 2000],
+   "actor": 0,
+   "secs": 30
+  },
+  {
+   "title": "Carry on with the helper",
+   "ts": "2026-10-14T11:05:30.000Z",
+   "corr": null,
+   "intr": false,
+   "fix": false,
+   "tok": [20, 55, 1000],
+   "actor": 2,
+   "secs": 10
+  }
+ ],
+ "comments": ["Adding the fallback.", "Now the C side: keep the sum in a variable.", "Renaming the default with sed.", "Changing the fallback text.", "Back to a plain fallback.", "Bumping the helper."],
+ "paths": ["src/app.py", "src/lib.c"],
+ "actors": [
+  {
+   "kind": "session",
+   "id": "st1",
+   "name": "Greeting work"
+  },
+  {
+   "kind": "subagent",
+   "id": "sub1",
+   "name": "executor",
+   "task": "Polish the greeting"
+  },
+  {
+   "kind": "session",
+   "id": "st2",
+   "name": "session st2"
+  }
+ ],
+ "changes": [
+  [
+   0,
+   0,
+   "Edit",
+   2,
+   1,
+   0,
+   [
+    [0, 1]
+   ],
+   1791975660,
+   0,
+   50,
+   110,
+   2000,
+   40
+  ],
+  [
+   0,
+   1,
+   "Edit",
+   2,
+   2,
+   1,
+   [
+    [0, 1],
+    [1, 1]
+   ],
+   1791975720,
+   0,
+   60,
+   165,
+   3000,
+   60
+  ],
+  [
+   0,
+   -2,
+   "Write",
+   2,
+   2,
+   1,
+   [
+    [0, 1],
+    [1, 1]
+   ],
+   1791975760,
+   0,
+   40,
+   110,
+   2000,
+   40
+  ],
+  [
+   0,
+   2,
+   "Bash",
+   2,
+   2,
+   1,
+   [
+    [0, 1],
+    [1, 1]
+   ],
+   1791975780,
+   0,
+   20,
+   55,
+   1000,
+   20
+  ],
+  [
+   0,
+   3,
+   "Edit",
+   2,
+   0,
+   0,
+   [],
+   1791975830,
+   1,
+   20,
+   55,
+   1000,
+   10
+  ],
+  [
+   1,
+   4,
+   "Edit",
+   1,
+   0,
+   0,
+   [],
+   1791975900,
+   0,
+   0,
+   0,
+   0,
+   0
+  ],
+  [
+   2,
+   5,
+   "Edit",
+   0,
+   0,
+   0,
+   [],
+   1791975950,
+   2,
+   20,
+   55,
+   1000,
+   10
+  ]
+ ]
+}

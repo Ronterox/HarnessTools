@@ -2,6 +2,7 @@
 
 #include <ctype.h>
 #include <dlfcn.h>
+#include <pthread.h>
 #include <regex.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -35,12 +36,24 @@ typedef struct {
     bool dead;          /* a predicate we can't evaluate correctly: never matches */
 } Pattern;
 
+/* textobjects.scm, for syn_defs: only its patterns capturing @function.outer
+ * or @class.outer stay enabled. */
+typedef struct {
+    TSQuery *q;
+    Pattern *pats;
+    int fcap, ccap;     /* their capture ids, -1 none */
+    unsigned char *sym; /* per grammar symbol: SYM_* flags, for measure() */
+    uint32_t nsym;
+} TextObj;
+
 struct SynLang {
-    char name[40];
+    char name[SYN_NAME_MAX];
     const TSLanguage *lang; /* NULL: not available (remembered) */
     TSQuery *q;
     Pattern *pats;
     signed char *cls; /* per capture id: SynClass, -1 ignored */
+    TextObj *to;      /* loaded on first use (to_tried); NULL: none */
+    bool to_tried;
     SynLang *next;
 };
 
@@ -125,24 +138,24 @@ static char *vim_to_ere(const char *s, bool *icase) {
 }
 
 /* Turn pattern i's predicate steps into Preds. */
-static void compile_pattern(SynLang *L, uint32_t i) {
-    Pattern *pt = &L->pats[i];
+static void compile_pattern(const char *lname, TSQuery *q, Pattern *pats, uint32_t i) {
+    Pattern *pt = &pats[i];
     pt->prio = 100;
     uint32_t n;
-    const TSQueryPredicateStep *st = ts_query_predicates_for_pattern(L->q, i, &n);
+    const TSQueryPredicateStep *st = ts_query_predicates_for_pattern(q, i, &n);
     for (uint32_t a = 0; a < n;) {
         uint32_t b = a;
         while (b < n && st[b].type != TSQueryPredicateStepTypeDone) b++;
         /* st[a] is the name, st[a+1 .. b) the arguments */
         uint32_t len;
-        const char *name = st[a].type == TSQueryPredicateStepTypeString ? ts_query_string_value_for_id(L->q, st[a].value_id, &len) : "";
+        const char *name = st[a].type == TSQueryPredicateStepTypeString ? ts_query_string_value_for_id(q, st[a].value_id, &len) : "";
         int nargs = (int)(b - a - 1);
         const TSQueryPredicateStep *arg = st + a + 1;
         if (!strcmp(name, "set!")) { /* (#set! priority N) */
             for (int k = 0; k + 1 < nargs; k++)
                 if (arg[k].type == TSQueryPredicateStepTypeString && arg[k + 1].type == TSQueryPredicateStepTypeString &&
-                    !strcmp(ts_query_string_value_for_id(L->q, arg[k].value_id, &len), "priority")) {
-                    int p = atoi(ts_query_string_value_for_id(L->q, arg[k + 1].value_id, &len));
+                    !strcmp(ts_query_string_value_for_id(q, arg[k].value_id, &len), "priority")) {
+                    int p = atoi(ts_query_string_value_for_id(q, arg[k + 1].value_id, &len));
                     pt->prio = (unsigned char)(p < 0 ? 0 : p > 255 ? 255 : p);
                 }
         } else if (nargs >= 1 && arg[0].type == TSQueryPredicateStepTypeCapture && *name && name[strlen(name) - 1] == '?') {
@@ -163,13 +176,13 @@ static void compile_pattern(SynLang *L, uint32_t i) {
                 p.strs = xcalloc((size_t)(nargs > 1 ? nargs - 1 : 1), sizeof *p.strs);
                 for (int k = 1; k < nargs; k++)
                     if (arg[k].type == TSQueryPredicateStepTypeString)
-                        p.strs[p.nstr++] = ts_query_string_value_for_id(L->q, arg[k].value_id, &len);
+                        p.strs[p.nstr++] = ts_query_string_value_for_id(q, arg[k].value_id, &len);
                 if (p.op == P_MATCH) {
                     bool icase = false;
                     char *ere = p.nstr ? (!strcmp(op, "lua-match?") ? lua_to_ere(p.strs[0]) : vim_to_ere(p.strs[0], &icase)) : NULL;
                     p.re_ok = ere && !regcomp(&p.re, ere, REG_EXTENDED | REG_NOSUB | (icase ? REG_ICASE : 0));
                     if (!p.re_ok) {
-                        if (debug()) fprintf(stderr, "syntax %s: can't use pattern %s\n", L->name, p.nstr ? p.strs[0] : "");
+                        if (debug()) fprintf(stderr, "syntax %s: can't use pattern %s\n", lname, p.nstr ? p.strs[0] : "");
                         pt->dead = true;
                     }
                     free(ere);
@@ -230,11 +243,12 @@ static char *read_file(const char *path, size_t *len) {
     return s;
 }
 
-/* lang's highlights.scm from dir, after the queries it inherits ("; inherits:
- * ecma,jsx" on its first lines; "(jsx)" marks an optional one). */
-static char *read_query(const char *dir, const char *lang, int depth) {
+/* lang's query file (highlights.scm, textobjects.scm) from dir, after the
+ * queries it inherits ("; inherits: ecma,jsx" on its first lines; "(jsx)"
+ * marks an optional one). */
+static char *read_query(const char *dir, const char *lang, const char *file, int depth) {
     char path[1200];
-    snprintf(path, sizeof path, "%s/%s/highlights.scm", dir, lang);
+    snprintf(path, sizeof path, "%s/%s/%s", dir, lang, file);
     size_t n;
     char *own = read_file(path, &n);
     if (!own) return NULL;
@@ -257,7 +271,7 @@ static char *read_query(const char *dir, const char *lang, int depth) {
     size_t total = n + 1;
     char *parents[8] = {0};
     for (int i = 0; i < nn; i++)
-        if ((parents[i] = read_query(dir, names[i], depth + 1))) total += strlen(parents[i]) + 1;
+        if ((parents[i] = read_query(dir, names[i], file, depth + 1))) total += strlen(parents[i]) + 1;
     char *all = xmalloc(total), *o = all;
     for (int i = 0; i < nn; i++)
         if (parents[i]) o += sprintf(o, "%s\n", parents[i]), free(parents[i]);
@@ -309,7 +323,7 @@ static void load_lang(SynLang *L) {
             continue;
         }
         size_t qn = 0;
-        char *src = read_query(query[i], L->name, 0);
+        char *src = read_query(query[i], L->name, "highlights.scm", 0);
         uint32_t err_off = 0;
         TSQueryError err = TSQueryErrorNone;
         TSQuery *q = src ? ts_query_new(lang, src, (uint32_t)(qn = strlen(src)), &err_off, &err) : NULL;
@@ -325,7 +339,7 @@ static void load_lang(SynLang *L) {
         L->q = q;
         uint32_t np = ts_query_pattern_count(q), nc = ts_query_capture_count(q);
         L->pats = xcalloc(np ? np : 1, sizeof *L->pats);
-        for (uint32_t k = 0; k < np; k++) compile_pattern(L, k);
+        for (uint32_t k = 0; k < np; k++) compile_pattern(L->name, q, L->pats, k);
         L->cls = xmalloc(nc ? nc : 1);
         for (uint32_t k = 0; k < nc; k++) {
             uint32_t len;
@@ -334,6 +348,27 @@ static void load_lang(SynLang *L) {
         if (debug()) fprintf(stderr, "syntax %s: %s, %u patterns\n", L->name, path, np);
         return;
     }
+}
+
+static void pats_free(Pattern *pats, uint32_t n) {
+    for (uint32_t i = 0; pats && i < n; i++) {
+        for (int k = 0; k < pats[i].n; k++) {
+            free(pats[i].p[k].strs);
+            if (pats[i].p[k].re_ok) regfree(&pats[i].p[k].re);
+        }
+        free(pats[i].p);
+    }
+    free(pats);
+}
+
+/* A language loaded twice (two threads at once): the copy that lost. */
+static void lang_drop(SynLang *L) {
+    if (L->q) {
+        pats_free(L->pats, ts_query_pattern_count(L->q));
+        ts_query_delete(L->q);
+    }
+    free(L->cls);
+    free(L);
 }
 
 /* ---- languages by file -------------------------------------------------- */
@@ -352,29 +387,53 @@ static const char *const NAME_LANG[][2] = {
     {".gitattributes", "gitattributes"}, {"COMMIT_EDITMSG", "gitcommit"},
 };
 
+/* Languages load once and stay; the analysis looks them up from its worker
+ * thread while the render thread highlights: loading is under this lock, and
+ * a loaded SynLang never changes. */
 static SynLang *g_langs;
+static pthread_mutex_t g_mu = PTHREAD_MUTEX_INITIALIZER;
 
-SynLang *syn_lang_for(const char *path) {
-    if (!path) return NULL;
+int syn_lang_name(const char *path, char name[SYN_NAME_MAX]) {
+    *name = 0;
+    if (!path) return 0;
     const char *base = strrchr(path, '/') ? strrchr(path, '/') + 1 : path, *dot = strrchr(base, '.');
-    char name[40] = "";
     for (size_t i = 0; i < sizeof NAME_LANG / sizeof *NAME_LANG && !*name; i++)
-        if (!strcmp(base, NAME_LANG[i][0])) snprintf(name, sizeof name, "%s", NAME_LANG[i][1]);
+        if (!strcmp(base, NAME_LANG[i][0])) snprintf(name, SYN_NAME_MAX, "%s", NAME_LANG[i][1]);
     if (!*name && dot && dot[1]) {
         for (size_t i = 0; i < sizeof EXT_LANG / sizeof *EXT_LANG && !*name; i++)
-            if (!strcasecmp(dot + 1, EXT_LANG[i][0])) snprintf(name, sizeof name, "%s", EXT_LANG[i][1]);
-        if (!*name && strlen(dot + 1) < sizeof name) /* go, lua, json, toml, css, ... are their own names */
+            if (!strcasecmp(dot + 1, EXT_LANG[i][0])) snprintf(name, SYN_NAME_MAX, "%s", EXT_LANG[i][1]);
+        if (!*name && strlen(dot + 1) < SYN_NAME_MAX) /* go, lua, json, toml, css, ... are their own names */
             for (int k = 0; (name[k] = (char)tolower((unsigned char)dot[1 + k])); k++)
                 if (!isalnum((unsigned char)name[k]) && name[k] != '_') { name[0] = 0; break; }
     }
-    if (!*name) return NULL;
-    for (SynLang *L = g_langs; L; L = L->next)
-        if (!strcmp(L->name, name)) return L->lang ? L : NULL;
-    SynLang *L = xcalloc(1, sizeof *L);
-    snprintf(L->name, sizeof L->name, "%s", name);
-    L->next = g_langs;
-    g_langs = L;
-    load_lang(L);
+    return *name != 0;
+}
+
+static SynLang *lang_find(const char *name) {
+    SynLang *L = g_langs;
+    while (L && strcmp(L->name, name)) L = L->next;
+    return L;
+}
+
+SynLang *syn_lang_for(const char *path) {
+    char name[SYN_NAME_MAX];
+    if (!syn_lang_name(path, name)) return NULL;
+    pthread_mutex_lock(&g_mu);
+    SynLang *L = lang_find(name);
+    pthread_mutex_unlock(&g_mu);
+    if (!L) { /* loaded outside the lock (slow: dlopen, query compiles), then added if still absent */
+        SynLang *mine = xcalloc(1, sizeof *mine);
+        snprintf(mine->name, sizeof mine->name, "%s", name);
+        load_lang(mine);
+        pthread_mutex_lock(&g_mu);
+        if (!(L = lang_find(name))) {
+            mine->next = g_langs;
+            g_langs = L = mine;
+            mine = NULL;
+        }
+        pthread_mutex_unlock(&g_mu);
+        if (mine) lang_drop(mine);
+    }
     return L->lang ? L : NULL;
 }
 
@@ -429,12 +488,12 @@ void syn_doc_free(SynDoc *d) {
     free(d);
 }
 
-static bool node_text_is(const SynDoc *d, TSNode n, const char *s) {
+static bool node_text_is(const char *text, TSNode n, const char *s) {
     uint32_t a = ts_node_start_byte(n), b = ts_node_end_byte(n);
-    return strlen(s) == b - a && !memcmp(d->text + a, s, b - a);
+    return strlen(s) == b - a && !memcmp(text + a, s, b - a);
 }
 
-static bool pred_ok(const SynDoc *d, const Pred *p, const TSQueryMatch *m) {
+static bool pred_ok(const char *text, const Pred *p, const TSQueryMatch *m) {
     const TSNode *node = NULL, *node2 = NULL;
     for (uint16_t i = 0; i < m->capture_count; i++) {
         if (!node && m->captures[i].index == p->cap) node = &m->captures[i].node;
@@ -448,23 +507,23 @@ static bool pred_ok(const SynDoc *d, const Pred *p, const TSQueryMatch *m) {
         if (p->cap2 >= 0) {
             if (!node2) return true;
             uint32_t a2 = ts_node_start_byte(*node2), b2 = ts_node_end_byte(*node2);
-            r = b - a == b2 - a2 && !memcmp(d->text + a, d->text + a2, b - a);
-        } else r = p->nstr && node_text_is(d, *node, p->strs[0]);
+            r = b - a == b2 - a2 && !memcmp(text + a, text + a2, b - a);
+        } else r = p->nstr && node_text_is(text, *node, p->strs[0]);
         break;
     case P_ANY_OF:
-        for (int i = 0; i < p->nstr && !r; i++) r = node_text_is(d, *node, p->strs[i]);
+        for (int i = 0; i < p->nstr && !r; i++) r = node_text_is(text, *node, p->strs[i]);
         break;
     case P_MATCH: {
         if (!p->re_ok) return false;
         char small[256], *t = b - a < sizeof small ? small : xmalloc(b - a + 1);
-        memcpy(t, d->text + a, b - a);
+        memcpy(t, text + a, b - a);
         t[b - a] = 0;
         r = !regexec(&p->re, t, 0, NULL, 0);
         if (t != small) free(t);
         break;
     }
     case P_CONTAINS:
-        for (int i = 0; i < p->nstr && !r; i++) r = memmem(d->text + a, b - a, p->strs[i], strlen(p->strs[i])) != NULL;
+        for (int i = 0; i < p->nstr && !r; i++) r = memmem(text + a, b - a, p->strs[i], strlen(p->strs[i])) != NULL;
         break;
     case P_HAS_ANCESTOR:
     case P_HAS_PARENT:
@@ -520,7 +579,7 @@ void syn_highlight(SynDoc *d, uint32_t start, uint32_t end, unsigned char *out) 
         const Pattern *pt = &L->pats[m.pattern_index];
         if (cls < 0 || pt->dead) continue;
         bool ok = true;
-        for (int i = 0; i < pt->n && ok; i++) ok = pred_ok(d, &pt->p[i], &m);
+        for (int i = 0; i < pt->n && ok; i++) ok = pred_ok(d->text, &pt->p[i], &m);
         if (!ok) continue;
         uint32_t a = ts_node_start_byte(c->node), b = ts_node_end_byte(c->node);
         if (a < start) a = start;
@@ -530,4 +589,397 @@ void syn_highlight(SynDoc *d, uint32_t start, uint32_t end, unsigned char *out) 
             if (pt->prio >= prio[k - start]) out[k - start] = (unsigned char)cls, prio[k - start] = pt->prio;
     }
     free(prio);
+}
+
+/* ---- functions and classes (textobjects) -------------------------------- */
+
+/* Branch points, by node type across grammars: if/elif/else-if, loops, cases,
+ * catch/except, conditional expressions (comprehension ifs and fors too). */
+static const char *const BRANCHES[] = {
+    "if_statement", "if_expression", "elif_clause", "else_if_clause", "elseif_statement", "elsif", "if", "unless",
+    "if_modifier", "unless_modifier", "if_clause", "for_statement", "for_in_statement", "for_expression",
+    "for_range_loop", "enhanced_for_statement", "foreach_statement", "c_style_for_statement", "for_in_clause",
+    "for", "while_statement", "while_expression", "while", "until", "while_modifier", "until_modifier",
+    "loop_expression", "do_statement", "repeat_statement", "case_statement", "case_clause", "case_item",
+    "switch_case", "switch_label", "match_arm", "expression_case", "type_case", "communication_case", "when",
+    "catch_clause", "except_clause", "rescue", "conditional_expression", "ternary_expression", "conditional",
+};
+/* Nodes that open a level of nesting: blocks and bodies. */
+static const char *const BLOCKS[] = {
+    "compound_statement", "block", "statement_block", "class_body", "field_declaration_list",
+    "declaration_list", "body_statement", "do_block", "switch_body", "switch_block",
+};
+
+static bool in_list(const char *s, const char *const *list, size_t n) {
+    for (size_t i = 0; i < n; i++)
+        if (!strcmp(s, list[i])) return true;
+    return false;
+}
+
+enum { SYM_BRANCH = 1, SYM_BLOCK = 2, SYM_BINARY = 4, SYM_LOGIC = 8 };
+
+/* Where textobjects.scm lives: the plugin's own queries first, then the
+ * places highlight queries come from. */
+static TextObj *load_textobjects(const SynLang *L) {
+    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    char data[400], dirs[6][512];
+    if (xdg && *xdg) snprintf(data, sizeof data, "%s", xdg);
+    else snprintf(data, sizeof data, "%s/.local/share", home ? home : "");
+    int nd = 0;
+    snprintf(dirs[nd++], 512, "%s/nvim/lazy/nvim-treesitter-textobjects/queries", data);
+    snprintf(dirs[nd++], 512, "%s/nvim/site/pack/packer/start/nvim-treesitter-textobjects/queries", data);
+    snprintf(dirs[nd++], 512, "%s/nvim/site/queries", data);
+    snprintf(dirs[nd++], 512, "%s/nvim/lazy/nvim-treesitter/queries", data);
+    snprintf(dirs[nd++], 512, "/usr/local/share/nvim/runtime/queries");
+    snprintf(dirs[nd++], 512, "/usr/share/nvim/runtime/queries");
+    for (int i = 0; i < nd; i++) {
+        char *src = read_query(dirs[i], L->name, "textobjects.scm", 0);
+        if (!src) continue;
+        uint32_t err_off = 0;
+        TSQueryError err = TSQueryErrorNone;
+        TSQuery *q = ts_query_new(L->lang, src, (uint32_t)strlen(src), &err_off, &err);
+        free(src);
+        if (!q) {
+            if (debug()) fprintf(stderr, "syntax %s: textobjects in %s don't compile (error %d at %u)\n", L->name,
+                                 dirs[i], (int)err, err_off);
+            continue;
+        }
+        int fcap = -1, ccap = -1;
+        for (uint32_t k = 0, nc = ts_query_capture_count(q); k < nc; k++) {
+            uint32_t len;
+            const char *name = ts_query_capture_name_for_id(q, k, &len);
+            if (!strcmp(name, "function.outer")) fcap = (int)k;
+            else if (!strcmp(name, "class.outer")) ccap = (int)k;
+        }
+        if (fcap < 0 && ccap < 0) { ts_query_delete(q); continue; }
+        uint32_t np = ts_query_pattern_count(q);
+        TextObj *to = xcalloc(1, sizeof *to);
+        to->pats = xcalloc(np ? np : 1, sizeof *to->pats);
+        for (uint32_t k = 0; k < np; k++) {
+            bool used = (fcap >= 0 && ts_query_capture_quantifier_for_id(q, k, (uint32_t)fcap) != TSQuantifierZero) ||
+                        (ccap >= 0 && ts_query_capture_quantifier_for_id(q, k, (uint32_t)ccap) != TSQuantifierZero);
+            if (used) compile_pattern(L->name, q, to->pats, k);
+            else ts_query_disable_pattern(q, k); /* loops, calls, parameters, ...: not needed */
+        }
+        to->q = q;
+        to->fcap = fcap;
+        to->ccap = ccap;
+        uint32_t ns = ts_language_symbol_count(L->lang);
+        to->sym = xcalloc(ns ? ns : 1, 1);
+        to->nsym = ns;
+        for (uint32_t k = 0; k < ns; k++) {
+            const char *t = ts_language_symbol_name(L->lang, (TSSymbol)k);
+            if (!t) continue;
+            if (ts_language_symbol_type(L->lang, (TSSymbol)k) != TSSymbolTypeRegular) {
+                if (!strcmp(t, "&&") || !strcmp(t, "||") || !strcmp(t, "and") || !strcmp(t, "or")) to->sym[k] |= SYM_LOGIC;
+                continue;
+            }
+            if (in_list(t, BRANCHES, sizeof BRANCHES / sizeof *BRANCHES)) to->sym[k] |= SYM_BRANCH;
+            if (in_list(t, BLOCKS, sizeof BLOCKS / sizeof *BLOCKS)) to->sym[k] |= SYM_BLOCK;
+            if (strstr(t, "binary") || strstr(t, "boolean_operator") || strstr(t, "logical")) to->sym[k] |= SYM_BINARY;
+        }
+        if (debug()) fprintf(stderr, "syntax %s: textobjects from %s\n", L->name, dirs[i]);
+        return to;
+    }
+    return NULL;
+}
+
+static void textobj_free(TextObj *to) {
+    if (!to) return;
+    pats_free(to->pats, ts_query_pattern_count(to->q));
+    ts_query_delete(to->q);
+    free(to->sym);
+    free(to);
+}
+
+static unsigned sym_flags(const TextObj *to, TSNode x) {
+    TSSymbol k = ts_node_symbol(x);
+    return k < to->nsym ? to->sym[k] : 0; /* ERROR is 0xFFFF */
+}
+
+/* 1 + branch points under def, and its deepest block nesting below its body. */
+static void measure(const TextObj *to, TSNode def, int *cx, int *depth) {
+    TSTreeCursor c = ts_tree_cursor_new(def);
+    unsigned char *stack = NULL; /* per level: does that node open a block */
+    int lvl = 0, cap = 0, d = 0, deep = 0, n = 1;
+    for (bool enter = true;;) {
+        if (enter) {
+            TSNode x = ts_tree_cursor_current_node(&c);
+            unsigned f = sym_flags(to, x);
+            bool blk = f & SYM_BLOCK;
+            n += (f & SYM_BRANCH) != 0;
+            if (f & SYM_BINARY) /* && || and or */
+                for (uint32_t i = 0, k = ts_node_child_count(x); i < k; i++)
+                    if (sym_flags(to, ts_node_child(x, i)) & SYM_LOGIC) { n++; break; }
+            if (lvl == cap) stack = xrealloc(stack, (size_t)(cap = cap ? cap * 2 : 64));
+            stack[lvl++] = blk;
+            d += blk;
+            if (d > deep) deep = d;
+            if (ts_tree_cursor_goto_first_child(&c)) continue;
+        }
+        d -= stack[--lvl]; /* leave the current node */
+        if (ts_tree_cursor_goto_next_sibling(&c)) { enter = true; continue; }
+        if (!lvl || !ts_tree_cursor_goto_parent(&c)) break;
+        enter = false;
+    }
+    ts_tree_cursor_delete(&c);
+    free(stack);
+    *cx = n;
+    *depth = deep > 1 ? deep - 1 : 0;
+}
+
+/* A def's name node: its name field, else down its declarator chain (C:
+ * function_definition -> function_declarator -> identifier); an unnamed
+ * struct takes its typedef's name. */
+static TSNode def_name(TSNode n) {
+    TSNode x = n;
+    for (int i = 0; i < 8; i++) {
+        TSNode k = ts_node_child_by_field_name(x, "name", 4);
+        if (!ts_node_is_null(k)) return k;
+        k = ts_node_child_by_field_name(x, "declarator", 10);
+        if (ts_node_is_null(k)) break;
+        x = k;
+    }
+    if (!ts_node_eq(x, n) && strstr(ts_node_type(x), "identifier")) return x;
+    TSNode up = ts_node_parent(n);
+    if (!ts_node_is_null(up) && !strcmp(ts_node_type(up), "type_definition")) {
+        TSNode k = ts_node_child_by_field_name(up, "declarator", 10);
+        if (!ts_node_is_null(k) && strstr(ts_node_type(k), "identifier")) return k;
+    }
+    return (TSNode){0};
+}
+
+typedef struct {
+    TSNode node;     /* null for a def kept from the previous version */
+    uint32_t a, b;   /* bytes */
+    int cls;
+    int keep;        /* index of the kept def, -1 */
+} DefNode;
+
+static int cmp_defnode(const void *pa, const void *pb) {
+    const DefNode *x = pa, *y = pb;
+    if (x->a != y->a) return x->a < y->a ? -1 : 1;
+    if (x->b != y->b) return x->b > y->b ? -1 : 1; /* outer first */
+    return x->cls - y->cls;
+}
+
+struct SynParse {
+    SynLang *l;
+    char *text;
+    uint32_t len;
+    TSTree *tree;
+    SynDef *defs; /* of text, with their bytes */
+    uint32_t *da, *db;
+    int nd;
+};
+
+SynParse *syn_parse_new(void) { return xcalloc(1, sizeof(SynParse)); }
+
+static void parse_forget(SynParse *p) {
+    if (p->tree) ts_tree_delete(p->tree);
+    free(p->text);
+    syn_defs_free(p->defs, p->nd);
+    free(p->da);
+    free(p->db);
+    SynLang *l = p->l;
+    memset(p, 0, sizeof *p);
+    p->l = l;
+}
+
+void syn_parse_free(SynParse *p) {
+    if (!p) return;
+    parse_forget(p);
+    free(p);
+}
+
+static TSPoint point_at(const char *text, uint32_t off) {
+    TSPoint p = {0, 0};
+    for (uint32_t i = 0; i < off; i++)
+        if (text[i] == '\n') p.row++, p.column = 0;
+        else p.column++;
+    return p;
+}
+
+static void push_def(DefNode **dn, int *n, int *cap, DefNode d) {
+    if (*n == *cap) *dn = xrealloc(*dn, (size_t)(*cap = *cap ? *cap * 2 : 32) * sizeof **dn);
+    (*dn)[(*n)++] = d;
+}
+
+/* The query's function and class captures within [lo, hi) of the tree. */
+static void query_defs(const TextObj *to, TSTree *tree, const char *text, uint32_t lo, uint32_t hi, DefNode **dn, int *n,
+                       int *cap) {
+    TSQueryCursor *cur = ts_query_cursor_new();
+    ts_query_cursor_set_byte_range(cur, lo, hi);
+    ts_query_cursor_exec(cur, to->q, ts_tree_root_node(tree));
+    TSQueryMatch m;
+    while (ts_query_cursor_next_match(cur, &m)) {
+        const Pattern *pt = &to->pats[m.pattern_index];
+        if (pt->dead) continue;
+        bool ok = true;
+        for (int i = 0; i < pt->n && ok; i++) ok = pred_ok(text, &pt->p[i], &m);
+        if (!ok) continue;
+        for (uint16_t i = 0; i < m.capture_count; i++) {
+            int ci = (int)m.captures[i].index;
+            if (ci != to->fcap && ci != to->ccap) continue;
+            TSNode x = m.captures[i].node;
+            uint32_t a = ts_node_start_byte(x), b = ts_node_end_byte(x);
+            if (b <= lo || a >= hi) continue;
+            /* A prototype (C's `int f(void);` is a declaration with a function
+             * declarator) declares, it doesn't define. */
+            const char *t = ts_node_type(x);
+            size_t tl = strlen(t);
+            if (ci == to->fcap && tl >= 11 && !strcmp(t + tl - 11, "declaration") &&
+                ts_node_is_null(ts_node_child_by_field_name(x, "body", 4)))
+                continue;
+            push_def(dn, n, cap, (DefNode){x, a, b, ci == to->ccap, -1});
+        }
+    }
+    ts_query_cursor_delete(cur);
+}
+
+int syn_defs(const char *path, const char *text, uint32_t len, SynDef **out, SynParse *prev) {
+    *out = NULL;
+    SynLang *L = syn_lang_for(path);
+    if (!L) return 0;
+    pthread_mutex_lock(&g_mu);
+    bool tried = L->to_tried;
+    const TextObj *to = L->to;
+    pthread_mutex_unlock(&g_mu);
+    if (!tried) { /* as languages: loaded outside the lock, kept if first */
+        TextObj *mine = load_textobjects(L);
+        pthread_mutex_lock(&g_mu);
+        if (!L->to_tried) {
+            L->to = mine;
+            L->to_tried = true;
+            mine = NULL;
+        }
+        to = L->to;
+        pthread_mutex_unlock(&g_mu);
+        textobj_free(mine);
+    }
+    if (!to) return 0;
+    if (prev && prev->l != L) parse_forget(prev), prev->l = L;
+    /* The previous version's tree, edited where the texts differ (common
+     * prefix and suffix kept), makes the reparse incremental; and its defs
+     * outside what changed carry over, so the query runs only there. */
+    TSTree *old = NULL;
+    uint32_t pre = 0, suf = 0;
+    TSInputEdit e = {0};
+    if (prev && prev->tree) {
+        uint32_t n = prev->len < len ? prev->len : len;
+        while (pre < n && prev->text[pre] == text[pre]) pre++;
+        while (suf < n - pre && prev->text[prev->len - 1 - suf] == text[len - 1 - suf]) suf++;
+        e = (TSInputEdit){pre, prev->len - suf, len - suf, point_at(text, pre), {0, 0}, {0, 0}};
+        e.old_end_point = point_at(prev->text, e.old_end_byte);
+        e.new_end_point = point_at(text, e.new_end_byte);
+        old = ts_tree_copy(prev->tree);
+        ts_tree_edit(old, &e);
+    }
+    TSParser *ps = ts_parser_new();
+    TSTree *tree = ts_parser_set_language(ps, L->lang) ? ts_parser_parse_string(ps, old, text, len) : NULL;
+    /* Error recovery can come out differently incrementally, and restructure
+     * past the changed ranges: a text with errors is parsed afresh and its
+     * defs found anew. */
+    bool broken = tree && ts_node_has_error(ts_tree_root_node(tree));
+    if (old && (broken || ts_node_has_error(ts_tree_root_node(prev->tree)))) {
+        ts_tree_delete(old);
+        old = NULL;
+        if (broken) {
+            ts_tree_delete(tree);
+            tree = ts_parser_parse_string(ps, NULL, text, len);
+        }
+    }
+    ts_parser_delete(ps);
+    if (!tree) {
+        if (old) ts_tree_delete(old);
+        return 0;
+    }
+    DefNode *dn = NULL;
+    int n = 0, cap = 0;
+    uint32_t lo = 0, hi = len; /* where to query */
+    if (old) {
+        lo = e.start_byte, hi = e.new_end_byte;
+        uint32_t nr;
+        TSRange *r = ts_tree_get_changed_ranges(old, tree, &nr);
+        for (uint32_t i = 0; i < nr; i++) {
+            if (r[i].start_byte < lo) lo = r[i].start_byte;
+            if (r[i].end_byte > hi) hi = r[i].end_byte;
+        }
+        free(r);
+        /* Whole lines, and the defs touching them: a typedef's name after its
+         * struct's `}` changes the struct's name. */
+        while (lo && text[lo - 1] != '\n') lo--;
+        while (hi < len && text[hi] != '\n') hi++;
+        if (lo) lo--;
+        if (hi < len) hi++;
+        int64_t shift = (int64_t)len - (int64_t)prev->len;
+        for (int i = 0; i < prev->nd; i++) {
+            uint32_t a = prev->da[i], b = prev->db[i];
+            if (b > e.start_byte && a < e.old_end_byte) continue; /* edited */
+            if (a >= e.old_end_byte) a = (uint32_t)(a + shift), b = (uint32_t)(b + shift);
+            if (b > lo && a < hi) continue; /* changed: queried again */
+            push_def(&dn, &n, &cap, (DefNode){.a = a, .b = b, .cls = prev->defs[i].cls, .keep = i});
+        }
+        ts_tree_delete(old);
+    }
+    query_defs(to, tree, text, lo, hi, &dn, &n, &cap);
+    int rows = old ? (int)e.new_end_point.row - (int)e.old_end_point.row : 0;
+    if (n) qsort(dn, (size_t)n, sizeof *dn, cmp_defnode);
+    SynDef *d = n ? xcalloc((size_t)n, sizeof *d) : NULL;
+    uint32_t *da = n ? xmalloc((size_t)n * sizeof *da) : NULL, *db = n ? xmalloc((size_t)n * sizeof *db) : NULL;
+    int nd = 0, *open = n ? xmalloc((size_t)n * sizeof *open) : NULL, nopen = 0; /* enclosing defs */
+    for (int i = 0; i < n; i++) {
+        if (nd && dn[i].a == da[nd - 1] && dn[i].b == db[nd - 1]) continue; /* captured twice */
+        SynDef *f = &d[nd];
+        if (dn[i].keep >= 0) {
+            const SynDef *k = &prev->defs[dn[i].keep];
+            *f = *k;
+            f->name = xstrdup(k->name);
+            if (prev->da[dn[i].keep] >= e.old_end_byte) f->a += rows, f->b += rows;
+        } else {
+            TSNode nm = def_name(dn[i].node);
+            if (ts_node_is_null(nm)) continue;
+            uint32_t s = ts_node_start_byte(nm), z = ts_node_end_byte(nm);
+            const char *nl = memchr(text + s, '\n', z - s);
+            if (nl) z = (uint32_t)(nl - text);
+            if (z - s > 200) z = s + 200;
+            f->name = xstrndup(text + s, z - s);
+            f->cls = dn[i].cls;
+            TSPoint p0 = ts_node_start_point(dn[i].node), p1 = ts_node_end_point(dn[i].node);
+            f->a = (int)p0.row + 1;
+            f->b = (int)p1.row + 1 - (p1.column == 0 && p1.row > p0.row); /* ends at a line start: not that line */
+            measure(to, dn[i].node, &f->cx, &f->depth);
+        }
+        while (nopen && db[open[nopen - 1]] <= dn[i].a) nopen--;
+        f->parent = nopen ? open[nopen - 1] : -1;
+        da[nd] = dn[i].a;
+        db[nd] = dn[i].b;
+        open[nopen++] = nd;
+        nd++;
+    }
+    free(open);
+    free(dn);
+    if (prev) { /* this version is the next one's previous */
+        parse_forget(prev);
+        prev->text = xstrndup(text, len);
+        prev->len = len;
+        prev->tree = tree;
+        prev->defs = xmalloc((size_t)(nd ? nd : 1) * sizeof *prev->defs);
+        for (int i = 0; i < nd; i++) prev->defs[i] = d[i], prev->defs[i].name = xstrdup(d[i].name);
+        prev->da = da;
+        prev->db = db;
+        prev->nd = nd;
+    } else {
+        ts_tree_delete(tree);
+        free(da);
+        free(db);
+    }
+    if (!nd) { free(d); d = NULL; }
+    *out = d;
+    return nd;
+}
+
+void syn_defs_free(SynDef *d, int n) {
+    for (int i = 0; i < n; i++) free(d[i].name);
+    free(d);
 }

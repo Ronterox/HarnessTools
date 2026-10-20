@@ -6,6 +6,8 @@
 
 /* Claude Code transcript JSONL -> Events. The format is internal to Claude Code,
  * so every assumption about it lives in transcript.c. One parser per file. */
+#define TR_PROMPT_MAX 140 /* characters of a prompt's first line kept (its title), no "…" */
+
 typedef void (*EmitFn)(void *ud, Event *ev); /* receives ownership of ev's strings */
 typedef struct Transcript Transcript;
 
@@ -57,6 +59,27 @@ typedef struct {
     int n;
 } Notes;
 Notes tr_notes(const char *src, long off, int n, const char *id);
+
+/* One change of a file re-read from its record, for replaying the file. Like
+ * the detail: tool_use `id` on the line at `off` of `src`; `path` (relative to
+ * the repo `root`) picks the file out of a command's changes. */
+typedef struct {
+    int old_start, old_lines, new_start, new_lines;
+    char **lines; /* as recorded: "+added", "-removed", " kept" */
+    int n;
+} Hunk;
+typedef struct {
+    int state;      /* 0 found, 1 no result recorded yet, -1 record unreadable */
+    int cmd;        /* a command's change (bashEditDiff hunks of path), not an Edit/Write */
+    char *tool;     /* the tool's name ("Edit", "Write", "Bash", ...); NULL when unread */
+    int patched;    /* an Edit/Write result recorded a structuredPatch (maybe empty) */
+    char *original; /* the file before it (originalFile); NULL when not recorded */
+    char *created;  /* a Write that created the file: its content; else NULL */
+    Hunk *hunks;    /* structuredPatch, or the command's hunks for path */
+    int nhunks;
+} Change;
+Change *tr_change(const char *src, long off, const char *id, const char *root, const char *path);
+void change_free(Change *ch);
 void notes_free(Notes *ns);
 Detail *detail_new(const char *tool);
 void detail_line(Detail *d, DlKind kind, const char *s); /* s may hold newlines */

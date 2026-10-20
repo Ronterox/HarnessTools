@@ -34,6 +34,20 @@ static void run(const char *path, const char *frag, const char *const *words, co
     syn_doc_free(d);
 }
 
+/* Defs as "name cls a-b parent cxN dN|" each. */
+static void defs(const char *path, const char *text, const char *want) {
+    SynDef *d;
+    int n = syn_defs(path, text, (uint32_t)strlen(text), &d, NULL);
+    if (!n) { printf("skip syntax defs %s (no textobjects query installed)\n", path); return; }
+    char got[1024] = "";
+    for (int i = 0; i < n; i++)
+        snprintf(got + strlen(got), sizeof got - strlen(got), "%s %d %d-%d %d cx%d d%d|", d[i].name, d[i].cls, d[i].a,
+                 d[i].b, d[i].parent, d[i].cx, d[i].depth);
+    checks++;
+    if (strcmp(got, want)) { printf("FAIL syntax defs %s:\n  got  %s\n  want %s\n", path, got, want); fails++; }
+    syn_defs_free(d, n);
+}
+
 int main(void) {
     const char *c = "/* note */\nstatic int main(void) {\n    const char *s = \"hi\\n\";\n    return 42 + MAX_N;\n}\n";
     const char *cw[] = {"/* note", "static", "int", "main", "\"hi", "\\n", "return", "42", "MAX_N"};
@@ -78,6 +92,38 @@ int main(void) {
         free(big);
     }
     if (syn_lang_for("notes.unknownext") || syn_lang_for("README")) { printf("FAIL syntax: language for no grammar\n"); fails++; }
+    /* Functions and classes from the textobjects queries. */
+    const char *cdefs = "int proto(void);\n"
+                        "static char *name(int a, int b) {\n    if (a && b) return 0;\n    for (;;) { while (a) a--; }\n    return a ? 0 : 0;\n}\n"
+                        "typedef struct {\n    int x;\n} Point;\n";
+    const char *cwant = "name 0 2-6 -1 cx6 d1|Point 1 7-9 -1 cx1 d0|";
+    defs("src/a.c", cdefs, cwant);
+    const char *pydefs = "class A:\n    @property\n    def x(self):\n        def inner():\n            return [a for a in b if a or c]\n        return 1\n\n"
+                         "def top():\n    try:\n        pass\n    except E:\n        pass\n";
+    const char *pywant = "A 1 1-6 -1 cx4 d2|x 0 3-6 0 cx4 d1|inner 0 4-5 1 cx4 d0|top 0 8-12 -1 cx2 d1|";
+    defs("x/b.py", pydefs, pywant);
+    /* The previous version's parse reused: the same defs as a fresh parse. */
+    SynParse *pp = syn_parse_new();
+    const char *versions[] = {cdefs, "int proto(void);\nint added(void) { return 1; }\n",
+                              "int added(void) { return 1; }\nstatic char *name(int a) {\n    return 0;\n}\n", cdefs};
+    for (int v = 0; v < 4 && syn_lang_for("src/a.c"); v++) {
+        SynDef *x, *y;
+        int nx = syn_defs("src/a.c", versions[v], (uint32_t)strlen(versions[v]), &x, pp);
+        int ny = syn_defs("src/a.c", versions[v], (uint32_t)strlen(versions[v]), &y, NULL);
+        if (!ny) { /* no grammar or query installed: nothing to compare */
+            syn_defs_free(x, nx);
+            continue;
+        }
+        int same = nx == ny;
+        for (int i = 0; same && i < nx; i++)
+            same = !strcmp(x[i].name, y[i].name) && x[i].a == y[i].a && x[i].b == y[i].b && x[i].cx == y[i].cx &&
+                   x[i].parent == y[i].parent;
+        checks++;
+        if (!same) { printf("FAIL syntax defs: version %d reparsed differs\n", v); fails++; }
+        syn_defs_free(x, nx);
+        syn_defs_free(y, ny);
+    }
+    syn_parse_free(pp);
     if (!fails) printf("ok   syntax (%d checks)\n", checks);
     return fails != 0;
 }

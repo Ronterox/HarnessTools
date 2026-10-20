@@ -14,30 +14,11 @@
 #include "transcript.h"
 #include "raylib.h"
 #include "rlgl.h"
+#include "sview.h"
 #include "timeline.h"
+#include "ui.h"
 #include "util.h"
 
-#define BG (Color){13, 17, 23, 255}
-#define PANEL (Color){22, 27, 34, 235}
-#define DIM (Color){139, 148, 158, 255}
-#define TEXT (Color){230, 237, 243, 255}
-#define LIVE_RED (Color){255, 85, 85, 255}
-/* Commands in the detail window: a soft lavender, cool like the background
- * (no glare on dark blue), clearly apart from the white of plain text. */
-#define CMD_TEXT (Color){180, 190, 254, 255}
-/* What stands out in it, bold and in its own color: keywords and programs
- * (mauve), numbers (peach), dates and times (sky). Pastels of the same
- * lightness, apart in hue from each other, the white text and the diff's
- * green and red. */
-#define KEY_TEXT (Color){203, 166, 247, 255}
-#define NUM_TEXT (Color){250, 179, 135, 255}
-#define DATE_TEXT (Color){137, 220, 235, 255}
-/* Code, highlighted by tree-sitter, adds: strings (green), functions (blue),
- * types (teal), builtins and escapes (pink); fields take the lavender. */
-#define STR_TEXT (Color){166, 227, 161, 255}
-#define FUNC_TEXT (Color){137, 180, 250, 255}
-#define TYPE_TEXT (Color){148, 226, 213, 255}
-#define BUILTIN_TEXT (Color){245, 194, 231, 255}
 #define IDLE_GAP_REAL 0.4  /* replay: longest real-time pause between events */
 #define DIM_SECS 120.0     /* actors dim after this much sim-time idleness */
 #define GONE_SECS 600.0    /* ...and leave the stage after this */
@@ -51,160 +32,13 @@
 #define WIN_ROW 22.0f      /* turn window row height */
 #define DIM_OTHERS 0.15f   /* alpha of everything outside an open turn */
 
-/* ---- text helpers ------------------------------------------------------- */
-
-static Font g_font;
-static bool g_font_ok;
-
-static void load_font(void) {
-    static const char *paths[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-        NULL,
-    };
-    /* ASCII, Latin-1 + Extended-A, punctuation (— “ ” • …), arrows, math, checks: the
-     * agents' comments are prose. */
-    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2190, 0x21FF},
-                                    {0x2212, 0x2212}, {0x2260, 0x2265}, {0x25B6, 0x25B6}, {0x2713, 0x2717},
-                                    {0xFFFD, 0xFFFD}};
-    int cps[600], n = 0;
-    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
-        for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
-    for (int i = 0; paths[i]; i++) {
-        if (!FileExists(paths[i])) continue;
-        g_font = LoadFontEx(paths[i], 64, cps, n);
-        SetTextureFilter(g_font.texture, TEXTURE_FILTER_BILINEAR);
-        g_font_ok = true;
-        return;
-    }
-    g_font = GetFontDefault();
-}
-
-/* Monospace for the detail view: code, diffs, command output. Bold for what
- * should stand out in it; the same cell width, so columns stay aligned. */
-static Font g_mono, g_mono_bold;
-
-static bool load_mono_face(Font *f, const char *const *paths) {
-    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2190, 0x21FF},
-                                    {0x2500, 0x25FF}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
-    int cps[1200], n = 0;
-    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
-        for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
-    for (int i = 0; paths[i]; i++) {
-        if (!FileExists(paths[i])) continue;
-        SetTraceLogLevel(LOG_ERROR); /* box-drawing glyphs overflow the cell: harmless warnings */
-        *f = LoadFontEx(paths[i], 32, cps, n);
-        SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
-        SetTextureFilter(f->texture, TEXTURE_FILTER_BILINEAR);
-        return true;
-    }
-    return false;
-}
-
-static void load_mono(void) {
-    static const char *const regular[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
-        NULL,
-    };
-    static const char *const bold[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
-        NULL,
-    };
-    if (!load_mono_face(&g_mono, regular)) g_mono = g_font;
-    if (!load_mono_face(&g_mono_bold, bold)) g_mono_bold = g_mono;
-}
-
-/* raylib's DrawTextEx and MeasureTextEx, but finding ASCII glyphs directly
- * (raylib scans the font's ~1000 glyphs for every character) and drawing a
- * string as one batch of quads: the same vertices, a fraction of the CPU.
- * Text with a newline goes to raylib, whose line spacing is its own. */
-static int glyph_ix(Font f, int cp) {
-    if (cp >= 32 && cp <= 126 && f.glyphCount > cp - 32 && f.glyphs[cp - 32].value == cp) return cp - 32;
-    return GetGlyphIndex(f, cp);
-}
-
-static void draw_text(Font f, const char *s, Vector2 pos, float size, float spacing, Color tint) {
-    if (strchr(s, '\n') || !f.texture.id) {
-        DrawTextEx(f, s, pos, size, spacing, tint);
-        return;
-    }
-    float scale = size / (float)f.baseSize, x = 0, pad = (float)f.glyphPadding;
-    float tw = (float)f.texture.width, th = (float)f.texture.height;
-    bool open = false;
-    for (int i = 0; s[i];) {
-        int n = 0, cp = GetCodepointNext(s + i, &n), ix = glyph_ix(f, cp);
-        i += n;
-        Rectangle r = f.recs[ix];
-        if (cp != ' ' && cp != '\t') {
-            Rectangle d = {pos.x + x + ((float)f.glyphs[ix].offsetX - pad) * scale,
-                           pos.y + ((float)f.glyphs[ix].offsetY - pad) * scale, (r.width + 2 * pad) * scale,
-                           (r.height + 2 * pad) * scale};
-            float u0 = (r.x - pad) / tw, v0 = (r.y - pad) / th;
-            float u1 = (r.x + r.width + pad) / tw, v1 = (r.y + r.height + pad) / th;
-            if (!open) {
-                rlSetTexture(f.texture.id);
-                rlBegin(RL_QUADS);
-                open = true;
-            }
-            rlColor4ub(tint.r, tint.g, tint.b, tint.a);
-            rlNormal3f(0, 0, 1);
-            rlTexCoord2f(u0, v0); rlVertex2f(d.x, d.y);
-            rlTexCoord2f(u0, v1); rlVertex2f(d.x, d.y + d.height);
-            rlTexCoord2f(u1, v1); rlVertex2f(d.x + d.width, d.y + d.height);
-            rlTexCoord2f(u1, v0); rlVertex2f(d.x + d.width, d.y);
-        }
-        x += (f.glyphs[ix].advanceX ? (float)f.glyphs[ix].advanceX : r.width) * scale + spacing;
-    }
-    if (open) {
-        rlEnd();
-        rlSetTexture(0);
-    }
-}
-
-static float measure_text(Font f, const char *s, float size, float spacing) {
-    if (!*s) return 0;
-    if (strchr(s, '\n') || !f.texture.id) return MeasureTextEx(f, s, size, spacing).x;
-    float w = 0;
-    int count = 0;
-    for (int i = 0; s[i]; count++) {
-        int n = 0, cp = GetCodepointNext(s + i, &n), ix = glyph_ix(f, cp);
-        i += n;
-        w += f.glyphs[ix].advanceX > 0 ? (float)f.glyphs[ix].advanceX : f.recs[ix].width + (float)f.glyphs[ix].offsetX;
-    }
-    return w * size / (float)f.baseSize + (float)(count - 1) * spacing;
-}
-
-static void text(const char *s, float x, float y, float size, Color c) {
-    draw_text(g_font, s, (Vector2){x, y}, size, size * (g_font_ok ? 0.02f : 0.1f), c);
-}
-
-static float text_w(const char *s, float size) {
-    return measure_text(g_font, s, size, size * (g_font_ok ? 0.02f : 0.1f));
-}
-
 static float dist2d(Vector2 a, Vector2 b) { return hypotf(a.x - b.x, a.y - b.y); }
 
-static Color fade(Color c, float a) {
-    c.a = (unsigned char)(fmaxf(0, fminf(1, a)) * c.a);
-    return c;
-}
-
-/* s cut to fit maxw pixels at size, with "…". */
-static void fit(char *out, size_t n, const char *s, float size, float maxw) {
-    snprintf(out, n, "%s", s);
-    if (text_w(out, size) <= maxw) return;
-    size_t len = strlen(out);
-    while (len > 0) {
-        do len--; while (len > 0 && ((unsigned char)out[len] & 0xC0) == 0x80);
-        if (len + 4 > n) continue;
-        memcpy(out + len, "\xE2\x80\xA6", 4);
-        if (text_w(out, size) <= maxw) return;
-    }
+/* "…" after a prompt transcript.c cut (it keeps TR_PROMPT_MAX characters), "" otherwise. */
+static const char *cut_mark(const char *p) {
+    int n = 0;
+    for (; p && *p; p++) n += ((unsigned char)*p & 0xC0) != 0x80;
+    return n >= TR_PROMPT_MAX ? "\xE2\x80\xA6" : "";
 }
 
 /* Heat: the hue of the last thing done to the file, brighter the more often it
@@ -214,32 +48,6 @@ static Color heat_color(const Node *n) {
     float k = n->churn ? 0.45f + 0.55f * fminf(1, log2f(1.0f + (float)n->churn) / log2f(21.0f)) : 0.32f;
     return (Color){(unsigned char)(BG.r + (base.r - BG.r) * k), (unsigned char)(BG.g + (base.g - BG.g) * k),
                    (unsigned char)(BG.b + (base.b - BG.b) * k), 255};
-}
-
-static void fmt_count(char *buf, size_t n, long v) {
-    char tmp[32];
-    snprintf(tmp, sizeof tmp, "%ld", v < 0 ? -v : v);
-    size_t len = strlen(tmp), o = 0;
-    for (size_t i = 0; i < len && o + 2 < n; i++) {
-        if (i && (len - i) % 3 == 0) buf[o++] = ',';
-        buf[o++] = tmp[i];
-    }
-    buf[o] = 0;
-}
-
-static void fmt_ago(char *buf, size_t n, double secs) {
-    if (secs < 0) secs = 0;
-    if (secs < 60) snprintf(buf, n, "%ds ago", (int)secs);
-    else if (secs < 3600) snprintf(buf, n, "%dm %02ds ago", (int)secs / 60, (int)secs % 60);
-    else if (secs < 86400) snprintf(buf, n, "%dh %02dm ago", (int)secs / 3600, (int)secs % 3600 / 60);
-    else snprintf(buf, n, "%dd ago", (int)(secs / 86400));
-}
-
-static void fmt_clock(char *buf, size_t n, double ts, const char *fmt) {
-    time_t t = (time_t)ts;
-    struct tm tm;
-    localtime_r(&t, &tm);
-    strftime(buf, n, fmt, &tm);
 }
 
 static const char *kind_verb(EvKind k) {
@@ -273,158 +81,16 @@ static float panel_height(Scene *m, double sim) {
     return rows ? ROW_H * (float)rows + 16 : 0;
 }
 
-/* ---- comments: an agent's text before a step, as message boxes ---------- */
-
-#define NOTE_FONT 14.0f
-#define NOTE_ROW 19.0f
-#define NOTE_PAD 8.0f  /* inside a box */
-#define NOTE_GAP 8.0f  /* between boxes */
-#define NOTE_HEAD 36.0f
-
-typedef struct {
-    Notes ns;
-    float w; /* text width the rows are wrapped for; 0 = rewrap */
-    struct NoteRow { int note, start, len; } *rows;
-    int nrows, cap;
-} NoteView;
-
-static void nv_clear(NoteView *nv) {
-    notes_free(&nv->ns);
-    nv->w = 0;
-    nv->nrows = 0;
-}
-
-/* The comments of step e; markdown emphasis markers dropped, ends trimmed. */
-static void nv_load(NoteView *nv, const Event *e) {
-    nv_clear(nv);
-    nv->ns = tr_notes(e->src, e->note_off, e->notes, e->tool_id);
-    for (int i = 0; i < nv->ns.n; i++) {
-        char *t = nv->ns.s[i], *o = t;
-        for (const char *p = t; *p; p++) {
-            if (p[0] == '*' && p[1] == '*') { p++; continue; }
-            if (*p != '\r') *o++ = *p;
-        }
-        while (o > t && (o[-1] == '\n' || o[-1] == ' ')) o--;
-        *o = 0;
-        size_t lead = strspn(t, "\n");
-        memmove(t, t + lead, strlen(t + lead) + 1);
-    }
-}
-
-static void nv_row(NoteView *nv, int note, int start, int len) {
-    if (nv->nrows == nv->cap) {
-        nv->cap = nv->cap ? nv->cap * 2 : 64;
-        nv->rows = xrealloc(nv->rows, (size_t)nv->cap * sizeof *nv->rows);
-    }
-    nv->rows[nv->nrows++] = (struct NoteRow){note, start, len};
-}
-
-static bool note_fits(const char *s, int len, float w) {
-    char buf[1024];
-    if (len >= (int)sizeof buf) return false;
-    memcpy(buf, s, (size_t)len);
-    buf[len] = 0;
-    return text_w(buf, NOTE_FONT) <= w;
-}
-
-/* Word-wrap every comment at w pixels; words wider than that are cut. */
-static void nv_wrap(NoteView *nv, float w) {
-    nv->w = w;
-    nv->nrows = 0;
-    for (int i = 0; i < nv->ns.n; i++) {
-        const char *s = nv->ns.s[i];
-        for (int k = 0;;) {
-            int end = k;
-            while (s[end] && s[end] != '\n') end++;
-            if (end == k) nv_row(nv, i, k, 0); /* blank line: paragraph break */
-            for (int start = k; start < end;) {
-                int to = -1;
-                for (int q = start; q < end;) {
-                    while (q < end && s[q] == ' ') q++;
-                    while (q < end && s[q] != ' ' && q - start < 1024) q++; /* note_fits caps there */
-                    if (!note_fits(s + start, q - start, w)) break;
-                    to = q;
-                }
-                if (to < 0) { /* one word wider than the box */
-                    int c = start;
-                    while (c < end) {
-                        int nx = c + 1;
-                        while (nx < end && ((unsigned char)s[nx] & 0xC0) == 0x80) nx++;
-                        if (c > start && !note_fits(s + start, nx - start, w)) break;
-                        c = nx;
-                    }
-                    to = c;
-                }
-                nv_row(nv, i, start, to - start);
-                start = to;
-                while (start < end && s[start] == ' ') start++;
-            }
-            if (!s[end]) break;
-            k = end + 1;
-        }
-    }
-}
-
-/* Height of the boxes stacked, once wrapped. */
-static float nv_height(const NoteView *nv) {
-    return nv->ns.n ? (float)nv->nrows * NOTE_ROW + (float)nv->ns.n * (2 * NOTE_PAD + NOTE_GAP) - NOTE_GAP : 0;
-}
-
-/* The boxes from `scroll` pixels down, clipped to r. */
-static void nv_draw(const NoteView *nv, Rectangle r, float scroll, Color accent) {
-    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
-    float y = r.y - scroll;
-    char buf[1024];
-    for (int k = 0; k < nv->nrows;) {
-        int note = nv->rows[k].note, nr = 0;
-        while (k + nr < nv->nrows && nv->rows[k + nr].note == note) nr++;
-        float bh = (float)nr * NOTE_ROW + 2 * NOTE_PAD;
-        if (y + bh >= r.y && y <= r.y + r.height) {
-            Rectangle box = {r.x, y, r.width, bh};
-            DrawRectangleRounded(box, fminf(0.5f, 16 / bh), 6, (Color){32, 39, 50, 255});
-            DrawRectangle((int)r.x, (int)(y + 5), 3, (int)(bh - 10), fade(accent, 0.8f));
-            for (int j = 0; j < nr; j++) {
-                const struct NoteRow *row = &nv->rows[k + j];
-                float ry = y + NOTE_PAD + (float)j * NOTE_ROW;
-                if (!row->len || ry + NOTE_ROW < r.y || ry > r.y + r.height) continue;
-                int len = row->len < (int)sizeof buf - 1 ? row->len : (int)sizeof buf - 1;
-                memcpy(buf, nv->ns.s[note] + row->start, (size_t)len);
-                buf[len] = 0;
-                text(buf, r.x + 14, ry + 1, NOTE_FONT, TEXT);
-            }
-        }
-        y += bh + NOTE_GAP;
-        k += nr;
-    }
-    EndScissorMode();
-}
-
-/* A small speech bubble: the step has comments. */
-static void bubble_icon(float x, float y, Color c) {
-    DrawRectangleRounded((Rectangle){x, y, 13, 9}, 0.5f, 4, c);
-    DrawTriangle((Vector2){x + 3, y + 8}, (Vector2){x + 3, y + 12}, (Vector2){x + 7, y + 8}, c);
-}
-
 /* ---- viewer state ------------------------------------------------------- */
 
 typedef enum { HOVER_NONE, HOVER_NODE, HOVER_ACTOR } HoverKind;
 
-/* How a detail's lines are styled. Commands when it loads (a heredoc spans
- * lines), everything else when a line is first drawn: code a block of lines
- * at a time, highlighted on the side of the diff it belongs to. */
-typedef struct {
-    unsigned char **st;  /* per line: the style of each byte, NULL until drawn */
-    unsigned char *side; /* per line: 0 not code, 1 the new text, 2 the old one */
-    uint32_t *off;       /* where the line starts in its side's text */
-    char *text[2];       /* new side (context + added lines), old side (context + removed) */
-    uint32_t len[2];
-    SynDoc *doc[2];      /* NULL: no grammar installed, the keyword lists instead */
-    const char *kw;      /* keyword list without a grammar; "" = markdown headings */
-} DetStyle;
-
 typedef struct {
     const VizOpts *o;
     Scene *m;
+    SView *sv;    /* the structure screen (S), made when first opened */
+    Event *aside; /* until then: the analysis-only events the stage drops */
+    size_t naside, capaside;
     History h;
     double sim, speed;
     bool live, paused, auto_cam, legend;
@@ -461,7 +127,7 @@ typedef struct {
     float det_scroll;
     Rectangle det_win, det_close;
     DetStyle det_style;
-    struct DetRow { int line, start, len; } *det_rows; /* wrapped */
+    DetRow *det_rows; /* wrapped */
     int det_nrows, det_caprows, det_cols, det_vis;
     /* Comments panel beside the detail: what the agent wrote before the step.
      * The hover preview shows a turn step's comments before it is opened. */
@@ -549,11 +215,20 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
     size_t n = evq_drain(q, &in);
     if (!n) { free(in); return; }
     qsort(in, n, sizeof *in, ev_cmp);
+    if (v->sv) sv_add(v->sv, in, n); /* all of them: the analysis-only kinds are freed below */
     size_t kept = 0;
     for (size_t i = 0; i < n; i++) {
         if (in[i].kind == EV_FAILED) {
             mark_failed(v, in, kept, &in[i]);
             ev_free(&in[i]);
+        } else if (!ev_staged(in[i].kind) && v->sv) {
+            ev_free(&in[i]);
+        } else if (!ev_staged(in[i].kind)) { /* kept for the structure screen, should it open */
+            if (v->naside == v->capaside) {
+                v->capaside = v->capaside ? v->capaside * 2 : 1024;
+                v->aside = xrealloc(v->aside, v->capaside * sizeof *v->aside);
+            }
+            v->aside[v->naside++] = in[i];
         } else {
             in[kept++] = in[i];
         }
@@ -567,6 +242,21 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
     }
     hist_add(&v->h, in, n, k);
     free(in);
+}
+
+/* The structure screen, made on first use: its analysis gets the history so
+ * far (the stage's events and the ones set aside for it), then new events as
+ * they come. */
+static SView *structure(Viz *v) {
+    if (v->sv) return v->sv;
+    v->sv = sv_new(v->o->root);
+    sv_add(v->sv, v->h.ev, v->h.n);
+    sv_add(v->sv, v->aside, v->naside);
+    for (size_t i = 0; i < v->naside; i++) ev_free(&v->aside[i]);
+    free(v->aside);
+    v->aside = NULL;
+    v->naside = v->capaside = 0;
+    return v->sv;
 }
 
 /* ---- turn window: data ------------------------------------------------- */
@@ -672,9 +362,9 @@ static void draw_turn_areas(Viz *v, float px) {
             if (v->hl[dir->kids[k]]) r = fmaxf(r, dist2d(cen, f->pos) + f->radius);
         }
         r += 12 * px;
-        DrawCircleV(cen, r + 10 * px, fade(c, 0.05f));
-        DrawCircleV(cen, r, fade(c, 0.12f));
-        DrawRing(cen, r, r + 2 * px, 0, 360, 64, fade(c, 0.5f));
+        DrawCircleV(cen, r + 10 * px, ui_fade(c, 0.05f));
+        DrawCircleV(cen, r, ui_fade(c, 0.12f));
+        DrawRing(cen, r, r + 2 * px, 0, 360, 64, ui_fade(c, 0.5f));
     }
 }
 
@@ -697,15 +387,15 @@ static void draw_pulse(Vector2 p, float r0, RingTier tier, float s, float t, flo
     switch (tier) {
     case RING_MINOR: {
         float r = r0 + k * fmaxf(4 + 12 * s, (5 + 8 * s) * px) * ease_out(t);
-        DrawRing(p, fmaxf(r - 1.5f * px, r0), r, 0, 360, 36, fade(ColorBrightness(c, -0.25f), u * (0.35f + 0.2f * s) * al));
+        DrawRing(p, fmaxf(r - 1.5f * px, r0), r, 0, 360, 36, ui_fade(ColorBrightness(c, -0.25f), u * (0.35f + 0.2f * s) * al));
         break;
     }
     case RING_NOTABLE: {
         float grow = k * fmaxf(22 + 40 * s, (20 + 24 * s) * px);
         float r1 = r0 + grow * ease_out(t), r2 = r0 + grow * ease_out(fmaxf(0, t - 0.2f) / 0.8f);
         float w = (3 + 1.5f * s) * px;
-        DrawRing(p, fmaxf(r1 - w, r0), r1, 0, 360, 48, fade(c, u * (0.7f + 0.2f * s) * al));
-        DrawRing(p, fmaxf(r2 - w * 0.6f, r0), r2, 0, 360, 48, fade(c, u * 0.45f * al));
+        DrawRing(p, fmaxf(r1 - w, r0), r1, 0, 360, 48, ui_fade(c, u * (0.7f + 0.2f * s) * al));
+        DrawRing(p, fmaxf(r2 - w * 0.6f, r0), r2, 0, 360, 48, ui_fade(c, u * 0.45f * al));
         break;
     }
     case RING_MAJOR: {
@@ -713,16 +403,16 @@ static void draw_pulse(Vector2 p, float r0, RingTier tier, float s, float t, flo
         float r = r0 + grow * ease_out(fminf(1, t * 1.6f)); /* out fast, then the glow lingers */
         float w = (7 + 6 * s) * px * (1 - 0.6f * t);
         float wave = fmaxf(0, 1 - t * 1.4f);
-        DrawCircleV(p, r0 * 2 + (10 + 10 * s) * px, fade(c, u * u * 0.3f * al));
-        DrawCircleV(p, r0 * 1.4f, fade(hot, fmaxf(0, 1 - t * 4) * 0.7f * al)); /* the flash */
-        DrawRing(p, fmaxf(r - w, r0), r, 0, 360, 64, fade(c, wave * al));
-        DrawRing(p, fmaxf(r - w * 0.7f, r0), fmaxf(r - w * 0.3f, r0), 0, 360, 64, fade(hot, wave * 0.8f * al));
+        DrawCircleV(p, r0 * 2 + (10 + 10 * s) * px, ui_fade(c, u * u * 0.3f * al));
+        DrawCircleV(p, r0 * 1.4f, ui_fade(hot, fmaxf(0, 1 - t * 4) * 0.7f * al)); /* the flash */
+        DrawRing(p, fmaxf(r - w, r0), r, 0, 360, 64, ui_fade(c, wave * al));
+        DrawRing(p, fmaxf(r - w * 0.7f, r0), fmaxf(r - w * 0.3f, r0), 0, 360, 64, ui_fade(hot, wave * 0.8f * al));
         for (int i = 0; i < 8; i++) {
             float a = phase + (float)i * 0.7854f;
             Vector2 d = {cosf(a), sinf(a)};
             float a0 = r + k * 3 * px, a1 = r + k * (10 + 18 * s) * px + grow * 0.15f;
             DrawLineEx((Vector2){p.x + d.x * a0, p.y + d.y * a0}, (Vector2){p.x + d.x * a1, p.y + d.y * a1},
-                       (2 + s) * px, fade(hot, wave * 0.85f * al));
+                       (2 + s) * px, ui_fade(hot, wave * 0.85f * al));
         }
         break;
     }
@@ -739,8 +429,8 @@ static void draw_scene(Viz *v) {
         if (n->alpha <= 0) continue;
         Node *p = &N[n->parent];
         float a = n->alpha * hl_alpha(v, i);
-        if (n->is_dir) DrawLineEx(p->pos, n->pos, 1.5f * px, fade((Color){90, 100, 120, 255}, 0.6f * a));
-        else DrawLineEx(p->pos, n->pos, 1.0f * px, fade((Color){90, 100, 120, 255}, 0.25f * a));
+        if (n->is_dir) DrawLineEx(p->pos, n->pos, 1.5f * px, ui_fade((Color){90, 100, 120, 255}, 0.6f * a));
+        else DrawLineEx(p->pos, n->pos, 1.0f * px, ui_fade((Color){90, 100, 120, 255}, 0.25f * a));
     }
     if (v->turn_open) draw_turn_areas(v, px);
 
@@ -759,17 +449,17 @@ static void draw_scene(Viz *v) {
         if (n->alpha <= 0) continue;
         float a = n->alpha * hl_alpha(v, i);
         if (n->is_dir) {
-            if (!dir_merged(m, n)) DrawCircleV(n->pos, dir_r(n, px), fade(n->color, 0.8f * a));
+            if (!dir_merged(m, n)) DrawCircleV(n->pos, dir_r(n, px), ui_fade(n->color, 0.8f * a));
             continue;
         }
         Color hc = heat_color(n);
         if (n->flash > 0) {
             BeginBlendMode(BLEND_ADDITIVE);
-            DrawCircleV(n->pos, n->radius * (1.6f + n->flash), fade(kind_color(n->act_kind), 0.35f * n->flash * a));
+            DrawCircleV(n->pos, n->radius * (1.6f + n->flash), ui_fade(kind_color(n->act_kind), 0.35f * n->flash * a));
             EndBlendMode();
         }
         Color c = n->deleted ? LIVE_RED : ColorBrightness(hc, 0.5f * n->flash);
-        DrawCircleV(n->pos, n->radius, fade(c, a));
+        DrawCircleV(n->pos, n->radius, ui_fade(c, a));
     }
 
     BeginBlendMode(BLEND_ADDITIVE);
@@ -781,7 +471,7 @@ static void draw_scene(Viz *v) {
         float t = f->age / f->life;
         float w = (1.0f + 9.0f * f->strength) * px;
         float dim = v->turn_open && strcmp(a->id, v->turn_actor) ? DIM_OTHERS : 1;
-        DrawLineEx(a->pos, N[f->node].pos, w, fade(f->color, (1 - t) * 0.9f * dim));
+        DrawLineEx(a->pos, N[f->node].pos, w, ui_fade(f->color, (1 - t) * 0.9f * dim));
     }
     EndBlendMode();
 
@@ -790,8 +480,8 @@ static void draw_scene(Viz *v) {
         float al = actor_alpha(a, v->sim);
         if (v->turn_open && strcmp(a->id, v->turn_actor)) al *= DIM_OTHERS;
         if (al <= 0) continue;
-        DrawCircleV(a->pos, 9 * px + 3, fade(a->color, al));
-        DrawCircleV(a->pos, 5 * px + 1, fade(BG, al));
+        DrawCircleV(a->pos, 9 * px + 3, ui_fade(a->color, al));
+        DrawCircleV(a->pos, 5 * px + 1, ui_fade(BG, al));
     }
 
     /* Hover highlight. */
@@ -808,17 +498,17 @@ static void draw_scene(Viz *v) {
 /* A file's name, with its last change (+added -removed) while it's fresh. */
 static void file_label(const Node *n, float x, float y, float a) {
     char num[32];
-    text(n->name, x + 1, y + 1, 15, fade(BG, 0.8f * a)); /* readable over rings and beams */
-    text(n->name, x, y, 15, fade(TEXT, a));
+    ui_text(n->name, x + 1, y + 1, 15, ui_fade(BG, 0.8f * a)); /* readable over rings and beams */
+    ui_text(n->name, x, y, 15, ui_fade(TEXT, a));
     if (n->label <= 0 || n->last_kind == EV_READ) return;
-    x += text_w(n->name, 15) + 6;
+    x += ui_text_w(n->name, 15) + 6;
     for (int k = 0; k < 2; k++) {
         int c = k ? n->last_del : n->last_add;
         if (!c) continue;
         snprintf(num, sizeof num, k ? "\xE2\x88\x92%d" : "+%d", c);
-        text(num, x + 1, y + 1, 15, fade(BG, 0.8f * a));
-        text(num, x, y, 15, fade(kind_color(k ? EV_DELETE : EV_CREATE), a));
-        x += text_w(num, 15) + 4;
+        ui_text(num, x + 1, y + 1, 15, ui_fade(BG, 0.8f * a));
+        ui_text(num, x, y, 15, ui_fade(kind_color(k ? EV_DELETE : EV_CREATE), a));
+        x += ui_text_w(num, 15) + 4;
     }
 }
 
@@ -842,7 +532,7 @@ static void draw_labels(Viz *v) {
         if (n->is_dir) {
             if (dir_merged(m, n)) continue; /* its chain's last dir is labeled */
             float r = dir_r(n, 1 / v->cam.zoom) * v->cam.zoom * 0.7f; /* up and right of its circle */
-            text(dir_name(m, n), s.x + r + 4, s.y - r - 16, 15, fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
+            ui_text(dir_name(m, n), s.x + r + 4, s.y - r - 16, 15, ui_fade(DIM, 0.85f * n->alpha * hl_alpha(v, i)));
         } else if (v->turn_open && v->hl[i]) { /* the open turn's files stay labeled */
             file_label(n, s.x + n->radius * v->cam.zoom + 4, s.y - 8, n->alpha);
         } else if (n->label > 0 && !v->turn_open) {
@@ -855,13 +545,13 @@ static void draw_labels(Viz *v) {
         float al = actor_alpha(a, v->sim);
         if (al < 1) continue; /* idle actors stay unlabeled */
         if (v->turn_open && strcmp(a->id, v->turn_actor)) continue;
-        text(a->name, s.x + 14, s.y - 9, 16, fade(a->color, al));
+        ui_text(a->name, s.x + 14, s.y - 9, 16, ui_fade(a->color, al));
         if (a->bubble && a->bubble_t > 0) {
             float ba = fminf(1, a->bubble_t);
-            float w = text_w(a->bubble, 14);
+            float w = ui_text_w(a->bubble, 14);
             DrawRectangleRounded((Rectangle){s.x + 12, s.y + 10, w + 12, 22}, 0.4f, 6,
-                                 fade((Color){30, 36, 46, 255}, 0.9f * ba));
-            text(a->bubble, s.x + 18, s.y + 13, 14, fade(TEXT, ba));
+                                 ui_fade((Color){30, 36, 46, 255}, 0.9f * ba));
+            ui_text(a->bubble, s.x + 18, s.y + 13, 14, ui_fade(TEXT, ba));
         }
     }
 }
@@ -871,28 +561,28 @@ static void draw_labels(Viz *v) {
 static void draw_counters(Viz *v) {
     Scene *m = v->m;
     char add[32], del[32], line[256];
-    fmt_count(add, sizeof add, m->total_add);
-    fmt_count(del, sizeof del, m->total_del);
+    ui_fmt_count(add, sizeof add, m->total_add);
+    ui_fmt_count(del, sizeof del, m->total_del);
     snprintf(line, sizeof line, "+%s", add);
-    text(line, 24, 18, 56, kind_color(EV_CREATE));
-    float x = 24 + text_w(line, 56) + 24;
+    ui_text(line, 24, 18, 56, kind_color(EV_CREATE));
+    float x = 24 + ui_text_w(line, 56) + 24;
     snprintf(line, sizeof line, "\xE2\x88\x92%s", del);
-    text(line, x, 18, 56, kind_color(EV_DELETE));
-    text("lines written / removed", 26, 78, 16, DIM);
+    ui_text(line, x, 18, 56, kind_color(EV_DELETE));
+    ui_text("lines written / removed", 26, 78, 16, DIM);
     snprintf(line, sizeof line, "%d created   %d edits   %d deleted   %d reads   %d searches   %d commands",
              m->files_created, m->files_edited, m->files_deleted, m->reads, m->searches, m->commands);
-    text(line, 26, 100, 16, DIM);
+    ui_text(line, 26, 100, 16, DIM);
 
     int W = GetScreenWidth();
     char clock[64];
-    fmt_clock(clock, sizeof clock, v->sim, "%Y-%m-%d %H:%M:%S");
-    text(clock, (float)W - text_w(clock, 22) - 24, 20, 22, TEXT);
+    ui_fmt_clock(clock, sizeof clock, v->sim, "%Y-%m-%d %H:%M:%S");
+    ui_text(clock, (float)W - ui_text_w(clock, 22) - 24, 20, 22, TEXT);
     if (v->paused) snprintf(line, sizeof line, "\xE2\x80\x96 PAUSED");
     else if (v->live) snprintf(line, sizeof line, "LIVE");
     else snprintf(line, sizeof line, "\xE2\x96\xB6 REPLAY  x%g", v->speed);
     Color mc = v->live && !v->paused ? LIVE_RED : DIM;
-    text(line, (float)W - text_w(line, 18) - 24, 48, 18, mc);
-    if (v->live && !v->paused) DrawCircle(W - (int)text_w(line, 18) - 36, 58, 5, mc);
+    ui_text(line, (float)W - ui_text_w(line, 18) - 24, 48, 18, mc);
+    if (v->live && !v->paused) DrawCircle(W - (int)ui_text_w(line, 18) - 36, 58, 5, mc);
 }
 
 static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 8, 5, c); }
@@ -911,29 +601,29 @@ static void draw_legend(Viz *v) {
     float x = (float)W - LEGEND_W - 16, y = LEGEND_Y;
     if (v->turn_open || v->det) return; /* the open window explains the screen; give the graph room */
     if (!legend_shown(v)) {
-        text("H  legend", (float)W - text_w("H  legend", 14) - 24, y, 14, fade(DIM, 0.7f));
+        ui_text("H  legend", (float)W - ui_text_w("H  legend", 14) - 24, y, 14, ui_fade(DIM, 0.7f));
         return;
     }
     float h = LEGEND_H;
     DrawRectangleRounded((Rectangle){x, y, LEGEND_W, h}, 0.04f, 6, PANEL);
     float cx = x + 12, cy = y + 8;
 
-    text("ACTIONS  (beam / file color)", cx, cy, 13, DIM);
+    ui_text("ACTIONS  (beam / file color)", cx, cy, 13, DIM);
     cy += 22;
     static const EvKind kinds[] = {EV_READ, EV_SEARCH, EV_CREATE, EV_EDIT, EV_DELETE, EV_TOUCH};
     static const char *names[] = {"read", "search", "create", "edit", "delete", "changed by a command"};
     for (int i = 0; i < 6; i++, cy += 20) {
         swatch(cx, cy, kind_color(kinds[i]));
-        text(names[i], cx + 20, cy, 15, TEXT);
+        ui_text(names[i], cx + 20, cy, 15, TEXT);
     }
     cy += 6;
-    text("RINGS  (size next to the file)", cx, cy, 13, DIM);
+    ui_text("RINGS  (size next to the file)", cx, cy, 13, DIM);
     cy += 20;
     DrawRing((Vector2){cx + 6, cy + 8}, 3, 6, 0, 360, 24, kind_color(EV_CREATE));
-    text("lines added", cx + 20, cy, 15, TEXT);
+    ui_text("lines added", cx + 20, cy, 15, TEXT);
     cy += 20;
     DrawRing((Vector2){cx + 6, cy + 8}, 3, 6, 0, 360, 24, kind_color(EV_DELETE));
-    text("lines removed", cx + 20, cy, 15, TEXT);
+    ui_text("lines removed", cx + 20, cy, 15, TEXT);
     cy += 20;
     /* The three tiers, frozen early in their pulse, scaled to fit a row (the
      * minor one brighter than it is, to be seen at all). */
@@ -943,16 +633,16 @@ static void draw_legend(Viz *v) {
     float tx = cx, ix[3];
     for (int i = 0; i < 3; i++) {
         ix[i] = tx + reach[i];
-        tx += 2 * reach[i] + 4 + text_w(tiers[i], 14) + 8;
+        tx += 2 * reach[i] + 4 + ui_text_w(tiers[i], 14) + 8;
     }
     BeginBlendMode(BLEND_ADDITIVE);
     for (int i = 0; i < 3; i++)
         draw_pulse((Vector2){ix[i], cy + 18}, 2, (RingTier)i, 0, at_t[i], 0.4f, kind_color(EV_CREATE), 1, scale[i],
                    boost[i]);
     EndBlendMode();
-    for (int i = 0; i < 3; i++) text(tiers[i], ix[i] + reach[i] + 4, cy + 10, 14, TEXT);
+    for (int i = 0; i < 3; i++) ui_text(tiers[i], ix[i] + reach[i] + 4, cy + 10, 14, TEXT);
     cy += 40;
-    text("FILES  (color = last action)", cx, cy, 13, DIM);
+    ui_text("FILES  (color = last action)", cx, cy, 13, DIM);
     cy += 20;
     /* Brightness scale: an edited file at 1, 5 and 20 changes. */
     Node sample = {.act_kind = EV_EDIT};
@@ -962,16 +652,16 @@ static void draw_legend(Viz *v) {
     for (int i = 0; i < 3; i++) {
         sample.churn = churns[i];
         swatch(sx, cy, heat_color(&sample));
-        text(cl[i], sx + 16, cy, 14, TEXT);
-        sx += 16 + text_w(cl[i], 14) + 12;
+        ui_text(cl[i], sx + 16, cy, 14, TEXT);
+        sx += 16 + ui_text_w(cl[i], 14) + 12;
     }
     cy += 20;
     sample.churn = 0;
     sample.act_kind = EV_READ;
     swatch(cx, cy, heat_color(&sample));
-    text("only read", cx + 20, cy, 15, TEXT);
+    ui_text("only read", cx + 20, cy, 15, TEXT);
     cy += 26;
-    text("KEYS", cx, cy, 13, DIM);
+    ui_text("KEYS", cx, cy, 13, DIM);
     cy += 18;
     static const char *keys[] = {
         "click actor: turn    file: last change",
@@ -980,7 +670,7 @@ static void draw_legend(Viz *v) {
         "drag pan    wheel zoom    C camera",
         "F fullscreen    Esc close    Q quit",
     };
-    for (int i = 0; i < 5; i++, cy += 17) text(keys[i], cx, cy, 13, fade(TEXT, 0.8f));
+    for (int i = 0; i < 5; i++, cy += 17) ui_text(keys[i], cx, cy, 13, ui_fade(TEXT, 0.8f));
 }
 
 static void draw_panel(Viz *v) {
@@ -1007,27 +697,29 @@ static void draw_panel(Viz *v) {
         v->row_rect[k] = (Rectangle){16, y - 4, 600, ROW_H};
         v->row_actor[k] = order[k];
         float al = actor_alpha(a, v->sim);
-        DrawCircle(30, (int)y + 9, 6, fade(a->color, al));
+        DrawCircle(30, (int)y + 9, 6, ui_fade(a->color, al));
         char sa[32], sd[32];
-        fmt_count(sa, sizeof sa, a->add);
-        fmt_count(sd, sizeof sd, a->del);
+        ui_fmt_count(sa, sizeof sa, a->add);
+        ui_fmt_count(sd, sizeof sd, a->del);
         bool sel = v->turn_open && !strcmp(a->id, v->turn_actor);
-        text(a->name, 44, y, 17, fade(sel ? a->color : TEXT, al));
-        float nx = 44 + text_w(a->name, 17) + 14;
+        ui_text(a->name, 44, y, 17, ui_fade(sel ? a->color : TEXT, al));
+        float nx = 44 + ui_text_w(a->name, 17) + 14;
         snprintf(line, sizeof line, "+%s", sa);
-        text(line, nx, y, 17, fade(kind_color(EV_CREATE), al));
-        nx += text_w(line, 17) + 8;
+        ui_text(line, nx, y, 17, ui_fade(kind_color(EV_CREATE), al));
+        nx += ui_text_w(line, 17) + 8;
         snprintf(line, sizeof line, "\xE2\x88\x92%s", sd);
-        text(line, nx, y, 17, fade(kind_color(EV_DELETE), al));
-        nx += text_w(line, 17) + 14;
-        if (a->prompt) {
-            snprintf(line, sizeof line, "turn %d: %s", a->turn, a->prompt);
-            text(line, nx, y + 1, 15, fade(DIM, al));
+        ui_text(line, nx, y, 17, ui_fade(kind_color(EV_DELETE), al));
+        nx += ui_text_w(line, 17) + 14;
+        if (a->prompt) { /* the title is cut at 140 characters: fit it to the window */
+            char cap[512];
+            snprintf(cap, sizeof cap, "turn %d: %s%s", a->turn, a->prompt, cut_mark(a->prompt));
+            ui_fit(line, sizeof line, cap, 15, (float)GetScreenWidth() - nx - 16);
+            ui_text(line, nx, y + 1, 15, ui_fade(DIM, al));
         }
     }
     if (idle) {
         snprintf(line, sizeof line, "+%d idle", idle);
-        text(line, 44, y, 15, fade(DIM, 0.7f));
+        ui_text(line, 44, y, 15, ui_fade(DIM, 0.7f));
     }
 }
 
@@ -1059,377 +751,10 @@ static bool failed_bare(Viz *v, const Event *e) {
 
 static Color step_color(EvKind k) { return k == EV_BASH ? DIM : kind_color(k); }
 
-/* ---- detail window: what stands out ------------------------------------ */
-
-/* Style of one byte of a detail line: bold, and a color over the line's own. */
-enum {
-    ST_BOLD = 1, ST_COLOR = 30, ST_GOOD = 2, ST_BAD = 4, ST_DIM = 6, ST_KEY = 8, ST_NUM = 10, ST_DATE = 12,
-    ST_STR = 14, ST_FUNC = 16, ST_TYPE = 18, ST_PROP = 20, ST_BUILTIN = 22,
-};
-
-/* Bytes i..e get the style, unless they have a color already (a number in a
- * dim flag, a comment or a string stays as it is). */
-static void mark(unsigned char *st, int i, int e, unsigned char style) {
-    for (; i < e; i++)
-        if (!(st[i] & ST_COLOR)) st[i] |= style;
-}
-
-static Color style_color(int sc, Color line) {
-    switch (sc) {
-    case ST_GOOD: return kind_color(EV_CREATE);
-    case ST_BAD: return (Color){255, 120, 120, 255};
-    case ST_DIM: return DIM;
-    case ST_KEY: return KEY_TEXT;
-    case ST_NUM: return NUM_TEXT;
-    case ST_DATE: return DATE_TEXT;
-    case ST_STR: return STR_TEXT;
-    case ST_FUNC: return FUNC_TEXT;
-    case ST_TYPE: return TYPE_TEXT;
-    case ST_PROP: return CMD_TEXT;
-    case ST_BUILTIN: return BUILTIN_TEXT;
-    default: return line;
-    }
-}
-
-/* A tree-sitter class as a style. */
-static unsigned char syn_style(unsigned char c) {
-    static const unsigned char map[] = {
-        [SYN_NONE] = 0,          [SYN_KEYWORD] = ST_BOLD | ST_KEY,   [SYN_TAG] = ST_KEY,
-        [SYN_STRING] = ST_STR,   [SYN_ESCAPE] = ST_BUILTIN,          [SYN_COMMENT] = ST_DIM,
-        [SYN_FUNCTION] = ST_FUNC, [SYN_TYPE] = ST_TYPE,              [SYN_CONSTANT] = ST_BOLD | ST_NUM,
-        [SYN_PROPERTY] = ST_PROP, [SYN_BUILTIN] = ST_BUILTIN,        [SYN_HEADING] = ST_BOLD | ST_KEY,
-        [SYN_STRONG] = ST_BOLD,  [SYN_LINK] = ST_FUNC,               [SYN_LIST] = ST_KEY,
-    };
-    return c < sizeof map ? map[c] : 0;
-}
-
-static char *g_user_words; /* " w1 w2 ... ": bold everywhere (~/.config/aigource/keywords) */
-
-static void load_user_words(void) {
-    const char *xdg = getenv("XDG_CONFIG_HOME"), *home = getenv("HOME");
-    char path[1024];
-    if (xdg && *xdg) snprintf(path, sizeof path, "%s/aigource/keywords", xdg);
-    else snprintf(path, sizeof path, "%s/.config/aigource/keywords", home ? home : "");
-    char *txt = FileExists(path) ? LoadFileText(path) : NULL;
-    if (!txt) return;
-    g_user_words = xmalloc(strlen(txt) + 3);
-    char *p = g_user_words;
-    *p++ = ' ';
-    for (char *w = strtok(txt, " \t\r\n"); w; w = strtok(NULL, " \t\r\n")) p += sprintf(p, "%s ", w);
-    *p = 0;
-    UnloadFileText(txt);
-}
-
-/* Keywords of the languages a read or edit can show, by file extension. */
-static const struct { const char *ext, *kw; } LANGS[] = {
-    {" c h cc cpp hpp cxx ",
-     " if else for while do switch case default return break continue goto static const struct enum union typedef "
-     "extern inline sizeof void int char float double bool unsigned signed long short true false NULL "
-     "class public private protected template namespace using new delete virtual nullptr "},
-    {" py ", " def class import from as return if elif else for while in not and or is None True False try except "
-             "finally raise with lambda yield pass break continue global nonlocal async await assert del "},
-    {" sh bash zsh ", " if then else elif fi for while until do done case esac in function return local export "
-                      "set unset source exit "},
-    {" js ts jsx tsx mjs cjs ", " function return if else for while do switch case default break continue const let "
-                                "var new class extends import export from as async await try catch finally throw "
-                                "typeof instanceof this null undefined true false of in interface type "},
-    {" go ", " func package import return if else for range switch case default break continue go defer chan select "
-             "struct interface type map var const nil true false "},
-    {" rs ", " fn let mut pub use mod impl trait struct enum match if else for while loop in return break continue "
-             "self Self crate super where as const static unsafe async await move ref true false "},
-    {" lua ", " function local end if then else elseif for in do while repeat until return break nil true false "
-              "and or not "},
-    {" md ", ""}, /* headings */
-};
-/* What a command's output says about how it went. */
-static const char BAD_WORDS[] = " error errors failed failure fail fatal panic traceback exception denied refused "
-                                "abort aborted segmentation ";
-static const char GOOD_WORDS[] = " ok passed pass success succeeded successful ";
-static const char WARN_WORDS[] = " warning warnings warn deprecated ";
-/* Shell words after which the next word is still a command. */
-static const char SH_PREFIX[] = " if then else elif while until do ! sudo time env exec nohup xargs command builtin ";
-
-static bool word_byte(unsigned char c) { return isalnum(c) || c == '_'; }
-
-/* Is s[0..n) one of the words of list (" a b c ")? */
-static bool in_list(const char *list, const char *s, int n, bool fold) {
-    char w[64];
-    if (!list || n > 60) return false;
-    w[0] = ' ';
-    for (int i = 0; i < n; i++) w[i + 1] = fold ? (char)tolower((unsigned char)s[i]) : s[i];
-    w[n + 1] = ' ';
-    w[n + 2] = 0;
-    return strstr(list, w) != NULL;
-}
-
-/* Units a number can carry: 3.25s 40ms 2x 1.5MB. */
-static const char UNITS[] = " s ms us ns m h d x k K M G B KB MB GB KiB MiB GiB px ";
-
-/* The end of the number at s[i] (digits, with . or , between digits: 1,234
- * 3.14, and a unit) when it isn't part of a word (v2, 9a99151, 0x1F), else i. */
-static int number_end(const char *s, int i) {
-    if (!isdigit((unsigned char)s[i]) || (i > 0 && word_byte((unsigned char)s[i - 1]))) return i;
-    int k = i, u;
-    while (isdigit((unsigned char)s[k]) || (s[k] && strchr(".,", s[k]) && isdigit((unsigned char)s[k + 1]))) k++;
-    for (u = k; isalpha((unsigned char)s[u]); u++) {}
-    if (u > k && !word_byte((unsigned char)s[u]) && in_list(UNITS, s + k, u - k, false)) k = u;
-    return word_byte((unsigned char)s[k]) ? i : k;
-}
-
-/* Exactly n digits at s[k]? */
-static bool digits(const char *s, int k, int n) {
-    for (int j = 0; j < n; j++)
-        if (!isdigit((unsigned char)s[k + j])) return false;
-    return !isdigit((unsigned char)s[k + n]);
-}
-
-/* The end of a date or time at s[i] (2026-10-19, 2026/10/19, 23:49:40, 9:05,
- * 2026-10-19T23:49:40.123Z, ... +02:00), else i. */
-static int date_end(const char *s, int i) {
-    if (i > 0 && word_byte((unsigned char)s[i - 1])) return i;
-    int k = i;
-    bool date = digits(s, k, 4) && (s[k + 4] == '-' || s[k + 4] == '/') && digits(s, k + 5, 2) &&
-                s[k + 7] == s[k + 4] && digits(s, k + 8, 2);
-    if (date) {
-        k += 10;
-        if ((s[k] == 'T' || s[k] == ' ') && isdigit((unsigned char)s[k + 1])) k++;
-        else return word_byte((unsigned char)s[k]) ? i : k;
-    }
-    int h = digits(s, k, 2) ? 2 : digits(s, k, 1) ? 1 : 0;
-    if (!h || s[k + h] != ':' || !digits(s, k + h + 1, 2)) return date ? k - 1 : i; /* no time after it */
-    k += h + 3;
-    if (s[k] == ':' && digits(s, k + 1, 2)) k += 3;
-    if (s[k] == '.' && isdigit((unsigned char)s[k + 1]))
-        for (k++; isdigit((unsigned char)s[k]); k++) {}
-    if (s[k] == 'Z') k++;
-    else if (date && (s[k] == '+' || s[k] == '-')) { /* +02:00 +0200 +02 */
-        if (isdigit((unsigned char)s[k + 1]) && isdigit((unsigned char)s[k + 2]) && s[k + 3] == ':' && digits(s, k + 4, 2))
-            k += 6;
-        else if (digits(s, k + 1, 4)) k += 5;
-        else if (digits(s, k + 1, 2)) k += 3;
-    }
-    return word_byte((unsigned char)s[k]) ? i : k;
-}
-
-/* Words of the line in a list get the style; dates, numbers and the user's
- * words bold in their own colors. */
-static void style_words(const char *s, unsigned char *st, const char *kw, unsigned char kst, bool outcome) {
-    for (int i = 0; s[i];) {
-        int e = date_end(s, i);
-        if (e > i) {
-            mark(st, i, e, ST_BOLD | ST_DATE);
-            i = e;
-            continue;
-        }
-        if ((e = number_end(s, i)) > i) {
-            mark(st, i, e, ST_BOLD | ST_NUM);
-            i = e;
-            continue;
-        }
-        if (!word_byte((unsigned char)s[i]) || (i > 0 && word_byte((unsigned char)s[i - 1]))) { i++; continue; }
-        for (e = i; word_byte((unsigned char)s[e]) || (s[e] == '-' && word_byte((unsigned char)s[e + 1])); e++) {}
-        unsigned char ws = in_list(g_user_words, s + i, e - i, false) ? ST_BOLD | ST_KEY : 0;
-        if (in_list(kw, s + i, e - i, false)) ws = kst;
-        if (outcome && in_list(BAD_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_BAD;
-        else if (outcome && in_list(GOOD_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_GOOD;
-        else if (outcome && in_list(WARN_WORDS, s + i, e - i, true)) ws = ST_BOLD | ST_KEY;
-        mark(st, i, e, ws);
-        i = e;
-    }
-}
-
-/* A shell command, over its lines: each segment's program bold (after start,
- * && || | ; ( $( and the like), flags and comments dim, heredoc bodies and
- * quoted strings left alone. */
-typedef struct {
-    bool seg;          /* the next word is a program */
-    char quote;        /* inside '...' or "..." */
-    char delim[64];    /* heredoc delimiter: pending, or the body runs to it */
-    bool in_body, dash;
-} ShState;
-
-static void style_shell(ShState *sh, const char *s, unsigned char *st, bool first) {
-    if (sh->in_body) {
-        const char *t = s;
-        if (sh->dash) while (*t == '\t' || *t == ' ') t++; /* tabs arrive as spaces */
-        if (!strcmp(t, sh->delim)) sh->in_body = false, sh->delim[0] = 0, sh->seg = true;
-        return;
-    }
-    int n = (int)strlen(s), i = first && !strncmp(s, "$ ", 2) ? 2 : 0;
-    if (first) sh->seg = true;
-    while (i < n) {
-        char c = s[i];
-        if (sh->quote) {
-            if (c == '\\' && sh->quote == '"') i++;
-            else if (c == sh->quote) sh->quote = 0;
-            i++;
-            continue;
-        }
-        if (c == '\'' || c == '"') { sh->quote = c; i++; continue; }
-        if (c == '#' && (i == 0 || isspace((unsigned char)s[i - 1]))) {
-            while (i < n) st[i++] |= ST_DIM;
-            break;
-        }
-        if (c == '<' && s[i + 1] == '<' && s[i + 2] != '<') { /* heredoc: <<EOF <<'EOF' <<-"EOF" */
-            i += 2;
-            bool dash = s[i] == '-';
-            if (dash) i++;
-            while (s[i] == ' ' || s[i] == '\'' || s[i] == '"') i++;
-            if (!isalpha((unsigned char)s[i]) && s[i] != '_') continue; /* $(( 1 << 3 )): a shift */
-            sh->dash = dash;
-            int k = 0;
-            while ((word_byte((unsigned char)s[i]) || s[i] == '-') && k < (int)sizeof sh->delim - 1) sh->delim[k++] = s[i++];
-            sh->delim[k] = 0;
-            if (s[i] == '\'' || s[i] == '"') i++;
-            continue;
-        }
-        bool redir = c == '&' && ((i > 0 && s[i - 1] == '>') || s[i + 1] == '>'); /* 2>&1, &> */
-        if ((strchr(";|&({`", c) && !redir) || (c == '$' && s[i + 1] == '(')) { sh->seg = true; i += c == '$' ? 2 : 1; continue; }
-        if (isspace((unsigned char)c) || strchr(")}<>&", c)) { i++; continue; }
-        int e = i;
-        while (e < n && !isspace((unsigned char)s[e]) && !strchr(";|&()<>`'\"", s[e])) e++;
-        const char *eq = memchr(s + i, '=', (size_t)(e - i));
-        if (sh->seg && eq && eq > s + i) { /* VAR=value before the program */
-        } else if (sh->seg) {
-            mark(st, i, e, ST_BOLD | ST_KEY);
-            sh->seg = in_list(SH_PREFIX, s + i, e - i, false);
-        } else if (c == '-') {
-            for (int k = i; k < e; k++) st[k] |= ST_DIM;
-        }
-        i = e;
-    }
-    if (sh->delim[0] && !sh->in_body) sh->in_body = true; /* the body starts on the next line */
-    else if (!sh->quote && !(n && s[n - 1] == '\\')) sh->seg = true; /* a newline ends the command */
-}
-
-/* The keyword list for path when no grammar is installed ("" = markdown). */
-static const char *fallback_keywords(const char *path) {
-    const char *dot = strrchr(path, '.'), *slash = strrchr(path, '/');
-    if (dot && (!slash || dot > slash))
-        for (size_t l = 0; l < sizeof LANGS / sizeof *LANGS; l++)
-            if (in_list(LANGS[l].ext, dot + 1, (int)strlen(dot + 1), true)) return LANGS[l].kw;
-    return NULL;
-}
-
-/* Get ready to style detail d of a step of kind k on path: which lines are
- * code and on which side, and the commands (their state spans lines). Nothing
- * is parsed yet. */
-static void det_style_init(DetStyle *ds, const Detail *d, EvKind k, const char *path) {
-    memset(ds, 0, sizeof *ds);
-    int n = d->n ? d->n : 1;
-    ds->st = xcalloc((size_t)n, sizeof *ds->st);
-    ds->side = xcalloc((size_t)n, 1);
-    ds->off = xcalloc((size_t)n, sizeof *ds->off);
-    bool code = path && (k == EV_READ || k == EV_EDIT || k == EV_CREATE || k == EV_TOUCH || k == EV_BASH);
-    SynLang *lang = code ? syn_lang_for(path) : NULL;
-    ds->kw = code ? fallback_keywords(path) : NULL;
-    /* Code: the file's lines, before a command's own (its diff comes first). */
-    size_t cap[2] = {0, 0};
-    int first_no[2] = {-1, -1}; /* line number of each side's first line */
-    for (int i = 0; (lang || ds->kw) && i < d->n && d->lines[i].kind != DL_HEAD; i++) {
-        DlKind kd = d->lines[i].kind;
-        if (kd != DL_TEXT && kd != DL_ADD && kd != DL_DEL) continue;
-        ds->side[i] = kd == DL_DEL ? 2 : 1;
-        ds->off[i] = ds->len[ds->side[i] - 1];
-        if (!lang) continue;
-        size_t len = strlen(d->lines[i].s);
-        for (int s = 0; s < 2; s++) {
-            if (kd == (s ? DL_ADD : DL_DEL)) continue; /* context goes to both sides */
-            if (ds->len[s] + len + 2 > cap[s]) {
-                cap[s] = (ds->len[s] + len + 2) * 2;
-                ds->text[s] = xrealloc(ds->text[s], cap[s]);
-            }
-            if (first_no[s] < 0) first_no[s] = d->lines[i].no;
-            memcpy(ds->text[s] + ds->len[s], d->lines[i].s, len);
-            ds->len[s] += (uint32_t)len;
-            ds->text[s][ds->len[s]++] = '\n';
-        }
-    }
-    for (int s = 0; s < 2; s++) {
-        if (!ds->len[s]) continue;
-        /* From the file's first line (a whole read, a created file) nothing is open before it. */
-        const char *pre = first_no[s] == 1 ? "" : syn_fragment_prefix(lang, ds->text[s], ds->len[s]);
-        uint32_t pn = (uint32_t)strlen(pre);
-        if (pn) { /* the lines move after it */
-            ds->text[s] = xrealloc(ds->text[s], ds->len[s] + pn);
-            memmove(ds->text[s] + pn, ds->text[s], ds->len[s]);
-            memcpy(ds->text[s], pre, pn);
-            ds->len[s] += pn;
-            for (int i = 0; i < d->n; i++)
-                if (ds->side[i] == s + 1) ds->off[i] += pn;
-        }
-        ds->doc[s] = syn_doc(lang, ds->text[s], ds->len[s]);
-    }
-    ShState sh = {0};
-    bool cmd = false;
-    for (int i = 0; i < d->n; i++) {
-        const DetailLine *dl = &d->lines[i];
-        if (dl->kind != DL_HEAD) continue;
-        bool first = !i || d->lines[i - 1].kind != DL_HEAD;
-        if (first) cmd = !strncmp(dl->s, "$ ", 2), sh = (ShState){0};
-        ds->st[i] = xcalloc(strlen(dl->s) + 1, 1);
-        if (cmd) style_shell(&sh, dl->s, ds->st[i], first);
-        style_words(dl->s, ds->st[i], NULL, 0, false);
-    }
-}
-
-#define STYLE_BLOCK 128 /* lines styled together: one query run per side */
-
-/* The style of line i, computing its block of lines on first use. */
-static const unsigned char *det_line_style(DetStyle *ds, const Detail *d, int i) {
-    if (ds->st[i]) return ds->st[i];
-    int b0 = i - i % STYLE_BLOCK, b1 = b0 + STYLE_BLOCK < d->n ? b0 + STYLE_BLOCK : d->n;
-    uint32_t lo[2] = {UINT32_MAX, UINT32_MAX}, hi[2] = {0, 0};
-    for (int j = b0; j < b1; j++) {
-        int s = ds->side[j] - 1;
-        if (ds->st[j] || s < 0 || !ds->doc[s]) continue;
-        uint32_t e = ds->off[j] + (uint32_t)strlen(d->lines[j].s);
-        if (ds->off[j] < lo[s]) lo[s] = ds->off[j];
-        if (e > hi[s]) hi[s] = e;
-    }
-    unsigned char *cls[2] = {NULL, NULL};
-    for (int s = 0; s < 2; s++)
-        if (hi[s] > lo[s]) {
-            cls[s] = xmalloc(hi[s] - lo[s]);
-            syn_highlight(ds->doc[s], lo[s], hi[s], cls[s]);
-        }
-    for (int j = b0; j < b1; j++) {
-        if (ds->st[j]) continue;
-        const DetailLine *dl = &d->lines[j];
-        int n = (int)strlen(dl->s), s = ds->side[j] - 1;
-        unsigned char *st = xcalloc((size_t)n + 1, 1);
-        bool styled = false;
-        if (s >= 0 && cls[s])
-            for (int k = 0; k < n; k++) styled |= (st[k] = syn_style(cls[s][ds->off[j] - lo[s] + (uint32_t)k])) != 0;
-        /* A markdown heading the grammar missed (no grammar, or a fragment that
-         * starts inside a code fence) */
-        if (s >= 0 && !styled && ds->kw && !*ds->kw && dl->s[0] == '#' && dl->kind != DL_DEL)
-            memset(st, ST_BOLD | ST_KEY, (size_t)n);
-        style_words(dl->s, st, s >= 0 && !ds->doc[s] ? ds->kw : NULL, ST_BOLD | ST_KEY,
-                    s < 0 && (dl->kind == DL_TEXT || dl->kind == DL_ERR));
-        ds->st[j] = st;
-    }
-    free(cls[0]);
-    free(cls[1]);
-    return ds->st[i];
-}
-
-/* Is line i highlighted code (drawn in the text color, not the diff's)? */
-static bool det_line_syntax(const DetStyle *ds, int i) { return ds->side[i] && ds->doc[ds->side[i] - 1]; }
-
-static void det_style_free(DetStyle *ds, int n) {
-    for (int i = 0; ds->st && i < n; i++) free(ds->st[i]);
-    free(ds->st);
-    free(ds->side);
-    free(ds->off);
-    for (int s = 0; s < 2; s++) syn_doc_free(ds->doc[s]), free(ds->text[s]);
-    memset(ds, 0, sizeof *ds);
-}
-
 /* ---- detail window ------------------------------------------------------ */
 
 static void detail_close(Viz *v) {
-    if (v->det) det_style_free(&v->det_style, v->det->n);
+    if (v->det) ui_style_free(&v->det_style, v->det->n);
     detail_free(v->det);
     v->det = NULL;
     free(v->det_label);
@@ -1438,7 +763,7 @@ static void detail_close(Viz *v) {
     free(v->det_actor);
     v->det_label = v->det_id = v->det_path = v->det_actor = NULL;
     v->det_nrows = 0;
-    nv_clear(&v->det_nv);
+    ui_nv_clear(&v->det_nv);
     v->note_win = (Rectangle){0};
 }
 
@@ -1454,10 +779,10 @@ static void detail_load(Viz *v) {
         detail_line(d, DL_DIM, buf);
         detail_line(d, DL_DIM, "nothing recorded its content");
     }
-    if (v->det) det_style_free(&v->det_style, v->det->n);
+    if (v->det) ui_style_free(&v->det_style, v->det->n);
     detail_free(v->det);
     v->det = d;
-    det_style_init(&v->det_style, d, v->det_kind, v->det_path);
+    ui_style_init(&v->det_style, d, v->det_kind, v->det_path);
     v->det_cols = 0; /* rewrap */
     v->det_reload = GetTime();
     struct stat st;
@@ -1491,7 +816,7 @@ static void detail_open(Viz *v, const Event *e, bool from_turn) {
     v->det_actor = xstrdup(e->actor);
     v->det_note_off = e->note_off;
     v->det_notes = e->notes;
-    nv_load(&v->det_nv, e); /* written before the call: never changes */
+    ui_nv_load(&v->det_nv, e); /* written before the call: never changes */
     v->note_scroll = 0;
     detail_load(v);
 }
@@ -1529,7 +854,7 @@ static void detail_wrap(Viz *v, int cols) {
                     v->det_caprows = v->det_caprows ? v->det_caprows * 2 : 256;
                     v->det_rows = xrealloc(v->det_rows, (size_t)v->det_caprows * sizeof *v->det_rows);
                 }
-                v->det_rows[v->det_nrows++] = (struct DetRow){i, start, k - start};
+                v->det_rows[v->det_nrows++] = (DetRow){i, start, k - start};
                 if (end) break;
                 start = k;
                 chars = 0;
@@ -1553,82 +878,11 @@ static void detail_copy(Viz *v) {
     free(buf);
 }
 
-#define DET_FONT 14.0f
-#define DET_ROW 18.0f
-#define DET_ROW_BYTES 2048
-
-/* One wrapped row of a detail line, in runs of the same style. Runs are placed
- * by cell, so bold never shifts a column. */
-static void draw_det_row(const DetailLine *dl, const unsigned char *st, const struct DetRow *row, float x, float y,
-                         float cw, Color c) {
-    const char *s = dl->s;
-    int end = row->start + row->len;
-    char buf[DET_ROW_BYTES];
-    int n = 0, cells = 0, run_cells = 0;
-    unsigned char run = 0;
-    for (int k = row->start;;) {
-        if (n && (k == end || st[k] != run || n >= (int)sizeof buf - 5)) {
-            buf[n] = 0;
-            Color rc = style_color(run & ST_COLOR, c);
-            draw_text(run & ST_BOLD ? g_mono_bold : g_mono, buf, (Vector2){x + (float)cells * cw, y}, DET_FONT, 0, rc);
-            cells += run_cells;
-            n = run_cells = 0;
-        }
-        if (k == end) break;
-        run = st[k];
-        int cp = 0; /* one whole codepoint; invalid UTF-8 can run on, so at most 4 bytes */
-        do buf[n++] = s[k++];
-        while (k < end && ((unsigned char)s[k] & 0xC0) == 0x80 && ++cp < 4);
-        run_cells++;
-    }
-}
-
 #define DET_TOP 58.0f /* header height */
-
-static float note_panel_w(void) { return fminf(400, fmaxf(280, (float)GetScreenWidth() * 0.24f)); }
-
-/* Height of a comments panel w wide: its boxes, up to maxh. */
-static float note_panel_h(NoteView *nv, float w, float maxh) {
-    if (nv->w != w - 44) nv_wrap(nv, w - 44);
-    return fminf(maxh, NOTE_HEAD + nv_height(nv) + 10);
-}
 
 static Color actor_color_by_id(Viz *v, const char *id) {
     int ai = id ? actor_index(v->m, id) : -1;
     return ai >= 0 ? v->m->actors[ai].color : TEXT;
-}
-
-/* The comments panel at r (height from note_panel_h). A preview doesn't scroll:
- * what doesn't fit fades out. */
-static void draw_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool preview) {
-    Color bg = {16, 20, 26, 250};
-    float round = 10 / fminf(r.width, r.height);
-    DrawRectangleRounded(r, round, 6, bg);
-    DrawRectangleRoundedLinesEx(r, round, 6, 1.5f, fade(ac, preview ? 0.35f : 0.55f));
-    bubble_icon(r.x + 14, r.y + 14, ac);
-    char title[64];
-    snprintf(title, sizeof title, nv->ns.n == 1 ? "Comment" : "Comments  \xC2\xB7  %d", nv->ns.n);
-    text(title, r.x + 34, r.y + 10, 15, ac);
-    Rectangle body = {r.x + 10, r.y + NOTE_HEAD, r.width - 20, r.height - NOTE_HEAD - 10};
-    float max_scroll = fmaxf(0, nv_height(nv) - body.height);
-    const char *hint = preview ? "before this step  \xC2\xB7  click to open"
-                     : max_scroll > 0 ? "wheel scroll  \xC2\xB7  Ctrl+C copy" : "Ctrl+C copy";
-    char fitbuf[128];
-    fit(fitbuf, sizeof fitbuf, hint, 12, r.width - 44 - text_w(title, 15) - 20);
-    text(fitbuf, r.x + r.width - 12 - text_w(fitbuf, 12), r.y + 13, 12, DIM);
-    DrawLine((int)r.x + 10, (int)(r.y + NOTE_HEAD - 6), (int)(r.x + r.width - 10), (int)(r.y + NOTE_HEAD - 6), fade(DIM, 0.3f));
-    if (*scroll > max_scroll) *scroll = max_scroll;
-    if (*scroll < 0) *scroll = 0;
-    if (body.height <= 0) return; /* window too small for any of it */
-    nv_draw(nv, body, *scroll, ac);
-    if (max_scroll <= 0) return;
-    if (preview) {
-        DrawRectangleGradientV((int)body.x, (int)(body.y + body.height - 28), (int)body.width, 28, fade(bg, 0), bg);
-        return;
-    }
-    float bh = fmaxf(20, body.height * body.height / nv_height(nv));
-    float by = body.y + (body.height - bh) * (*scroll / max_scroll);
-    DrawRectangleRounded((Rectangle){r.x + r.width - 7, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
 }
 
 static void draw_detail(Viz *v, Vector2 mouse) {
@@ -1645,17 +899,17 @@ static void draw_detail(Viz *v, Vector2 mouse) {
      * above it when there's no room. */
     if (v->det_nv.ns.n) {
         Color ac = actor_color_by_id(v, v->det_actor);
-        float nw = note_panel_w();
+        float nw = ui_note_panel_w();
         if (w - nw - 10 >= 420) {
-            v->note_win = (Rectangle){x, y, nw, note_panel_h(&v->det_nv, nw, h)};
+            v->note_win = (Rectangle){x, y, nw, ui_note_panel_h(&v->det_nv, nw, h)};
             x += nw + 10;
             w -= nw + 10;
         } else {
-            v->note_win = (Rectangle){x, y, w, note_panel_h(&v->det_nv, w, h * 0.4f)};
+            v->note_win = (Rectangle){x, y, w, ui_note_panel_h(&v->det_nv, w, h * 0.4f)};
             y += v->note_win.height + 8;
             h -= v->note_win.height + 8;
         }
-        draw_note_panel(&v->det_nv, v->note_win, &v->note_scroll, ac, false);
+        ui_note_panel(&v->det_nv, v->note_win, &v->note_scroll, ac, false);
     }
     if (v->win.width <= 0) { /* alone: leave the graph beside it (the comments count) */
         float beside = v->note_win.width > 0 && v->note_win.y == y ? v->note_win.width + 10 : 0;
@@ -1664,26 +918,26 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     v->det_win = (Rectangle){x, y, w, h};
     Color kc = step_color(v->det_kind);
     DrawRectangleRounded(v->det_win, 0.015f, 6, (Color){16, 20, 26, 250});
-    DrawRectangleRoundedLinesEx(v->det_win, 0.015f, 6, 1.5f, fade(kc, 0.55f));
+    DrawRectangleRoundedLinesEx(v->det_win, 0.015f, 6, 1.5f, ui_fade(kc, 0.55f));
 
     /* Header: what it was, when, and close. */
     char line[512], fitbuf[512], tm[16];
     DrawCircle((int)x + 18, (int)y + 20, 5, kc);
-    fmt_clock(tm, sizeof tm, v->det_ts, "%H:%M:%S");
-    float tw = text_w(tm, 13);
+    ui_fmt_clock(tm, sizeof tm, v->det_ts, "%H:%M:%S");
+    float tw = ui_text_w(tm, 13);
     v->det_close = (Rectangle){x + w - 34, y + 6, 26, 26};
-    fit(fitbuf, sizeof fitbuf, v->det_label, 16, w - 70 - tw - 40);
-    text(fitbuf, x + 32, y + 11, 16, TEXT);
-    text(tm, x + w - 44 - tw, y + 13, 13, DIM);
-    text("\xE2\x9C\x95", v->det_close.x + 6, v->det_close.y + 3, 18, CheckCollisionPointRec(mouse, v->det_close) ? TEXT : DIM);
+    ui_fit(fitbuf, sizeof fitbuf, v->det_label, 16, w - 70 - tw - 40);
+    ui_text(fitbuf, x + 32, y + 11, 16, TEXT);
+    ui_text(tm, x + w - 44 - tw, y + 13, 13, DIM);
+    ui_text("\xE2\x9C\x95", v->det_close.x + 6, v->det_close.y + 3, 18, CheckCollisionPointRec(mouse, v->det_close) ? TEXT : DIM);
     snprintf(line, sizeof line, "%s%s  \xC2\xB7  %d lines  \xC2\xB7  wheel/PgUp/PgDn scroll  \xC2\xB7  Ctrl+C copy  \xC2\xB7  Esc close",
              d->tool, d->state == 1 ? "  \xC2\xB7  running\xE2\x80\xA6 (no result yet)" : "", d->n);
-    fit(fitbuf, sizeof fitbuf, line, 13, w - 46);
-    text(fitbuf, x + 32, y + 34, 13, d->state == 1 ? kind_color(EV_EDIT) : DIM);
-    DrawLine((int)x + 10, (int)(y + DET_TOP - 4), (int)(x + w - 10), (int)(y + DET_TOP - 4), fade(DIM, 0.3f));
+    ui_fit(fitbuf, sizeof fitbuf, line, 13, w - 46);
+    ui_text(fitbuf, x + 32, y + 34, 13, d->state == 1 ? kind_color(EV_EDIT) : DIM);
+    DrawLine((int)x + 10, (int)(y + DET_TOP - 4), (int)(x + w - 10), (int)(y + DET_TOP - 4), ui_fade(DIM, 0.3f));
 
     /* Body: gutter with line numbers when the content has them, wrapped rows. */
-    float cw = MeasureTextEx(g_mono, "M", DET_FONT, 0).x;
+    float cw = MeasureTextEx(ui_mono, "M", DET_FONT, 0).x;
     bool numbered = false;
     for (int i = 0; i < d->n && !numbered; i++) numbered = d->lines[i].no > 0;
     float gutter = numbered ? cw * 6 + 8 : 0;
@@ -1697,10 +951,9 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     if (v->det_scroll < 0) v->det_scroll = 0;
     int first = (int)v->det_scroll;
     float ry = y + DET_TOP;
-    char buf[DET_ROW_BYTES];
     BeginScissorMode((int)x, (int)(y + DET_TOP - 2), (int)w, (int)(h - DET_TOP));
     for (int r = first; r < v->det_nrows && r < first + vis; r++, ry += DET_ROW) {
-        struct DetRow *row = &v->det_rows[r];
+        DetRow *row = &v->det_rows[r];
         DetailLine *dl = &d->lines[row->line];
         bool cont = r > 0 && v->det_rows[r - 1].line == row->line; /* wrapped continuation */
         Color c = TEXT, mark_c = TEXT;
@@ -1713,21 +966,18 @@ static void draw_detail(Viz *v, Vector2 mouse) {
         case DL_ERR: c = (Color){255, 120, 120, 255}; break;
         default: break;
         }
-        if (det_line_syntax(&v->det_style, row->line)) c = TEXT; /* the row's tint says added/removed */
-        if (!cont && dl->no > 0) {
-            snprintf(buf, sizeof buf, "%6d", dl->no);
-            draw_text(g_mono, buf, (Vector2){x + 10, ry + 1}, DET_FONT, 0, fade(DIM, 0.7f));
-        }
+        if (ui_style_syntax(&v->det_style, row->line)) c = TEXT; /* the row's tint says added/removed */
+        if (!cont && dl->no > 0) ui_lineno(dl->no, x + 10, ry + 1);
         if (!cont && (dl->kind == DL_ADD || dl->kind == DL_DEL))
-            draw_text(g_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, mark_c);
-        draw_det_row(dl, det_line_style(&v->det_style, d, row->line), row, tx, ry + 1, cw, c);
+            ui_draw_text(ui_mono, dl->kind == DL_ADD ? "+" : "-", (Vector2){tx - cw * 1.6f, ry + 1}, DET_FONT, 0, mark_c);
+        ui_draw_row(dl, ui_style_line(&v->det_style, d, row->line), row, tx, ry + 1, cw, c, 1);
     }
     EndScissorMode();
     if (max_scroll) { /* scrollbar */
         float track_h = h - DET_TOP - 10;
         float bh = fmaxf(20, track_h * (float)vis / (float)v->det_nrows);
         float by = y + DET_TOP + (track_h - bh) * (v->det_scroll / (float)max_scroll);
-        DrawRectangleRounded((Rectangle){x + w - 7, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
+        DrawRectangleRounded((Rectangle){x + w - 7, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
     }
     v->det_vis = vis;
 }
@@ -1764,17 +1014,18 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     float h = 74 + (float)(vis ? vis : 1) * WIN_ROW + 30;
     v->win = (Rectangle){x, y, w, h};
     DrawRectangleRounded(v->win, 0.03f, 6, (Color){22, 27, 34, 245});
-    DrawRectangleRoundedLinesEx(v->win, 0.03f, 6, 1.5f, fade(ac, 0.6f));
+    DrawRectangleRoundedLinesEx(v->win, 0.03f, 6, 1.5f, ui_fade(ac, 0.6f));
 
     char line[512], fitbuf[512];
     snprintf(line, sizeof line, "%s  \xC2\xB7  turn %d", aname, v->turn_no);
-    text(line, x + 14, y + 10, 17, ac);
+    ui_text(line, x + 14, y + 10, 17, ac);
     v->win_close = (Rectangle){x + w - 34, y + 6, 26, 26};
     bool hot_close = CheckCollisionPointRec(mouse, v->win_close);
-    text("\xE2\x9C\x95", v->win_close.x + 6, v->win_close.y + 3, 18, hot_close ? TEXT : DIM);
-    fit(fitbuf, sizeof fitbuf, prompt, 15, w - 28);
-    text(fitbuf, x + 14, y + 36, 15, TEXT);
-    DrawLine((int)x + 10, (int)(y + 62), (int)(x + w - 10), (int)(y + 62), fade(DIM, 0.3f));
+    ui_text("\xE2\x9C\x95", v->win_close.x + 6, v->win_close.y + 3, 18, hot_close ? TEXT : DIM);
+    snprintf(line, sizeof line, "%s%s", prompt, cut_mark(prompt));
+    ui_fit(fitbuf, sizeof fitbuf, line, 15, w - 28);
+    ui_text(fitbuf, x + 14, y + 36, 15, TEXT);
+    DrawLine((int)x + 10, (int)(y + 62), (int)(x + w - 10), (int)(y + 62), ui_fade(DIM, 0.3f));
 
     /* Steps, scrollable; sticks to the bottom while new steps arrive. */
     int max_scroll = nrows - vis > 0 ? nrows - vis : 0;
@@ -1789,12 +1040,12 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     for (int r = 0; r < vis && first + r < nrows; r++, ry += WIN_ROW) {
         const Event *e = &v->h.ev[v->steps[first + r]];
         Rectangle rr = {x + 6, ry, w - 12, WIN_ROW};
-        if (is_detail_of(v, e)) DrawRectangleRec(rr, fade(step_color(e->kind), 0.18f));
-        else if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, fade(TEXT, 0.06f));
+        if (is_detail_of(v, e)) DrawRectangleRec(rr, ui_fade(step_color(e->kind), 0.18f));
+        else if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, ui_fade(TEXT, 0.06f));
         char tm[16];
-        fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
-        text(tm, x + 14, ry + 3, 13, DIM);
-        float cx = x + 14 + text_w("00:00:00", 13) + 10;
+        ui_fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
+        ui_text(tm, x + 14, ry + 3, 13, DIM);
+        float cx = x + 14 + ui_text_w("00:00:00", 13) + 10;
         bool failed = failed_bare(v, e);
         Color kc = failed ? LIVE_RED : step_color(e->kind);
         DrawCircle((int)cx + 4, (int)(ry + 11), 4, kc);
@@ -1803,38 +1054,38 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         snprintf(pa, sizeof pa, "+%d", e->add);
         snprintf(pd, sizeof pd, "\xE2\x88\x92%d", e->del);
         bool has_diff = e->add || e->del;
-        float dw = has_diff ? text_w(pa, 13) + 6 + text_w(pd, 13) + 8 : 0;
+        float dw = has_diff ? ui_text_w(pa, 13) + 6 + ui_text_w(pd, 13) + 8 : 0;
         if (e->notes) { /* it has comments: hover for them */
-            bubble_icon(x + w - 14 - dw - 14, ry + 6, fade(TEXT, 0.45f));
+            ui_bubble_icon(x + w - 14 - dw - 14, ry + 6, ui_fade(TEXT, 0.45f));
             dw += 20;
         }
         step_label(line, sizeof line, e);
         if (failed) {
-            float fw = text_w("failed", 12) + 10;
-            text("failed", x + w - 14 - dw - fw + 10, ry + 4, 12, LIVE_RED);
+            float fw = ui_text_w("failed", 12) + 10;
+            ui_text("failed", x + w - 14 - dw - fw + 10, ry + 4, 12, LIVE_RED);
             dw += fw;
         }
-        fit(fitbuf, sizeof fitbuf, line, 14, x + w - 14 - dw - cx);
-        text(fitbuf, cx, ry + 3, 14, failed ? (Color){255, 150, 150, 255} : e->kind == EV_BASH ? fade(TEXT, 0.75f) : TEXT);
+        ui_fit(fitbuf, sizeof fitbuf, line, 14, x + w - 14 - dw - cx);
+        ui_text(fitbuf, cx, ry + 3, 14, failed ? (Color){255, 150, 150, 255} : e->kind == EV_BASH ? ui_fade(TEXT, 0.75f) : TEXT);
         if (has_diff) {
-            float dx = x + w - 14 - text_w(pd, 13) - 6 - text_w(pa, 13);
-            text(pa, dx, ry + 4, 13, kind_color(EV_CREATE));
-            text(pd, dx + text_w(pa, 13) + 6, ry + 4, 13, kind_color(EV_DELETE));
+            float dx = x + w - 14 - ui_text_w(pd, 13) - 6 - ui_text_w(pa, 13);
+            ui_text(pa, dx, ry + 4, 13, kind_color(EV_CREATE));
+            ui_text(pd, dx + ui_text_w(pa, 13) + 6, ry + 4, 13, kind_color(EV_DELETE));
         }
     }
-    if (!nrows) text("no steps yet", x + 14, ry + 3, 14, DIM);
+    if (!nrows) ui_text("no steps yet", x + 14, ry + 3, 14, DIM);
     if (max_scroll) { /* scrollbar */
         float track_h = (float)vis * WIN_ROW;
         float bh = fmaxf(16, track_h * (float)vis / (float)nrows);
         float by = y + 68 + (track_h - bh) * (v->turn_scroll / (float)max_scroll);
-        DrawRectangleRounded((Rectangle){x + w - 6, by, 3, bh}, 1, 4, fade(DIM, 0.6f));
+        DrawRectangleRounded((Rectangle){x + w - 6, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
     }
     char sa[32], sd[32];
-    fmt_count(sa, sizeof sa, add);
-    fmt_count(sd, sizeof sd, del);
+    ui_fmt_count(sa, sizeof sa, add);
+    ui_fmt_count(sd, sizeof sd, del);
     snprintf(line, sizeof line, "%zu steps  \xC2\xB7  +%s \xE2\x88\x92%s lines  \xC2\xB7  %d files touched", v->nsteps,
              sa, sd, files);
-    text(line, x + 14, y + h - 24, 13, DIM);
+    ui_text(line, x + 14, y + h - 24, 13, DIM);
 }
 
 /* The turn step under the mouse, or NULL. */
@@ -1853,7 +1104,7 @@ static void draw_note_preview(Viz *v, Vector2 mouse) {
     if (!e || !e->notes || !e->tool_id || is_detail_of(v, e)) return;
     if (v->hov_src != e->src || v->hov_off != e->note_off || v->hov_n != e->notes || !v->hov_id ||
         strcmp(v->hov_id, e->tool_id)) { /* another step: read its comments */
-        nv_load(&v->hov_nv, e);
+        ui_nv_load(&v->hov_nv, e);
         v->hov_src = e->src;
         v->hov_off = e->note_off;
         v->hov_n = e->notes;
@@ -1862,15 +1113,15 @@ static void draw_note_preview(Viz *v, Vector2 mouse) {
     }
     if (!v->hov_nv.ns.n) return;
     float W = (float)GetScreenWidth(), H = (float)GetScreenHeight();
-    float pw = note_panel_w(), x = v->win.x + v->win.width + 10;
+    float pw = ui_note_panel_w(), x = v->win.x + v->win.width + 10;
     if (x + pw > W - 16) x = fmaxf(16, W - 16 - pw);
-    float ph = note_panel_h(&v->hov_nv, pw, (H - TL_H - 8 - HUD_TOP) * 0.6f);
+    float ph = ui_note_panel_h(&v->hov_nv, pw, (H - TL_H - 8 - HUD_TOP) * 0.6f);
     int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
     float y = v->win.y + 68 + (float)r * WIN_ROW - 8;
     if (y + ph > H - TL_H - 8) y = H - TL_H - 8 - ph;
     if (y < 8) y = 8;
     float scroll = 0;
-    draw_note_panel(&v->hov_nv, (Rectangle){x, y, pw, ph}, &scroll, actor_color_by_id(v, v->turn_actor), true);
+    ui_note_panel(&v->hov_nv, (Rectangle){x, y, pw, ph}, &scroll, actor_color_by_id(v, v->turn_actor), true);
 }
 
 /* The comments as the agent wrote them (the panel drops markdown markers). */
@@ -1965,10 +1216,10 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
     for (int b = 0; b < v->nbins; b++) {
         if (v->bin_w[b] > 0) {
             float hgt = fminf(18, 3 + 3 * log2f(1 + v->bin_w[b]));
-            DrawRectangle((int)(tr.x0 + b), (int)(base - hgt), 1, (int)hgt, fade(kind_color(EV_EDIT), 0.75f));
+            DrawRectangle((int)(tr.x0 + b), (int)(base - hgt), 1, (int)hgt, ui_fade(kind_color(EV_EDIT), 0.75f));
         } else if (v->bin_r[b] > 0) {
             float hgt = fminf(8, 2 + 2 * log2f(1 + v->bin_r[b]));
-            DrawRectangle((int)(tr.x0 + b), (int)(base - hgt), 1, (int)hgt, fade(kind_color(EV_READ), 0.6f));
+            DrawRectangle((int)(tr.x0 + b), (int)(base - hgt), 1, (int)hgt, ui_fade(kind_color(EV_READ), 0.6f));
         }
     }
 
@@ -1994,33 +1245,36 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
 
     /* Ends: first event date, and LIVE/now. */
     char buf[64];
-    if (v->h.n) fmt_clock(buf, sizeof buf, v->h.ev[0].ts, "%b %d %H:%M");
+    if (v->h.n) ui_fmt_clock(buf, sizeof buf, v->h.ev[0].ts, "%b %d %H:%M");
     else buf[0] = 0;
-    text(buf, tr.x0, tr.y + 10, 13, DIM);
+    ui_text(buf, tr.x0, tr.y + 10, 13, DIM);
     const char *endlbl = v->live ? "LIVE" : "go live \xE2\x86\x92";
-    text(endlbl, tr.x1 - text_w(endlbl, 13), tr.y + 10, 13, v->live ? LIVE_RED : DIM);
+    ui_text(endlbl, tr.x1 - ui_text_w(endlbl, 13), tr.y + 10, 13, v->live ? LIVE_RED : DIM);
 
     /* Hover preview: time + the turn running then. */
     if (hot) {
         double t = v->drag == 2 ? v->scrub_t : x_to_time(v, mouse.x);
         float hx = v->drag == 2 ? px : mouse.x;
-        char l1[64], l2[200] = "";
-        fmt_clock(l1, sizeof l1, t, "%a %b %d  %H:%M:%S");
+        char l1[64], l2[600] = "";
+        ui_fmt_clock(l1, sizeof l1, t, "%a %b %d  %H:%M:%S");
         size_t k = hist_upper(&v->h, t);
         Color c2 = DIM;
         while (k-- > 0) {
             const Event *e = &v->h.ev[k];
             if (e->kind != EV_TURN) continue;
-            snprintf(l2, sizeof l2, "turn %d \xC2\xB7 %s: %s", e->turn, e->actor_name, e->text ? e->text : "");
+            char full[512];
+            snprintf(full, sizeof full, "turn %d \xC2\xB7 %s: %s%s", e->turn, e->actor_name, e->text ? e->text : "",
+                     cut_mark(e->text));
+            ui_fit(l2, sizeof l2, full, 14, (float)W - 36);
             c2 = actor_color_of(v, e->actor);
             break;
         }
-        float w = fmaxf(text_w(l1, 15), text_w(l2, 14)) + 20;
+        float w = fmaxf(ui_text_w(l1, 15), ui_text_w(l2, 14)) + 20;
         float bx = fminf(fmaxf(hx - w / 2, 8), (float)W - w - 8), by = (float)H - TL_H - (l2[0] ? 50 : 32);
         DrawRectangleRounded((Rectangle){bx, by, w, l2[0] ? 46 : 28}, 0.2f, 6, PANEL);
-        text(l1, bx + 10, by + 6, 15, TEXT);
-        if (l2[0]) text(l2, bx + 10, by + 26, 14, c2);
-        DrawLine((int)hx, (int)(H - TL_H), (int)hx, (int)(tr.y + 6), fade(TEXT, 0.4f));
+        ui_text(l1, bx + 10, by + 6, 15, TEXT);
+        if (l2[0]) ui_text(l2, bx + 10, by + 26, 14, c2);
+        DrawLine((int)hx, (int)(H - TL_H), (int)hx, (int)(tr.y + 6), ui_fade(TEXT, 0.4f));
     }
 }
 
@@ -2071,12 +1325,12 @@ static void draw_hover(Viz *v, Vector2 mouse) {
         Actor *a = &m->actors[v->hover_i];
         snprintf(l[n], sizeof l[n], "%s", a->name);
         c[n++] = a->color;
-        if (a->prompt) { snprintf(l[n], sizeof l[n], "turn %d: %s", a->turn, a->prompt); c[n++] = TEXT; }
-        fmt_count(a1, sizeof a1, a->add);
-        fmt_count(a2, sizeof a2, a->del);
+        if (a->prompt) { snprintf(l[n], sizeof l[n], "turn %d: %s%s", a->turn, a->prompt, cut_mark(a->prompt)); c[n++] = TEXT; }
+        ui_fmt_count(a1, sizeof a1, a->add);
+        ui_fmt_count(a2, sizeof a2, a->del);
         snprintf(l[n++], sizeof l[n], "+%s \xE2\x88\x92%s lines \xC2\xB7 %d created \xC2\xB7 %d edits \xC2\xB7 %d reads",
                  a1, a2, a->files_created, a->files_edited, a->reads);
-        fmt_ago(ago, sizeof ago, v->sim - a->last_active);
+        ui_fmt_ago(ago, sizeof ago, v->sim - a->last_active);
         snprintf(l[n++], sizeof l[n], "last active %s", ago);
     } else {
         Node *nd = &m->nodes[v->hover_i];
@@ -2087,13 +1341,13 @@ static void draw_hover(Viz *v, Vector2 mouse) {
         } else {
             snprintf(l[n], sizeof l[n], "%s \xC2\xB7 %s", kind_verb(nd->last_kind), path);
             c[n++] = nd->deleted ? LIVE_RED : kind_color(nd->last_kind);
-            fmt_count(a1, sizeof a1, nd->add);
-            fmt_count(a2, sizeof a2, nd->del);
+            ui_fmt_count(a1, sizeof a1, nd->add);
+            ui_fmt_count(a2, sizeof a2, nd->del);
             if (nd->lines >= 0)
                 snprintf(l[n++], sizeof l[n], "%d lines \xC2\xB7 +%s \xE2\x88\x92%s this session", nd->lines, a1, a2);
             else
                 snprintf(l[n++], sizeof l[n], "+%s \xE2\x88\x92%s this session", a1, a2);
-            fmt_ago(ago, sizeof ago, v->sim - nd->last_touch);
+            ui_fmt_ago(ago, sizeof ago, v->sim - nd->last_touch);
             const Actor *a = &m->actors[nd->last_actor];
             if (nd->last_add || nd->last_del)
                 snprintf(l[n], sizeof l[n], "by %s \xC2\xB7 %s \xC2\xB7 +%d \xE2\x88\x92%d", a->name, ago,
@@ -2103,15 +1357,20 @@ static void draw_hover(Viz *v, Vector2 mouse) {
             c[n++] = a->color;
         }
     }
-    float w = 0;
-    for (int i = 0; i < n; i++) w = fmaxf(w, text_w(l[i], i ? 14 : 16));
+    float w = 0, most = fminf(640, (float)GetScreenWidth() - 40);
+    for (int i = 0; i < n; i++) {
+        char fit[256];
+        ui_fit(fit, sizeof fit, l[i], i ? 14 : 16, most);
+        snprintf(l[i], sizeof l[i], "%s", fit);
+        w = fmaxf(w, ui_text_w(l[i], i ? 14 : 16));
+    }
     w += 20;
     float h = 12 + 20 + 18 * (float)(n - 1);
     float x = mouse.x + 16, y = mouse.y + 16;
     if (x + w > GetScreenWidth() - 8) x = mouse.x - w - 12;
     if (y + h > GetScreenHeight() - TL_H) y = mouse.y - h - 12;
     DrawRectangleRounded((Rectangle){x, y, w, h}, 0.12f, 6, PANEL);
-    for (int i = 0; i < n; i++) text(l[i], x + 10, y + 7 + (i ? 22 + 18 * (float)(i - 1) : 0), i ? 14 : 16, c[i]);
+    for (int i = 0; i < n; i++) ui_text(l[i], x + 10, y + 7 + (i ? 22 + 18 * (float)(i - 1) : 0), i ? 14 : 16, c[i]);
 }
 
 /* ---- camera ------------------------------------------------------------- */
@@ -2223,7 +1482,7 @@ static void handle_input(Viz *v, float dt) {
             else if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps)
                 detail_open(v, &v->h.ev[v->steps[v->win_first + r]], true); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
-        } else if (in_timeline(mouse) && mouse.x > tr.x1 - text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
+        } else if (in_timeline(mouse) && mouse.x > tr.x1 - ui_text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             seek(v, now_wall()); /* "go live" label */
         } else if (in_timeline(mouse)) {
             v->drag = 2;
@@ -2291,9 +1550,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     InitWindow(o->width, o->height, "aigource");
     SetTargetFPS(60);
     SetExitKey(KEY_NULL);
-    load_font();
-    load_mono();
-    load_user_words();
+    ui_init();
 
     Viz v = {.o = o, .m = model_new(o->root), .speed = o->speed > 0 ? o->speed : 60,
              .auto_cam = true, .legend = true, .cam = {.zoom = 1}};
@@ -2311,11 +1568,32 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         label_recent(&v); /* settling took their time */
     }
 
+    if (o->structure || o->structure_turn) sv_hooks(structure(&v), o->structure, o->structure_turn);
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
         if (IsKeyPressed(KEY_Q)) break;
-        if (IsKeyPressed(KEY_ESCAPE)) { /* closes the top window; quits when none is open */
+        if (IsKeyPressed(KEY_S)) sv_toggle(structure(&v));
+        bool esc_used = (v.sv && sv_keys(v.sv)); /* before drawing: Esc may close it this frame */
+        if (sv_is_open(v.sv)) { /* the structure screen: the stage plays on behind it, undrawn */
+            ingest_new_events(&v, q);
+            advance_clock(&v, dt);
+            model_update(v.m, v.paused ? 0 : dt, v.sim);
+            Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
+            BeginDrawing();
+            ClearBackground(BG);
+            sv_frame(v.sv, mouse, dt);
+            EndDrawing();
+            if (sv_ready(v.sv) && frame < INT_MAX) frame++; /* a shot waits for the build */
+            if (o->shot && frame >= o->frames) {
+                Image img = LoadImageFromScreen();
+                ExportImage(img, o->shot);
+                UnloadImage(img);
+                break;
+            }
+            continue;
+        }
+        if (IsKeyPressed(KEY_ESCAPE) && !esc_used) { /* closes the top window; quits when none is open */
             if (v.det) detail_close(&v);
             else if (v.turn_open) turn_close(&v);
             else break;
@@ -2371,11 +1649,14 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     }
     detail_close(&v);
     free(v.det_rows);
-    nv_clear(&v.hov_nv);
+    ui_nv_clear(&v.hov_nv);
     free(v.det_nv.rows);
     free(v.hov_nv.rows);
     free(v.hov_id);
     free(v.press_file);
+    sv_free(v.sv);
+    for (size_t i = 0; i < v.naside; i++) ev_free(&v.aside[i]);
+    free(v.aside);
     CloseWindow();
     return 0;
 }

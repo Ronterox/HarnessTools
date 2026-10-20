@@ -356,7 +356,7 @@ void model_apply(Scene *m, const Event *e, bool effects) {
     }
     default: break;
     }
-    if (!e->path || !*e->path) return;
+    if (!e->path || !*e->path || *e->path == '/') return; /* outside the repo (a read): no node */
 
     int ni = ensure_file(m, e->path);
     Node *n = &m->nodes[ni];

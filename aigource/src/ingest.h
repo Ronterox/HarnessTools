@@ -18,6 +18,7 @@ Ingest *ingest_new(const IngestOpts *o, EvQueue *q);
 void ingest_poll(Ingest *in);  /* one pass: rescan + read new lines */
 int ingest_start(Ingest *in);  /* poll on a background thread; -1 on failure */
 void ingest_stop(Ingest *in);
+void ingest_free(Ingest *in);
 int ingest_nfiles(const Ingest *in);
 
 #endif
