@@ -1,4 +1,5 @@
-/* cmd_guess: which files a shell command writes, removes (-) or reads (@). */
+/* cmd_guess: which files a shell command writes, removes (-) or reads (@, with
+ * [first,last] for a read of some lines). */
 #include <stdio.h>
 #include <string.h>
 
@@ -6,12 +7,13 @@
 
 static char got[2048];
 
-static void on(void *ud, const char *dir, const char *path, GuessKind kind, const char *into) {
+static void on(void *ud, const char *dir, const char *path, GuessKind kind, const char *into, int first, int last) {
     (void)ud;
     char one[512];
     snprintf(one, sizeof one, "%s%s%s%s%s%s", *got ? " | " : "", kind == GUESS_DELETE ? "-" : kind == GUESS_READ ? "@" : "", dir ? dir : "",
              dir ? ":" : "", path, into ? "" : "");
     if (into) snprintf(one + strlen(one), sizeof one - strlen(one), "<%s", into);
+    if (first || last) snprintf(one + strlen(one), sizeof one - strlen(one), "[%d,%d]", first, last);
     strncat(got, one, sizeof got - strlen(got) - 1);
 }
 
@@ -28,13 +30,19 @@ int main(void) {
         {"cd $X && touch /abs/a", "/abs/a"},
         {"echo x > a.txt 2>/dev/null; cat b >> c.txt 2>&1 >&2", "a.txt | c.txt | @b"},
         /* Reads. */
-        {"cat -n src/a.c | head -40; sed -n '120,200p' src/b.c", "@src/a.c | @src/b.c"},
-        {"cd aigource && head -n 20 README.md && tail -5 Makefile && nl -ba x.h", "@aigource:README.md | @aigource:Makefile | @aigource:x.h"},
+        {"cat -n src/a.c | head -40; sed -n '120,200p' src/b.c", "@src/a.c | @src/b.c[120,200]"},
+        {"cd aigource && head -n 20 README.md && tail -5 Makefile && nl -ba x.h", "@aigource:README.md[1,20] | @aigource:Makefile[0,-5] | @aigource:x.h"},
         {"sed -e 's/a/b/' -n in.c > out.c", "out.c | @in.c"},
         {"while read l; do echo $l; done < list.txt; grep x <<< \"$v\"; wc -l <&3", "@list.txt"},
         {"cat <<EOF\nnot read\nEOF\ncat $F *.c", ""},
         {"perl -ne 'print' q.pl; less -R log.txt", "@log.txt"},
-        {"head --lines 5 f1; tail --pid 123 -f f2; bat -l rust -r 1:2 f3; less -p pat +G f4; more +10 f5", "@f1 | @f2 | @f3 | @f4 | @f5"},
+        {"head --lines 5 f1; tail --pid 123 -f f2; bat -l rust -r 1:2 f3; less -p pat +G f4; more +10 f5", "@f1[1,5] | @f2[0,-10] | @f3 | @f4 | @f5"},
+        /* Line ranges: sed -n prints, head and tail counts. */
+        {"sed -n 5p a; sed -n '10,40p' b; sed -n '7,$p' c; sed -n '1,$p' d; sed -n 9,3p e", "@a[5,5] | @b[10,40] | @c[7,0] | @d | @e[9,9]"},
+        {"sed -n '1,5p;20,25p' f g; sed -ne 3p -e '8,9p' h; sed --quiet --expression=2p i", "@f[1,5] | @f[20,25] | @g[1,5] | @g[20,25] | @h[3,3] | @h[8,9] | @i[2,2]"},
+        {"sed '5p' a; sed -n '/re/p' b; sed -n '1,5p;/x/p' c; sed -n -f s.sed d; sed -n \"$R\" e; sed -En 4p f", "@a | @b | @c | @d | @e | @f[4,4]"},
+        {"head -30 a; head -n30 b; head --lines=3 c; head d; head -c 100 e; head -n -5 f; head -n 0 g; head -n $N h", "@a[1,30] | @b[1,30] | @c[1,3] | @d[1,10] | @e | @f | @h"},
+        {"tail -n 20 a; tail -n +5 b; tail +1 c; tail -n +1 d; tail e; tail -c 9 f; tail -n 0 -f g; tail -n3 h", "@a[0,-20] | @b[5,0] | @c[0,-10] | @d | @e[0,-10] | @f | @h[0,-3]"},
         {"cat - f6; sed p -; tac -s x f7; less -o log.txt f8", "@f6 | @f7 | @f8"},
         {"(( i < n )) && for ((i=0;i<10;i++)); do cat a; done; (( $# < 2 )) || true", "@a"},
         {"(( x > 5 )) && false", ""},
@@ -75,6 +83,44 @@ int main(void) {
             fail = 1;
         }
     }
+    /* cmd_runs with VERIFY, run in /r: 1 a run in the tree, 2 piped with pipefail off, 4 a run elsewhere. */
+    static const struct { const char *cmd; int want; } runs[] = {
+        {"make test 2>&1 | tail -20", 3},
+        {"(cd aigource && make) | tail", 3},
+        {"(cd aigource && make) 2>&1 | tail", 3},
+        {"set -o pipefail; make | tail", 1},
+        {"set -euo pipefail\nuv run pytest -q | tail -3", 1},
+        {"set -o pipefail; set +o pipefail; make | tail", 3},
+        {"echo pipefail; make | tail", 3},
+        {"cat <<EOF\nset -o pipefail\nEOF\nmake | tail", 3},
+        {"make && grep FAIL log | head", 1},
+        {"make || true", 1},
+        {"grep FAIL log | head", 0},
+        {"echo make | sh", 0},
+        {"cat x | make -f -", 1},
+        {"make; python3 tests/a.py | head", 3},
+        {"python3 -c \"print('(cd aigource && make) | tail')\"", 0},
+        {"python3 - <<'EOF'\nmake | tail\nEOF", 0},
+        {"cd /tmp/x && make test | tail", 4},
+        {"cd \"$(mktemp -d)\" && make", 4},
+        {"W=/tmp/wt; cd $W/aigource && make | tail; cd /r/sub && make", 5},
+        {"cd ~ && make", 4},
+        {"cd sub/.. && make | tail", 3},
+        {"cd ../.. && make", 4},
+        {"pushd /tmp; popd; make", 1},
+        {"x=$(make 2>&1 | tail)", 0},
+        {"timeout 60 nvim --headless -l t.lua 2>&1 | grep FAIL", 3},
+    };
+    regex_t re;
+    regcomp(&re, CMD_VERIFY_ERE, REG_EXTENDED | REG_NOSUB);
+    for (size_t i = 0; i < sizeof runs / sizeof *runs; i++) {
+        int got_runs = cmd_runs(&re, runs[i].cmd, "/r", "/r");
+        if (got_runs != runs[i].want) {
+            printf("FAIL cmd_runs: %s\n  want %d, got %d\n", runs[i].cmd, runs[i].want, got_runs);
+            fail = 1;
+        }
+    }
+    regfree(&re);
     if (!fail) puts("ok   cmdguess");
     return fail;
 }

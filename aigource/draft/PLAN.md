@@ -161,11 +161,10 @@ tmux, `make asan` for sanitizer runs, single-window rule for any nvim tooling.
 ## Follow-ups
 
 Not done, from reading the code and the parity tests:
-- **Command-read ranges.** `cmdguess` reports a file, not lines: `sed -n a,bp`,
-  `head -n N` and `tail -n N` count as whole-file reads. Carrying a range
-  through `GuessFn` and `EV_READ` would let "changed unread" and the context
-  cost tell a slice from the file (the draft had ranges for `sed` and `head`).
-  `structure_parity.py` allows for the difference.
+- **Command-read ranges.** Done: `sed -n` line prints, `head` and `tail` carry
+  a range through `GuessFn` to `EV_READ` (tail's last N resolved against the
+  replayed text); `build_data.py` has the same rule. `structure_parity.py`
+  allows 4 + 10% reads per change for how each side splits a command into words.
 - **`structure_parity.py` is not in `make test`.** It needs this repo's
   transcripts, so it is run by hand; a make target that freezes them (as the
   script does) would put it on the same footing as `metrics_parity.js`.
@@ -174,8 +173,12 @@ Not done, from reading the code and the parity tests:
   only.
 - **CRLF files.** Texts are not newline-translated, so they differ from the
   oracle's (Python's universal newlines).
-- **Pipes hide a failing build** (`make | tail`): verification still reads
-  `is_error` only (a limit shared with the draft).
+- **Pipes hide a failing build** (`make | tail`). Done: a piped `VERIFY`
+  segment with no pipefail is judged by failure signals in its output
+  (`failed_out` on `EV_BASH_END`; the draft mirrors it). The signals are a
+  fixed list; `make || true` and `make; echo` still hide the status. An
+  audit then anchored the signals, split segments with the shell lexer, made
+  pipefail need a real `set`, and dropped runs in another tree.
 - **`kind_color`** (the stage's palette, `model.c`) is still outside the ui
   palette; the P3 review suggested moving it.
 - **Rebuilds redo everything.** Each live rebuild reruns git, rereads and

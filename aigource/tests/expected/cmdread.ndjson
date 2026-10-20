@@ -1,7 +1,16 @@
 {"ts":1791972001.000,"kind":"bash","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat a.txt | head -5; cd sub && sed -n 1p b.txt; cat ../missing.txt 2>/dev/null"}
 {"ts":1791972001.000,"kind":"bash_end","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat a.txt | head -5; cd sub && sed -n 1p b.txt; cat ../missing.txt 2>/dev/null","err":false}
 {"ts":1791972001.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd"}
-{"ts":1791972001.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"sub/b.txt","turn":0,"via":"cmd"}
+{"ts":1791972001.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"sub/b.txt","turn":0,"via":"cmd","range":[1,1]}
 {"ts":1791972002.000,"kind":"bash","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat c.txt && false"}
 {"ts":1791972002.000,"kind":"bash_end","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"cat c.txt && false","err":true}
 {"ts":1791972002.000,"kind":"failed","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"Exit code 1"}
+{"ts":1791972003.000,"kind":"bash","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"sed -n '1,2p;4p' a.txt c.txt; head -3 a.txt; tail -n 2 c.txt; sed -n 1,2p a.txt; tail -n +2 a.txt"}
+{"ts":1791972003.000,"kind":"bash_end","actor":"cmdread","name":"claude·cmdread","turn":0,"text":"sed -n '1,2p;4p' a.txt c.txt; head -3 a.txt; tail -n 2 c.txt; sed -n 1,2p a.txt; tail -n +2 a.txt","err":false}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd","range":[1,2]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd","range":[4,4]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"c.txt","turn":0,"via":"cmd","range":[1,2]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"c.txt","turn":0,"via":"cmd","range":[4,4]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd","range":[1,3]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"c.txt","turn":0,"via":"cmd","range":[0,-2]}
+{"ts":1791972003.000,"kind":"read","actor":"cmdread","name":"claude·cmdread","path":"a.txt","turn":0,"via":"cmd","range":[2,0]}

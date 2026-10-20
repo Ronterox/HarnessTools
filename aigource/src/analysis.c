@@ -9,9 +9,9 @@
  *   from disk now; not for ignored files that are still there.
  * - Functions and classes come from tree-sitter textobjects queries
  *   (syn_defs), not regexes and indentation; complexity counts branch nodes.
- * - Events come from transcript.c: a command's reads are whole-file (no sed or
- *   head ranges) and found by cmdguess (tail, less, more, < count; a token
- *   needs no extension); reads outside the repo carry absolute paths, shown
+ * - Events come from transcript.c: a command's reads are found by cmdguess
+ *   (less, more, tac, < count too; a token needs no extension; quotes and
+ *   here-documents are lexed); reads outside the repo carry absolute paths, shown
  *   as ~/... like build_data's. Searches outside the repo come from the plain
  *   steps transcript.c makes for them. A comment comes from the first copy of
  *   a resumed session's records (the event ingest keeps), not the last.
@@ -53,6 +53,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "cmdguess.h"
 #include "syntax.h"
 #include "util.h"
 
@@ -86,7 +87,7 @@ typedef struct {
     int actor, src;    /* name table indices (src -1: none) */
     char *path, *text, *tool_id;
     long src_off, note_off;
-    int notes, via, prompt, err, first, last;
+    int notes, via, prompt, err, first, last, not_run;
     int tok[3];
     char *type, *session; /* TITLE of a subagent */
 } AnEv;
@@ -557,82 +558,7 @@ static char *git_ok(const char *root, const char *const *args, size_t *len) {
     return out;
 }
 
-/* ---- command lines (METHODS.md section 0) -------------------------------- */
-
 static bool ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
-static const char *skip_ws(const char *p) {
-    while (ws(*p)) p++;
-    return p;
-}
-static const char *tok_end(const char *p) {
-    while (*p && !ws(*p)) p++;
-    return p;
-}
-
-/* timeout's `(-opt [arg])* N `, backtracking as Python's re does: the end, or NULL. */
-static const char *timeout_args(const char *p) {
-    if (*p == '-') {
-        const char *e = tok_end(p);
-        if (e > p + 1 && ws(*e)) {
-            const char *q = skip_ws(e), *e2 = tok_end(q);
-            if (e2 > q && ws(*e2)) {
-                const char *r = timeout_args(skip_ws(e2));
-                if (r) return r;
-            }
-            const char *r = timeout_args(q);
-            if (r) return r;
-        }
-    }
-    const char *e = tok_end(p);
-    return e > p && ws(*e) ? skip_ws(e) : NULL;
-}
-
-/* A segment without what only sets how it runs: `(`, env, VAR=x, sudo, time, timeout N. */
-static const char *unwrap(const char *p) {
-    p = skip_ws(p);
-    if (*p == '(') p = skip_ws(p + 1);
-    for (;;) {
-        const char *q = NULL, *w = p;
-        while (isalnum((unsigned char)*w) || *w == '_') w++;
-        if (!strncmp(p, "env", 3) && ws(p[3])) q = skip_ws(p + 3);
-        else if (w > p && *w == '=') {
-            const char *e = tok_end(w + 1);
-            if (ws(*e)) q = skip_ws(e);
-        }
-        if (!q && !strncmp(p, "sudo", 4) && ws(p[4])) q = skip_ws(p + 4);
-        if (!q && !strncmp(p, "time", 4) && ws(p[4])) q = skip_ws(p + 4);
-        if (!q && !strncmp(p, "timeout", 7) && ws(p[7])) q = timeout_args(skip_ws(p + 7));
-        if (!q) return p;
-        p = q;
-    }
-}
-
-/* runs: some segment of cmd (split on && || ; | and newlines) matches re. */
-static bool runs(const regex_t *re, const char *cmd) {
-    size_t n = strlen(cmd);
-    char *seg = xmalloc(n + 1);
-    bool hit = false;
-    for (const char *p = cmd; !hit;) {
-        const char *e = p;
-        int skip = 0;
-        while (*e) {
-            if ((e[0] == '&' && e[1] == '&') || (e[0] == '|' && e[1] == '|')) { skip = 2; break; }
-            if (*e == ';' || *e == '|' || *e == '\n') { skip = 1; break; }
-            e++;
-        }
-        size_t k = (size_t)(e - p);
-        memcpy(seg, p, k);
-        seg[k] = 0;
-        const char *s = unwrap(seg);
-        char *end = seg + k;
-        while (end > s && (ws(end[-1]) || end[-1] == ')')) *--end = 0;
-        if (*s && !regexec(re, s, 0, NULL, 0)) hit = true;
-        if (!*e) break;
-        p = e + skip;
-    }
-    free(seg);
-    return hit;
-}
 
 /* ---- the accumulator ----------------------------------------------------- */
 
@@ -652,10 +578,7 @@ Analysis *an_new(const char *root) {
     pthread_mutex_init(&a->mu, NULL);
     a->no_defs = getenv("AIG_NO_DEFS") != NULL;
     /* METHODS.md's patterns; glibc's ERE has \b \s \S \w. */
-    regcomp(&a->verify,
-            "^((ba)?sh\\s+|python3?\\s+|uv\\s+run\\s+)?(make|pytest|python3? -m (pytest|unittest)|\\S*tests?/\\S+|"
-            "\\S*/test_\\w+\\S*|ctest|cargo (test|build)|npm (test|run)|cc|gcc|clang|nvim --headless)(\\s|$)",
-            REG_EXTENDED | REG_NOSUB);
+    regcomp(&a->verify, CMD_VERIFY_ERE, REG_EXTENDED | REG_NOSUB);
     regcomp(&a->search, "^(grep|rg|ag|fd|find|git\\s+grep)(\\s|$)", REG_EXTENDED | REG_NOSUB);
     regcomp(&a->fix,
             "\\b(bugs?|broken|doesn'?t work|does not work|not working|didn'?t work|crash\\w*|regress\\w*|"
@@ -700,7 +623,7 @@ void an_add(Analysis *a, const Event *evs, size_t n) {
         if (kind == EV_READ) v.first = e->range.first, v.last = e->range.last;
         if (kind == EV_USAGE) v.tok[0] = e->tok.out, v.tok[1] = e->tok.in, v.tok[2] = e->tok.cached;
         if (kind == EV_TURN || kind == EV_TURN_COPY) v.prompt = e->prompt;
-        if (kind == EV_BASH_END) v.err = e->err;
+        if (kind == EV_BASH_END) v.err = e->err || e->failed_out, v.not_run = e->not_run;
         if (kind == EV_TITLE && e->who.type) {
             v.type = xstrdup(e->who.type);
             v.session = xstrdup(e->who.session ? e->who.session : "");
@@ -1284,6 +1207,7 @@ static void replay_read(B *b, const AnEv *e, File *f, int key) {
     if (!t) return;
     Work w = {.actor = e->actor, .gen = c->gen, .t = text_ref(t), .a = e->first > 0 ? e->first : 1,
               .z = e->first > 0 && e->last > 0 ? e->last : INT_MAX};
+    if (e->last < 0) w.a = nlines(t) + e->last + 1 > 1 ? nlines(t) + e->last + 1 : 1; /* tail: the end of this text */
     PUSH(f->work, f->nwork, f->capwork, w);
 }
 
@@ -1984,7 +1908,7 @@ static void replay(B *b) {
         case EV_COMPACT: c->gen++; break;
         case EV_SEARCH: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
         case EV_BASH_END:
-            if (e->text && runs(&b->an->search, e->text)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL));
+            if (e->text && (cmd_runs(&b->an->search, e->text, NULL, NULL) & CMD_RUN)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL));
             break;
         case EV_TOOL: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
         case EV_USAGE:
@@ -2014,7 +1938,16 @@ static void verify(B *b) {
     int *capruns = xcalloc((size_t)s->nturns + 1, sizeof *capruns);
     for (int i = 0; i < b->nev; i++) {
         const AnEv *e = &b->ev[i];
-        if (e->kind != EV_BASH_END || !e->text || !runs(&b->an->verify, e->text)) continue;
+        if (e->kind != EV_BASH_END || !e->text || e->not_run) continue; /* never ran: no verdict */
+        char *start = NULL; /* where it began: the event's path (cwd), relative to the repo */
+        if (e->path && *e->path != '/') {
+            start = xmalloc(strlen(b->an->root) + strlen(e->path) + 2);
+            sprintf(start, "%s/%s", b->an->root, e->path);
+        }
+        /* a run in another tree (a worktree, a scratch copy) doesn't verify this one: ignored */
+        int r = cmd_runs(&b->an->verify, e->text, b->an->root, start ? start : e->path);
+        free(start);
+        if (!(r & CMD_RUN)) continue;
         int t = turn_of(b, b->sess[e->actor], e->ts, false);
         if (t >= 0) PUSH(runs_of[t], nruns[t], capruns[t], i);
     }

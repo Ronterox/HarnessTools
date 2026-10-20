@@ -14,12 +14,16 @@ Tolerances, from documented deviations (aigource/src/analysis.c, top):
 - tokens/seconds: aigource also sees changes to files build_data doesn't map,
   and an agent's tokens are split at each change: the agent's running total
   in the turn must still agree at every change both see.
-- reads: aigource counts one read per file per command (no sed/head ranges)
-  and cmdguess's readers (tail, more, <, which build_data doesn't count): per
-  change -2 - 10% <= build_data - aigource <= 2 + 70% of build_data's; over all
-  changes within 15%.
+- reads: both take the same line ranges (sed -n prints, head, tail) and
+  readers; what remains is how a command is split into words. aigource lexes
+  the shell (cmdguess: quotes, here-documents, redirects; a file needs no
+  extension, so Makefile, bin/aic, .gitignore count); build_data splits on
+  ; | && || even inside quotes, needs a name with an extension and counts
+  `cat > f` and lines of here-document bodies as reads. That is a file or two
+  per command: per change |build_data - aigource| <= 4 + 10% of build_data's;
+  over all changes within 3%.
 - top paths: the 8 most read follow from reads: half or more in common for
-  90% of changes.
+  95% of changes.
 - changed-unread: depends on the functions; a difference counts only in files
   whose functions both find alike.
 
@@ -149,14 +153,12 @@ for f in common:
         reads_p += pc[4]
         reads_c += cc[4]
         stats["reads equal"] += pc[4] == cc[4]
-        # aigource also counts tail, more and < reads (docs/STRUCTURE.md, "Command
-        # reads"; build_data's pattern is cat|head|less|bat|batcat|nl|sed). The
-        # data keeps no reader per read, so those can't be told apart: aigource
-        # may count up to 2 + 10% more.
-        if not -2 - 0.1 * pc[4] <= pc[4] - cc[4] <= 2 + 0.7 * pc[4]:
+        # How each side splits a command into words (see the top): the data keeps
+        # no reader per read, so only the size of the difference is checked.
+        if abs(pc[4] - cc[4]) > 4 + 0.1 * pc[4]:
             fails.append(f"{f}: change {i} reads {pc[4]} vs {cc[4]}")
-        elif pc[4] - cc[4] < -2:
-            explained["reads: aigource's extra command readers (tail, more, <)"] += 1
+        elif pc[4] != cc[4]:
+            explained["reads: how a command is split into words (shell lexer vs build_data's pattern)"] += 1
         ptop = {py["paths"][x] for x, _ in pc[6]}
         ctop = {c["paths"][x] for x, _ in cc[6]}
         stats["top paths half shared"] += len(ptop & ctop) * 2 >= len(ptop | ctop)
@@ -190,9 +192,9 @@ for f in common:
         notes.append(f"{f}: defs {len(pd)} vs {len(cd)}, {len(pd & cd)} shared"
                      + (f"; only build_data {sorted(pd - cd)[:4]}" if verbose else ""))
 n = stats["changes"]
-if reads_p and abs(reads_p - reads_c) > 0.15 * reads_p:
+if reads_p and abs(reads_p - reads_c) > 0.03 * reads_p:
     fails.append(f"reads over all changes: {reads_p} vs {reads_c}")
-if n and stats["top paths half shared"] < 0.9 * n:
+if n and stats["top paths half shared"] < 0.95 * n:
     fails.append(f"top paths half shared in only {stats['top paths half shared']} of {n} changes")
 
 # build_data changes in no compared file: the same change in aigource, in a file
