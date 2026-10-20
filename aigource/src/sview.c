@@ -16,7 +16,8 @@
  * hint row. */
 #define BAR_ROW 36.0f
 #define CRUMBS_H 40.0f
-#define STRIP_H 36.0f
+#define STRIP_H 64.0f
+#define BARS_H 48.0f      /* the turn strip's tallest bar */
 #define HINT_H 30.0f
 #define INSP_W 420.0f
 #define DIM_A 0.14f       /* nodes the selected turn didn't touch */
@@ -47,6 +48,10 @@ static const char *const MODE_HI[ST_NMODES] = {
     "most fix turns", "most reading to change", "most output tokens",           "most agent time",
     "newest",         "",
 };
+
+/* A bar of the turn strip: turns order[a, b) (one, or a bin of them when
+ * there are too many), drawn at x, w px wide; the gap after it is its own. */
+typedef struct { float x, w; int a, b; } Slot;
 
 typedef struct {
     int view, focus;
@@ -99,7 +104,7 @@ struct SView {
     bool pressed;
     double clock;
     struct { const char *key; float t; } tip;               /* a title waiting to show */
-    struct { const StMetrics *m; float x0, w; float *x, *bw; } bars;
+    struct { const StMetrics *m; float x0, w, gap; Slot *slot; int n; } bars;
     struct { unsigned gen; int from; const StMetrics *m; int n, *vis, *pi; bool *exact, *mark; } arcs;
 };
 
@@ -450,8 +455,7 @@ void sv_free(SView *s) {
     lay_free(&s->lay);
     si_free(&s->insp);
     arcs_free(s);
-    free(s->bars.x);
-    free(s->bars.bw);
+    free(s->bars.slot);
     free(s->fill);
     pthread_mutex_destroy(&s->mu);
     free(s->root);
@@ -1027,7 +1031,7 @@ static void draw_building(SView *s, Rectangle st) {
 
 typedef struct {
     Rectangle bar, crumbs, stage, insp, strip, hint;
-    Rectangle tab[3], mode[ST_NMODES], heat, prev, next, ticks, cur, turns_lbl;
+    Rectangle tab[3], mode[ST_NMODES], heat, prev, next, ticks, cur, legend, turns_lbl;
     Rectangle crumb[64];
     int crumb_node[64], ncrumb;
 } Geo;
@@ -1089,12 +1093,13 @@ static Geo geometry(SView *s) {
     float lx = 12 + lw + 10;
     g.prev = (Rectangle){lx, sy, 24, 22};
     g.next = (Rectangle){lx + 26, sy, 24, 22};
-    const char *ct = "pick a turn: everything one prompt changed";
-    if (s->m && s->turn >= 0) ct = s->m->snap->turns[s->turn].title ? s->m->snap->turns[s->turn].title : "";
-    float cw = fminf(W * 0.38f, sv_tw(F_SANS, ct, 12.5f));
-    g.cur = (Rectangle){W - 12 - cw, sy, cw, 22};
+    /* the selected turn's title over the legend, in a column of its own width (bars don't shift on a pick) */
+    float lgw = ui_turn_legend(ui_mono, PX(11), 0, 0, C_FAINT, false);
+    float cw = fminf(W * 0.38f, fmaxf(lgw, fminf(W * 0.3f, 480)));
+    g.cur = (Rectangle){W - 12 - cw, g.strip.y + 10, cw, 20};
+    g.legend = (Rectangle){g.cur.x, g.strip.y + 34, lgw <= cw ? lgw : 0, 20};
     float tx0 = lx + 52 + 10;
-    g.ticks = (Rectangle){tx0, sy, fmaxf(0, g.cur.x - 10 - tx0), 22};
+    g.ticks = (Rectangle){tx0, g.strip.y + (STRIP_H - BARS_H) / 2, fmaxf(0, g.cur.x - 14 - tx0), BARS_H};
     if (s->m && s->focus >= 0) { /* breadcrumb buttons */
         int path[64], np = 0;
         for (int n = s->focus; n >= 0 && np < 64; n = s->m->nodes[n].parent) path[np++] = n;
@@ -1197,49 +1202,75 @@ static void draw_crumbs(SView *s, const Geo *g, Vector2 mp) {
     sv_tx(F_MONO, MODE_LO[s->mode], x, sv_mid(cy, 11.5f), 11.5f, C_FAINT);
 }
 
-/* The turn strip's bars: x and width of each turn in time order, flex-grow
- * with a 4 px minimum and 2 px gaps; narrower (and touching) when there are
- * too many. Cached per (build, strip width). */
+/* A turn's tags for its bar (ui_turn_bar). */
+static int turn_tags(const StMetrics *m, int t) {
+    const StTurn *T = &m->turns[t];
+    const AnTurn *a = &m->snap->turns[t];
+    return (a->fix ? UT_FIX : 0) | (a->corr || a->intr ? UT_CORR : 0) | (T->failing ? UT_FAILING : 0) |
+           (T->untested ? UT_UNTESTED : 0) | (T->slow ? UT_SLOW : 0);
+}
+
+/* The turn strip's bars, in time order: flex-grow widths (bar_w) with a 4 px
+ * minimum and 2 px gaps; when crowded a 2, then 1 px minimum with 1 px gaps;
+ * past that, bins of consecutive turns 2 px wide. Snapped to whole pixels so
+ * every gap shows: touching bars of one colour would read as one block.
+ * Drawing and hit-testing both read these. Cached per (build, strip x, width). */
 static void bar_spans(SView *s, Rectangle t) {
     const StMetrics *m = s->m;
     if (s->bars.m == m && s->bars.x0 == t.x && s->bars.w == t.width) return;
     int n = m->nturns;
+    float W = floorf(t.width), gap = 2, minw = 4;
     s->bars.m = m, s->bars.x0 = t.x, s->bars.w = t.width;
-    s->bars.x = xrealloc(s->bars.x, sizeof *s->bars.x * (size_t)(n ? n : 1));
-    s->bars.bw = xrealloc(s->bars.bw, sizeof *s->bars.bw * (size_t)(n ? n : 1));
-    float gap = 2, minw = 4;
-    if ((float)n * (minw + gap) > t.width) gap = 0, minw = fmaxf(1, t.width / (float)(n ? n : 1));
-    float avail = t.width - gap * (float)(n - 1), fixed = 0, grow = 0;
-    bool *mn = xcalloc((size_t)(n ? n : 1), sizeof *mn);
-    for (int it = 0; it < 4; it++) {
-        grow = fixed = 0;
-        for (int k = 0; k < n; k++) {
-            if (mn[k]) fixed += minw;
-            else grow += (float)m->turns[m->order[k]].bar_w;
+    if (n * (minw + gap) - gap > W) gap = 1, minw = n * 3 - 1 <= W ? 2 : 1;
+    int ns = n * (minw + gap) - gap > W ? (int)((W + gap) / (2 + gap)) : n; /* bins */
+    if (ns < 1) ns = 1;
+    s->bars.slot = xrealloc(s->bars.slot, sizeof *s->bars.slot * (size_t)ns);
+    s->bars.n = n ? ns : 0, s->bars.gap = gap;
+    if (!n) return;
+    float *w = xcalloc((size_t)ns, sizeof *w);
+    if (ns < n) {
+        for (int k = 0; k < ns; k++) w[k] = 2;
+    } else { /* flex: those under the minimum get it, the rest share what's left */
+        bool *mn = xcalloc((size_t)n, sizeof *mn), again = true;
+        float avail = W - gap * (float)(n - 1), fixed = 0, grow = 0;
+        while (again) {
+            again = false, grow = fixed = 0;
+            for (int k = 0; k < n; k++) {
+                if (mn[k]) fixed += minw;
+                else grow += (float)m->turns[m->order[k]].bar_w;
+            }
+            for (int k = 0; k < n; k++)
+                if (!mn[k] && (grow > 0 ? (float)m->turns[m->order[k]].bar_w / grow * (avail - fixed) : 0) < minw)
+                    mn[k] = again = true;
         }
-        bool again = false;
         for (int k = 0; k < n; k++)
-            if (!mn[k] && (grow > 0 ? (float)m->turns[m->order[k]].bar_w / grow * (avail - fixed) : 0) < minw)
-                mn[k] = again = true;
-        if (!again) break;
+            w[k] = mn[k] ? minw : (float)m->turns[m->order[k]].bar_w / grow * fmaxf(0, avail - fixed);
+        free(mn);
     }
     float cx = t.x;
-    for (int k = 0; k < n; k++) {
-        s->bars.bw[k] = mn[k] ? minw : grow > 0 ? (float)m->turns[m->order[k]].bar_w / grow * fmaxf(0, avail - fixed) : 0;
-        s->bars.x[k] = cx;
-        cx += s->bars.bw[k] + gap;
+    for (int k = 0; k < ns; k++) {
+        Slot *q = &s->bars.slot[k];
+        q->x = floorf(cx + 0.5f);
+        q->w = fmaxf(1, floorf(cx + w[k] + 0.5f) - q->x);
+        q->a = (int)((long long)k * n / ns), q->b = (int)((long long)(k + 1) * n / ns);
+        cx += w[k] + gap;
     }
-    free(mn);
+    free(w);
 }
 
+/* The turn under the mouse: its slot's, or in a bin the one at the mouse's place in it. */
 static int strip_hit(SView *s, const Geo *g, Vector2 mp) {
     const StMetrics *m = s->m;
-    if (!m || !m->nturns || !CheckCollisionPointRec(mp, g->ticks)) return -1;
+    if (!m || !m->nturns || g->ticks.width <= 0 || !CheckCollisionPointRec(mp, g->ticks)) return -1;
     bar_spans(s, g->ticks);
-    int hit = -1;
-    for (int k = 0; k < m->nturns; k++)
-        if (mp.x >= s->bars.x[k] && mp.x < s->bars.x[k] + fmaxf(s->bars.bw[k] + 2, 1)) hit = m->order[k];
-    return hit;
+    for (int k = 0; k < s->bars.n; k++) {
+        const Slot *q = &s->bars.slot[k];
+        float span = q->w + s->bars.gap;
+        if (mp.x < q->x || mp.x >= q->x + span) continue;
+        int i = q->a + (int)((mp.x - q->x) / span * (float)(q->b - q->a));
+        return m->order[i < q->b ? i : q->b - 1];
+    }
+    return -1;
 }
 
 static void draw_strip(SView *s, const Geo *g, Vector2 mp) {
@@ -1260,19 +1291,19 @@ static void draw_strip(SView *s, const Geo *g, Vector2 mp) {
         int hot = strip_hit(s, g, mp);
         float base = g->ticks.y + g->ticks.height;
         BeginScissorMode((int)g->ticks.x - 1, (int)g->ticks.y - 2, (int)g->ticks.width + 2, (int)g->ticks.height + 3);
-        for (int k = 0; k < m->nturns; k++) {
-            int t = m->order[k];
-            const StTurn *T = &m->turns[t];
-            float h = (float)T->bar_h;
-            Rectangle q = {s->bars.x[k], base - h, s->bars.bw[k], h};
-            Color c = t == s->turn ? C_HOT : m->snap->turns[t].fix ? C_CORR : HEX(0x3b5a7a);
-            if (t == hot) c = sv_brighter(c, 0.95f);
-            if (q.width >= 4) { /* rounded top (2 px) */
-                DrawRectangleRounded((Rectangle){q.x, q.y, q.width, fminf(h, 6)}, 4 / fminf(q.width, fminf(h, 6)), 4, c);
-                if (h > 3) DrawRectangleRec((Rectangle){q.x, q.y + 3, q.width, h - 3}, c);
-            } else DrawRectangleRec(q, c);
-            if (T->slow) DrawRectangleRec((Rectangle){q.x, q.y, q.width, fminf(3, h)}, C_SLOW);
-            if (t == s->turn) DrawRectangleLinesEx((Rectangle){q.x - 1, q.y - 1, q.width + 2, q.height + 1}, 1, C_FG);
+        for (int k = 0; k < s->bars.n; k++) {
+            const Slot *q = &s->bars.slot[k];
+            double bh = 0;
+            int tags = 0;
+            bool sel = false, hov = false;
+            for (int i = q->a; i < q->b; i++) { /* a bin: its tallest, all its tags */
+                int t = m->order[i];
+                bh = fmax(bh, m->turns[t].bar_h);
+                tags |= turn_tags(m, t);
+                sel |= t == s->turn, hov |= t == hot;
+            }
+            float h = floorf((float)bh / 22 * BARS_H + 0.5f);
+            ui_turn_bar((Rectangle){q->x, base - h, q->w, h}, tags, sel, hov);
         }
         EndScissorMode();
     }
@@ -1280,7 +1311,9 @@ static void draw_strip(SView *s, const Geo *g, Vector2 mp) {
     bool sel = m && s->turn >= 0;
     const char *ct = sel ? m->snap->turns[s->turn].title : "pick a turn: everything one prompt changed";
     sv_fit(F_SANS, fitb, sizeof fitb, ct ? ct : "", 12.5f, g->cur.width + 1);
-    sv_tx(F_SANS, fitb, g->cur.x, sv_mid(cy, 12.5f), 12.5f, sel ? C_FG : C_DIM);
+    sv_tx(F_SANS, fitb, g->cur.x, sv_mid(g->cur.y + g->cur.height / 2, 12.5f), 12.5f, sel ? C_FG : C_DIM);
+    if (g->legend.width > 0)
+        ui_turn_legend(ui_mono, PX(11), g->legend.x, g->legend.y + g->legend.height / 2, C_FAINT, true);
 }
 
 static void draw_hint(const Geo *g) {
@@ -1468,17 +1501,25 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     }
     const char *title = NULL;
     Vector2 at = mp;
-    if (ready && (bar = strip_hit(s, &g, mp)) >= 0) {
+    if (ready && (bar = strip_hit(s, &g, mp)) >= 0) { /* at once, as a node's */
         const AnTurn *T = &m->snap->turns[bar];
-        char w[64], d[64];
+        char w[64], d[64], tg[128], head[160];
         sv_when(w, sizeof w, T->ts);
         sv_fmt_dur(d, sizeof d, (double)T->secs);
-        snprintf(buf, sizeof buf, "%s \xC2\xB7 %s \xC2\xB7 %s", w, d, T->title ? T->title : "");
-        title = buf;
+        ui_turn_tags(tg, sizeof tg, turn_tags(m, bar));
+        snprintf(head, sizeof head, "%s \xC2\xB7 %s", w, d);
+        snprintf(buf, sizeof buf, " \xC2\xB7 +%d \xE2\x88\x92%d%s%s \xC2\xB7 %s", m->turns[bar].add, m->turns[bar].del,
+                 *tg ? " \xC2\xB7 " : "", tg, T->title ? T->title : "");
+        sv_tooltip(head, buf, mp);
+        s->tip.key = NULL;
+        return;
     }
     for (int k = 0; !title && k < ST_NMODES; k++)
         if ((title = title_at(mp, g.mode[k], MODE_TITLE[k]))) at = (Vector2){mp.x, g.mode[k].y + 20};
     if (!title) title = title_at(mp, g.turns_lbl, "Bar height: lines changed \xC2\xB7 bar width: time the turn took");
+    if (!title)
+        title = title_at(mp, g.legend, "Fill: corrected or interrupted, else a fix (the prompt reports a problem) \xC2\xB7 "
+                                       "base: the last build/test after a change failed, else none ran \xC2\xB7 top: slow");
     if (!title) title = title_at(mp, g.prev, "Previous turn ([)");
     if (!title) title = title_at(mp, g.next, "Next turn (])");
     if (!title && ready && CheckCollisionPointRec(mp, g.insp) && s->insp.tip) title = s->insp.tip;
