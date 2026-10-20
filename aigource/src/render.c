@@ -16,6 +16,7 @@
 #include "rlgl.h"
 #include "sview.h"
 #include "timeline.h"
+#include "turns.h"
 #include "ui.h"
 #include "util.h"
 
@@ -25,7 +26,8 @@
 #define PANEL_MAX 6        /* actors listed in the bottom-left panel */
 #define HUD_TOP 130.0f     /* screen space reserved by the HUD */
 #define ROW_H 30.0f
-#define TL_H 64.0f         /* timeline strip at the bottom */
+#define TL_H 104.0f        /* timeline strip at the bottom */
+#define TB_H 36.0f         /* its turn histogram's tallest bar */
 #define LEGEND_W 230.0f
 #define BACKLOG_SECS 10.0  /* live: events older than this arrive as backlog, no effects */
 #define SEEK_THROTTLE 0.08 /* seconds between rebuilds while dragging the timeline */
@@ -149,6 +151,12 @@ typedef struct {
     int nbins;
     size_t bins_n;
     double bins_t;
+    /* Timeline turn histogram: per-turn stats from the events, refreshed at most once a second. */
+    TurnStats *ts;
+    const TurnStat *tt;
+    int ntt, tbig;
+    double tt_t;
+    bool scrub_bar; /* the scrub began on a bar: at its turn's start until the mouse moves */
 } Viz;
 
 static void apply_until(Viz *v, double t, bool effects) {
@@ -216,6 +224,7 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
     if (!n) { free(in); return; }
     qsort(in, n, sizeof *in, ev_cmp);
     if (v->sv) sv_add(v->sv, in, n); /* all of them: the analysis-only kinds are freed below */
+    ts_add(v->ts, in, n);
     size_t kept = 0;
     for (size_t i = 0; i < n; i++) {
         if (in[i].kind == EV_FAILED) {
@@ -1204,12 +1213,51 @@ static Color actor_color_of(Viz *v, const char *id) {
     return DIM;
 }
 
+/* The turn histogram: the structure strip's bars (ui_turn_bar), each where its
+ * turn ran on the timeline's axis, prompt to last response. */
+static void update_turns(Viz *v) {
+    double now = GetTime();
+    if (v->tt && now - v->tt_t < 1.0) return;
+    v->tt = ts_get(v->ts, &v->ntt, &v->tbig);
+    v->tt_t = now;
+}
+
+static float turns_base(Track tr) { return tr.y - 30; }
+
+/* Turn k's bar: from its start to its end, a pixel short so neighbours keep a gap. */
+static Rectangle turn_rect(Viz *v, int k) {
+    const TurnStat *u = &v->tt[k];
+    float x0 = floorf(time_to_x(v, u->ts)), x1 = floorf(time_to_x(v, u->end));
+    float h = floorf((5 + 17 * sqrtf((float)(u->add + u->del) / (float)v->tbig)) / 22 * TB_H + 0.5f);
+    return (Rectangle){x0, turns_base(track()) - h, fmaxf(1, x1 - x0 - 1), h};
+}
+
+/* The bar under the mouse (the one drawn last), -1. */
+static int turn_hit(Viz *v, Vector2 p) {
+    float base = turns_base(track());
+    if (p.y < base - TB_H - 2 || p.y > base + 3) return -1;
+    for (int k = v->ntt; k-- > 0;) {
+        Rectangle q = turn_rect(v, k);
+        if (p.x >= q.x && p.x < q.x + q.width + 1) return k;
+    }
+    return -1;
+}
+
 static void draw_timeline(Viz *v, Vector2 mouse) {
     Track tr = track();
     int W = GetScreenWidth(), H = GetScreenHeight();
     bool hot = in_timeline(mouse) || v->drag == 2;
     DrawRectangle(0, H - (int)TL_H, W, (int)TL_H, (Color){10, 13, 18, 230});
     update_bins(v);
+    update_turns(v);
+
+    /* Turn histogram: each turn's bar where it ran (its session's colour is its tick on the track). */
+    int hot_bar = v->drag == 2 ? -1 : turn_hit(v, mouse);
+    for (int k = 0; k < v->ntt; k++) {
+        Rectangle q = turn_rect(v, k);
+        DrawRectangle((int)q.x - 1, (int)q.y, 1, (int)q.height, (Color){10, 13, 18, 255}); /* apart from one under it */
+        ui_turn_bar(q, v->tt[k].tags, false, k == hot_bar);
+    }
 
     /* Density strip above the track. */
     float base = tr.y - 8;
@@ -1251,11 +1299,11 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
     const char *endlbl = v->live ? "LIVE" : "go live \xE2\x86\x92";
     ui_text(endlbl, tr.x1 - ui_text_w(endlbl, 13), tr.y + 10, 13, v->live ? LIVE_RED : DIM);
 
-    /* Hover preview: time + the turn running then. */
+    /* Hover preview: time + the turn running then; over a bar, that turn. */
     if (hot) {
         double t = v->drag == 2 ? v->scrub_t : x_to_time(v, mouse.x);
         float hx = v->drag == 2 ? px : mouse.x;
-        char l1[64], l2[600] = "";
+        char l1[64], l2[600] = "", l3[256] = "";
         ui_fmt_clock(l1, sizeof l1, t, "%a %b %d  %H:%M:%S");
         size_t k = hist_upper(&v->h, t);
         Color c2 = DIM;
@@ -1269,12 +1317,32 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
             c2 = actor_color_of(v, e->actor);
             break;
         }
-        float w = fmaxf(ui_text_w(l1, 15), ui_text_w(l2, 14)) + 20;
-        float bx = fminf(fmaxf(hx - w / 2, 8), (float)W - w - 8), by = (float)H - TL_H - (l2[0] ? 50 : 32);
-        DrawRectangleRounded((Rectangle){bx, by, w, l2[0] ? 46 : 28}, 0.2f, 6, PANEL);
+        if (hot_bar >= 0) {
+            const TurnStat *u = &v->tt[hot_bar];
+            char d[32], tg[128], full[512];
+            long s = u->secs;
+            if (s >= 3600) snprintf(d, sizeof d, "%ldh %02ldm", s / 3600, s / 60 % 60);
+            else snprintf(d, sizeof d, "%ldm %02lds", s / 60, s % 60);
+            ui_fmt_clock(l1, sizeof l1, u->ts, "%a %b %d  %H:%M:%S");
+            snprintf(l1 + strlen(l1), sizeof l1 - strlen(l1), "  \xC2\xB7  %s", d);
+            const char *name = u->actor;
+            for (int i = 0; i < v->m->nactors; i++)
+                if (!strcmp(v->m->actors[i].id, u->actor)) name = v->m->actors[i].name;
+            snprintf(full, sizeof full, "%s: %s", name, u->title);
+            ui_fit(l2, sizeof l2, full, 14, (float)W - 36);
+            c2 = actor_color_of(v, u->actor);
+            ui_turn_tags(tg, sizeof tg, u->tags);
+            snprintf(l3, sizeof l3, "+%d \xE2\x88\x92%d%s%s", u->add, u->del, *tg ? "  \xC2\xB7  " : "", tg);
+        }
+        int rows = 1 + !!l2[0] + !!l3[0];
+        float w = fmaxf(fmaxf(ui_text_w(l1, 15), ui_text_w(l2, 14)), ui_text_w(l3, 14)) + 20;
+        float bh = 10 + 18 * (float)rows, bx = fminf(fmaxf(hx - w / 2, 8), (float)W - w - 8);
+        float by = turns_base(tr) - TB_H - 8 - bh;
+        DrawRectangleRounded((Rectangle){bx, by, w, bh}, 0.2f, 6, PANEL);
         ui_text(l1, bx + 10, by + 6, 15, TEXT);
         if (l2[0]) ui_text(l2, bx + 10, by + 26, 14, c2);
-        DrawLine((int)hx, (int)(H - TL_H), (int)hx, (int)(tr.y + 6), ui_fade(TEXT, 0.4f));
+        if (l3[0]) ui_text(l3, bx + 10, by + 44, 14, DIM);
+        DrawLine((int)hx, (int)(by + bh), (int)hx, (int)(tr.y + 6), ui_fade(TEXT, 0.4f));
     }
 }
 
@@ -1485,8 +1553,11 @@ static void handle_input(Viz *v, float dt) {
         } else if (in_timeline(mouse) && mouse.x > tr.x1 - ui_text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             seek(v, now_wall()); /* "go live" label */
         } else if (in_timeline(mouse)) {
+            int k = turn_hit(v, mouse); /* a bar: its turn's start */
             v->drag = 2;
-            v->scrub_t = x_to_time(v, mouse.x);
+            v->scrub_bar = k >= 0;
+            v->press_at = mouse;
+            v->scrub_t = k >= 0 ? v->tt[k].ts : x_to_time(v, mouse.x);
         } else if (v->hover == HOVER_ACTOR && !v->hover_from_win) {
             turn_open(v, v->hover_i);
             v->drag = 3;
@@ -1516,7 +1587,8 @@ static void handle_input(Viz *v, float dt) {
         }
     }
     if (v->drag == 2) {
-        v->scrub_t = x_to_time(v, mouse.x);
+        if (v->scrub_bar && dist2d(mouse, v->press_at) >= 4) v->scrub_bar = false; /* dragged: scrub from here */
+        if (!v->scrub_bar) v->scrub_t = x_to_time(v, mouse.x);
         double now = GetTime();
         bool released = IsMouseButtonReleased(MOUSE_BUTTON_LEFT) || !IsMouseButtonDown(MOUSE_BUTTON_LEFT);
         if (released || now - v->last_seek > SEEK_THROTTLE) { /* live preview while dragging */
@@ -1553,7 +1625,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     ui_init();
 
     Viz v = {.o = o, .m = model_new(o->root), .speed = o->speed > 0 ? o->speed : 60,
-             .auto_cam = true, .legend = true, .cam = {.zoom = 1}};
+             .auto_cam = true, .legend = true, .cam = {.zoom = 1}, .ts = ts_new(o->root)};
     v.sim = -1e18; /* nothing is in the past yet: the first batch goes to history unapplied */
     ingest_new_events(&v, q);
     v.sim = v.h.n ? v.h.ev[0].ts - 1 : now_wall();
@@ -1655,6 +1727,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     free(v.hov_id);
     free(v.press_file);
     sv_free(v.sv);
+    ts_free(v.ts);
     for (size_t i = 0; i < v.naside; i++) ev_free(&v.aside[i]);
     free(v.aside);
     CloseWindow();

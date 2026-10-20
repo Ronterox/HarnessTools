@@ -989,3 +989,49 @@ void ui_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool prev
     float by = body.y + (body.height - bh) * (*scroll / max_scroll);
     DrawRectangleRounded((Rectangle){r.x + r.width - 7, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
 }
+/* ---- turn bars ------------------------------------------------------------ */
+
+static Color brighter(Color c) {
+    return (Color){(unsigned char)fminf(255, c.r * 1.4f), (unsigned char)fminf(255, c.g * 1.4f),
+                   (unsigned char)fminf(255, c.b * 1.4f), c.a};
+}
+
+void ui_turn_bar(Rectangle q, int tags, bool sel, bool hot) {
+    Color c = sel ? UT_SEL_C : tags & UT_CORR ? UT_CORR_C : tags & UT_FIX ? UT_FIX_C : UT_PLAIN;
+    if (hot) c = brighter(c);
+    float h = q.height, e = h >= 12 ? 3 : 2; /* the slow edge's thickness; the stripe's is 2 */
+    if (q.width >= 4 && h > 6) { /* rounded top (2 px), as the draft's */
+        DrawRectangleRounded((Rectangle){q.x, q.y, q.width, 6}, 4 / fminf(q.width, 6), 4, c);
+        DrawRectangleRec((Rectangle){q.x, q.y + 3, q.width, h - 3}, c);
+    } else DrawRectangleRec(q, c);
+    if (tags & UT_SLOW) DrawRectangleRec((Rectangle){q.x, q.y, q.width, fminf(e, h)}, UT_SLOW_C);
+    if (tags & (UT_FAILING | UT_UNTESTED) && h >= e + 5) { /* the stripe, apart from the fill by a dark line */
+        DrawRectangleRec((Rectangle){q.x, q.y + h - 3, q.width, 1}, BG);
+        DrawRectangleRec((Rectangle){q.x, q.y + h - 2, q.width, 2}, tags & UT_FAILING ? UT_FAIL_C : UT_TEST_C);
+    }
+    if (sel) DrawRectangleLinesEx((Rectangle){q.x - 1, q.y - 1, q.width + 2, h + 1}, 1, TEXT);
+}
+
+static const struct { int tag; const char *word; } UT_WORDS[] = {
+    {UT_CORR, "corrected/interrupted"}, {UT_FIX, "fix"}, {UT_FAILING, "failing"}, {UT_UNTESTED, "untested"}, {UT_SLOW, "slow"},
+};
+
+void ui_turn_tags(char *b, size_t n, int tags) {
+    size_t at = 0;
+    if (n) b[0] = 0;
+    for (size_t i = 0; i < sizeof UT_WORDS / sizeof *UT_WORDS; i++)
+        if (tags & UT_WORDS[i].tag && at < n)
+            at += (size_t)snprintf(b + at, n - at, "%s%s", at ? ", " : "", UT_WORDS[i].word);
+}
+
+float ui_turn_legend(Font f, float size, float x, float cy, Color text, bool draw) {
+    float x0 = x, sp = ui_spacing(f, size);
+    for (size_t i = 0; i < sizeof UT_WORDS / sizeof *UT_WORDS; i++) {
+        if (i) x += 12;
+        if (draw) ui_turn_bar((Rectangle){x, cy - 7, 7, 14}, UT_WORDS[i].tag, false, false);
+        x += 11;
+        if (draw) ui_draw_text(f, UT_WORDS[i].word, (Vector2){floorf(x + 0.5f), floorf(cy - size / 2 + 0.5f)}, size, sp, text);
+        x += ui_measure_text(f, UT_WORDS[i].word, size, sp);
+    }
+    return x - x0;
+}

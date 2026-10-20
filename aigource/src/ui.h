@@ -165,4 +165,27 @@ float ui_note_panel_h(NoteView *nv, float w, float maxh);
 void ui_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool preview);
 void ui_bubble_icon(float x, float y, Color c); /* a small speech bubble */
 
+/* ---- turn bars: the structure screen's turn strip and the stage's timeline ---- */
+
+/* A turn's tags. One bar shows them all: the fill is the most serious of
+ * corrected/interrupted > fix > plain (selected: amber, outlined), a stripe at
+ * the base failing > untested, a cyan top edge slow. */
+enum { UT_FIX = 1, UT_CORR = 2, UT_UNTESTED = 4, UT_FAILING = 8, UT_SLOW = 16 };
+#define UT_PLAIN (Color){59, 90, 122, 255}     /* #3b5a7a */
+#define UT_FIX_C (Color){247, 120, 186, 255}   /* pink: the prompt reports a problem (coral in the draft) */
+#define UT_CORR_C (Color){255, 123, 114, 255}  /* coral: the next prompt corrected it, or it was interrupted (the flag's) */
+#define UT_FAIL_C (Color){248, 81, 73, 255}    /* red: the last build/test after a change failed */
+#define UT_TEST_C (Color){227, 179, 65, 255}   /* yellow: a change with no build/test after it */
+#define UT_SLOW_C (Color){57, 197, 207, 255}   /* cyan: took at least 2x the average turn */
+#define UT_SEL_C (Color){242, 165, 65, 255}    /* amber: the selected turn */
+
+/* The bar of a turn with these tags at q (its full height, standing on q's
+ * bottom); sel: amber with an outline; hot: brighter (hovered). */
+void ui_turn_bar(Rectangle q, int tags, bool sel, bool hot);
+/* Its tags in words, ", "-joined ("" none). */
+void ui_turn_tags(char *b, size_t n, int tags);
+/* The bars' legend from x, centred on cy, in f at size: its width; drawn
+ * only when draw. */
+float ui_turn_legend(Font f, float size, float x, float cy, Color text, bool draw);
+
 #endif

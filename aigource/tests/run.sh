@@ -177,6 +177,12 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/te
    src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o -ldl -lm -lpthread
 "$OUT/test_analysis" || fail=1
 
+# The stage's per-turn stats (turns.c), by the analysis' rules.
+cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_turns" tests/test_turns.c \
+   src/turns.c src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o \
+   -ldl -lm -lpthread
+"$OUT/test_turns" || fail=1
+
 # Derived metrics on hand-built and generated snapshots (edge cases, >= boundaries,
 # a seeded random corpus); each written as JSON for the parity check. Under
 # ASan/UBSan too when the asan objects are there (make asan).

@@ -59,7 +59,6 @@
 
 extern char **environ;
 
-#define IDLE_CAP 300.0     /* seconds: a longer gap between responses counts as this */
 #ifndef TREE_MAX
 #define TREE_MAX 5000 /* files in the tree */
 #endif
@@ -100,7 +99,7 @@ struct Analysis {
     StrMap nameix; /* actor ids and transcript paths, interned */
     char **name;
     int nname, capname;
-    regex_t verify, search, fix, corr;
+    regex_t search;
     bool no_defs; /* AIG_NO_DEFS: no functions (tests that mustn't depend on installed grammars) */
     atomic_int cancel; /* an_cancel: the running build gives up */
 };
@@ -577,18 +576,42 @@ Analysis *an_new(const char *root) {
     while (n > 1 && a->root[n - 1] == '/') a->root[--n] = 0;
     pthread_mutex_init(&a->mu, NULL);
     a->no_defs = getenv("AIG_NO_DEFS") != NULL;
-    /* METHODS.md's patterns; glibc's ERE has \b \s \S \w. */
-    regcomp(&a->verify, CMD_VERIFY_ERE, REG_EXTENDED | REG_NOSUB);
     regcomp(&a->search, "^(grep|rg|ag|fd|find|git\\s+grep)(\\s|$)", REG_EXTENDED | REG_NOSUB);
-    regcomp(&a->fix,
+    return a;
+}
+
+/* ---- the rules the stage shares (an_fix_prompt ...) ---------------------- */
+
+static regex_t re_verify, re_fix, re_corr;
+static pthread_once_t re_once = PTHREAD_ONCE_INIT;
+
+/* METHODS.md's patterns; glibc's ERE has \b \s \S \w. Compiled once, kept
+ * for the process (regexec on them is thread-safe). */
+static void re_init(void) {
+    regcomp(&re_verify, CMD_VERIFY_ERE, REG_EXTENDED | REG_NOSUB);
+    regcomp(&re_fix,
             "\\b(bugs?|broken|doesn'?t work|does not work|not working|didn'?t work|crash\\w*|regress\\w*|"
             "fail(s|ed|ing)|errors?|wrong|can'?t|cannot|still|isn'?t|not (showing|working|catching)|horrible)\\b",
             REG_EXTENDED | REG_NOSUB | REG_ICASE);
-    regcomp(&a->corr,
+    regcomp(&re_corr,
             "\\b(bugs?|broken|wrong|doesn'?t work|does not work|not working|didn'?t work|revert|undo|"
             "regress\\w*|crash\\w*|fail(s|ed|ing)?|errors?|strange|weird|horrible|not what i|why did you)\\b|^no\\b",
             REG_EXTENDED | REG_NOSUB | REG_ICASE);
-    return a;
+}
+
+bool an_fix_prompt(const char *title) {
+    pthread_once(&re_once, re_init);
+    return title && !regexec(&re_fix, title, 0, NULL, 0);
+}
+
+bool an_corr_prompt(const char *next) {
+    pthread_once(&re_once, re_init);
+    return next && !regexec(&re_corr, next, 0, NULL, 0);
+}
+
+bool an_verify_cmd(const char *cmd, const char *root, const char *start) {
+    pthread_once(&re_once, re_init);
+    return cmd && (cmd_runs(&re_verify, cmd, root, start) & CMD_RUN);
 }
 
 static bool starts(const char *s, const char *p) { return s && !strncmp(s, p, strlen(p)); }
@@ -643,7 +666,7 @@ void an_free(Analysis *a) {
     for (int i = 0; i < a->nname; i++) free(a->name[i]);
     free(a->name);
     strmap_free(&a->nameix);
-    regfree(&a->verify), regfree(&a->search), regfree(&a->fix), regfree(&a->corr);
+    regfree(&a->search);
     pthread_mutex_destroy(&a->mu);
     free(a->root);
     free(a);
@@ -821,12 +844,11 @@ static int cmp_double(const void *pa, const void *pb) {
     return a < b ? -1 : a > b;
 }
 
-/* active: seconds over the stamps, each gap capped at IDLE_CAP, rounded half-even. */
-static long active(double *xs, int n) {
+long an_active(double *xs, int n) {
     for (int i = 0; i < n; i++) xs[i] = epoch(xs[i]);
     qsort(xs, (size_t)n, sizeof *xs, cmp_double);
     double s = 0;
-    for (int i = 1; i < n; i++) s += xs[i] - xs[i - 1] < IDLE_CAP ? xs[i] - xs[i - 1] : IDLE_CAP;
+    for (int i = 1; i < n; i++) s += xs[i] - xs[i - 1] < AN_IDLE_CAP ? xs[i] - xs[i - 1] : AN_IDLE_CAP;
     return (long)nearbyint(s);
 }
 
@@ -866,8 +888,7 @@ static int turn_of(B *b, int session, double ts, bool make) {
     const Prompt *p = &b->pr[session][i];
     const char *nxt = i + 1 < b->npr[session] ? b->pr[session][i + 1].title : NULL;
     AnTurn t = {.title = xstrdup(p->title), .ts = p->ts, .actor = session,
-                .corr = nxt && !regexec(&b->an->corr, nxt, 0, NULL, 0) ? xstrdup(nxt) : NULL,
-                .fix = !regexec(&b->an->fix, p->title, 0, NULL, 0)};
+                .corr = an_corr_prompt(nxt) ? xstrdup(nxt) : NULL, .fix = an_fix_prompt(p->title)};
     PUSH(s->turns, s->nturns, b->capturns, t);
     return b->turn_of_key[key] = s->nturns - 1;
 }
@@ -1313,7 +1334,7 @@ static void replay_change(B *b, int ei) {
             if (nst == c->nspent + 2) break;
             stamps[nst++] = c->spent[i].ts;
         }
-    ch.secs = active(stamps, nst);
+    ch.secs = an_active(stamps, nst);
     free(stamps);
     c->nspent = 0;
     c->last_turn = t;
@@ -1945,9 +1966,9 @@ static void verify(B *b) {
             sprintf(start, "%s/%s", b->an->root, e->path);
         }
         /* a run in another tree (a worktree, a scratch copy) doesn't verify this one: ignored */
-        int r = cmd_runs(&b->an->verify, e->text, b->an->root, start ? start : e->path);
+        bool run = an_verify_cmd(e->text, b->an->root, start ? start : e->path);
         free(start);
-        if (!(r & CMD_RUN)) continue;
+        if (!run) continue;
         int t = turn_of(b, b->sess[e->actor], e->ts, false);
         if (t >= 0) PUSH(runs_of[t], nruns[t], capruns[t], i);
     }
@@ -1988,7 +2009,7 @@ static void finish_turns(B *b) {
         AnTurn *tn = &s->turns[t];
         int ns = nstamps[t];
         PUSH(stamps[t], nstamps[t], capstamps[t], tn->ts);
-        tn->secs = active(stamps[t], ns + 1);
+        tn->secs = an_active(stamps[t], ns + 1);
         free(stamps[t]);
         tn->actor = actor_out(b, tn->actor); /* was its session's name index */
     }

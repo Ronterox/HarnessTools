@@ -119,6 +119,20 @@ void an_snapshot_json(FILE *f, const AnSnapshot *s);
 void an_snapshot_stats(FILE *f, const AnSnapshot *s);
 void an_free(Analysis *a);
 
+/* ---- the rules, shared with the stage's per-turn stats (turns.c) ---- */
+
+#define AN_IDLE_CAP 300.0 /* seconds: a longer gap between responses counts as this */
+/* Active seconds over the stamps (made epoch-exact and sorted in place), each
+ * gap capped at AN_IDLE_CAP, rounded half-even: a turn's or a change's time. */
+long an_active(double *xs, int n);
+/* The prompt reports a problem: its turn is a fix. */
+bool an_fix_prompt(const char *title);
+/* The next prompt reads like a correction of this turn. */
+bool an_corr_prompt(const char *next);
+/* cmd runs a test or build of the repo at root (start: where it began, NULL
+ * the root): a verification of the changes before it. */
+bool an_verify_cmd(const char *cmd, const char *root, const char *start);
+
 /* ---- internals, exposed for tests ---- */
 
 /* For each line of b, the line of a it lines up with, -1 none: difflib's

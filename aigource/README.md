@@ -98,10 +98,13 @@ session's +/− on it, who touched it and when), a folder for its counts, an
 actor for its turn, prompt and totals.
 
 **Timeline** (bottom), like a video player: click or drag anywhere to jump,
-hover to preview the time and the turn running then. The strip above the bar
-is activity (amber = writes, blue = reads), ticks are turns in the actor's
-color, dark notches are idle stretches squeezed to 2 minutes so multi-day
-histories stay usable. Jumping back rebuilds the scene from history and keeps
+hover to preview the time and the turn running then. On top, one bar per turn
+that changed files, where it ran (prompt to last response): height = lines
+changed, colours as the structure screen's turn strip (below); hover one for
+its time, duration, prompt, +/− and tags, click it to jump to its start. Under
+it the activity strip (amber = writes, blue = reads); on the bar, ticks are
+prompts in the actor's color, dark notches are idle stretches squeezed to 2
+minutes so multi-day histories stay usable. Jumping back rebuilds the scene from history and keeps
 the layout where it was. "go live →" (or `L`) returns to now.
 
 ## Structure view
@@ -135,7 +138,7 @@ code, is in [docs/STRUCTURE.md](docs/STRUCTURE.md).
 | dots | flags: coral corrected / interrupted, yellow untested / failing, purple changed without reading it first, cyan slow |
 | arcs | hover or inspect a file or function: lines to what changed in the same turns (coral: another folder or file); dashed to the nearest thing on screen that holds a partner |
 | inspector | right: hovering a node inspects it, and it stays when the mouse moves on (into the inspector: its code, partners and turns). Flags, the code with a strip per line in the colour of the turn that wrote it (hover a strip for that turn and the agent's comment; hover a legend row to single out its lines), size after each change, fixes, rework, context cost and what was read to change it, partners with `shared/turns (P% match)`, cost and time next to the average, who wrote today's lines and how old they are, the hottest children by the current mode, and the turns that changed it with the agent's comments. Rows and turn titles are clickable |
-| turn strip | bottom: one bar per turn in time order, height = lines changed, width = time taken; coral = a fix, a cyan top = slow. Pick one (click, `[` `]`, ‹ ›) to dim what it didn't touch and inspect it: files and functions it changed, what it read, how much of it survives today, its cost, your next prompt when it was corrected, and what the agent said, in order |
+| turn strip | bottom: one bar per turn in time order, height = lines changed, width = time taken (with too many turns for the width, bins of neighbours). Fill: coral = corrected (your next prompt reads like a correction) or interrupted, else pink = a fix (its prompt reports a problem), else blue; a stripe at the base: red = the last build/test after a change failed, else yellow = a change with no build/test after it; a cyan top = slow (2× the average turn); amber, outlined = selected. The legend is under the turn's title; hover a bar for its time, duration, +/−, tags and prompt. Pick one (click, `[` `]`, ‹ ›) to dim what it didn't touch and inspect it: files and functions it changed, what it read, how much of it survives today, its cost, your next prompt when it was corrected, and what the agent said, in order |
 
 Click a folder to focus it, a file to open its functions; the centre, a path
 segment, `Esc` or `Backspace` go up. Keys: `1` `2` `3` views, `[` `]` turns,
@@ -214,7 +217,7 @@ only: nothing records past filesystem changes, so replays don't have them.
 
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
-unit-tests the timeline's time mapping (`tests/test_timeline.c`), change ring
+unit-tests the timeline's time mapping (`tests/test_timeline.c`), its per-turn stats (`tests/test_turns.c`), change ring
 sizing (`tests/test_rings.c`), the folder layout (`tests/test_layout.c`: no
 crossing lines on random trees), the structure screen's geometry
 (`tests/test_slayout.c`: treemap and partition against d3's numbers, nesting

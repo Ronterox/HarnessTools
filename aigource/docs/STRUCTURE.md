@@ -459,10 +459,46 @@ for it, which the analysis never produces), so one call writing 30 functions
 doesn't count 30 times; nested functions count inside their class too.
 
 **Turn strip:** bar height = lines changed (`5 + 17·sqrt(lines / lines of the
-largest turn)` pixels, `bar_h`); bar width = turn time, `0.4 + sqrt(secs /
-average turn)` (`bar_w`), so one long turn can't crowd out the rest. Fix turns
-are coral, slow turns have a cyan top edge. The bars are in time order; `[` and
+largest turn)`, `bar_h`, the draft's 22 px scale, drawn on 48 px: `BARS_H` in
+`sview.c`); bar width = turn time, `0.4 + sqrt(secs / average turn)` (`bar_w`),
+so one long turn can't crowd out the rest. The bars are in time order; `[` and
 `]` step through them.
+
+Widths (`bar_spans`): flex-grow by `bar_w` with a 4 px minimum and 2 px gaps;
+when the turns don't fit, a 2 px, then 1 px minimum with 1 px gaps; past that
+(more than about half the strip's width in turns) bins of consecutive turns,
+2 px each, drawn as their tallest with all their tags, a click picking the turn
+at the mouse's place in the bin. Positions are snapped to whole pixels so every
+gap shows. Drawing and hit-testing read the same spans. (Before, a crowded
+strip dropped the gap to 0 and gave every bar the same `width / turns`: one
+solid block of touching same-coloured bars, the clicks still landing on turns.)
+
+Colours (`ui_turn_bar` in `ui.c`, `UT_*` in `ui.h`), so one bar shows every
+tag it has:
+- **fill**, the most serious of: corrected or interrupted (coral, the flag's
+  colour: the next prompt reads like a correction (7), or you interrupted it) >
+  fix (pink: its prompt reports a problem; coral in the draft, moved so the two
+  stay apart) > plain (`#3b5a7a`). The selected turn is amber, outlined.
+- **base stripe** (2 px under a dark line): failing (red: the last build/test
+  after one of its changes failed) > untested (yellow: a change with no
+  build/test after it in the turn) (6).
+- **top edge**: slow (cyan, at least 2× the average turn).
+Hover brightens a bar and shows its time, duration, +/−, tags and prompt; the
+legend sits under the selected turn's title.
+
+**On the stage** the timeline (`render.c`) draws the same bars where each turn
+ran on its own axis (gap-compressed, `tl_to_v`): from the prompt to its last
+response, a pixel short so neighbours keep a gap, with a dark line at each
+bar's left so a turn of another session overlapping it stays apart. The stage
+doesn't build the analysis: `turns.c` keeps light per-turn stats from the
+events it already gets, by the same rules (`an_fix_prompt`, `an_corr_prompt`,
+`an_verify_cmd`, `an_active` / `AN_IDLE_CAP` in `analysis.c`, `ST_SLOW_X`): a
+typed or pasted prompt of a main session until its next one, a subagent's work
+in its session's turn, only turns that changed a file. Without the replay or
+git, +/− are the events' own counts, and a change the analysis drops (a
+duplicate, outside today's tree) still counts, so the two can differ slightly.
+Clicking a bar seeks to its turn's start (dragging from it scrubs as anywhere
+on the timeline).
 Responses after a turn's last change (checking, summing up) belong to no change;
 the turn view shows them in the turn's total.
 
@@ -513,7 +549,7 @@ with no known lines gets 0.
 | `actor_of` | `setup_actors`, `actor_out` |
 | `turn_of` | `turn_of`, `prompt_at` |
 | `comment_of` | `comment_of`, `cut_comment` |
-| `active`, `IDLE_CAP` | `active`, `IDLE_CAP` |
+| `active`, `IDLE_CAP` | `an_active`, `AN_IDLE_CAP` (shared with `turns.c`) |
 | verify flags | `verify` |
 | turn time, tokens, interrupts | `finish_turns` |
 | tree (`FILES`, folder merge) | `setup_files`, `list_tree`, `build_tree` |
@@ -521,7 +557,7 @@ with no known lines gets 0.
 | page: per node loop, `METRIC`, `MAX`, `heat`, `SLOW_X` | `st_build` (metrics.c) |
 | page: `partners` | `st_build`, `ST_TOP_ROWS` |
 | page: `TINFO`, `inspectTurn` | `st_build`, `StTurn` |
-| page: `turnBar` | `bar_h`, `bar_w` in `st_build` |
+| page: `turnBar` | `bar_h`, `bar_w` in `st_build`; `bar_spans`, `ui_turn_bar` |
 | page: `readsOf` | `reads_of` |
 | page: `blameOf` | `st_blame_slot`, `st_line_origins` |
 | page: `lineShare` | `cid_lines` in `st_build` |
