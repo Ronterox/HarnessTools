@@ -32,7 +32,7 @@ function M.name_of(buf)
   if not (buf and api.nvim_buf_is_valid(buf)) then
     return nil
   end
-  if buf == mod('trace').buf then
+  if mod('trace').is_view(buf) then -- (the worker's history or a subagent's)
     return 'trace'
   elseif buf == mod('chat').buf then
     return 'questions'

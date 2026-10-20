@@ -86,8 +86,9 @@ def _command_prompt(text):
 class Parser:
     """Stateful, incremental: feed records in file order, get events back."""
 
-    def __init__(self, root):
+    def __init__(self, root, sidechain=False):
         self.root = root
+        self.sidechain = sidechain  # a subagent's own transcript (every record is a sidechain one)
         self.turn = 0
         self.pending_text = []   # assistant text since the last tool call
         self.pending_ts = None
@@ -95,8 +96,10 @@ class Parser:
         self.last_prompt_parent = None
         self.last_usage = None   # usage of the newest assistant message (context size)
         self.model = None
+        self.stopped = False     # the newest assistant message ended its turn
 
-    STATE_KEYS = ("turn", "pending_text", "pending_ts", "tools", "last_prompt_parent", "last_usage", "model")
+    STATE_KEYS = ("turn", "pending_text", "pending_ts", "tools", "last_prompt_parent", "last_usage", "model",
+                  "stopped")
 
     def to_state(self):
         return {k: getattr(self, k) for k in self.STATE_KEYS}
@@ -137,9 +140,12 @@ class Parser:
 
     # -- main entry ----------------------------------------------------------
     def feed(self, rec):
-        if not isinstance(rec, dict) or rec.get("isSidechain") or rec.get("isCompactSummary"):
+        if not isinstance(rec, dict) or (rec.get("isSidechain") and not self.sidechain) \
+                or rec.get("isCompactSummary"):
             return []
         typ = rec.get("type")
+        if typ == "user":
+            self.stopped = False
         ts = rec.get("timestamp")
         uid = rec.get("uuid") or ""
         msg = rec.get("message") if isinstance(rec.get("message"), dict) else {}
@@ -216,6 +222,8 @@ class Parser:
                         "text": text[:MAX_PROMPT]})
             return out
 
+        if typ == "assistant":
+            self.stopped = msg.get("stop_reason") == "end_turn"
         if typ == "assistant" and isinstance(msg.get("usage"), dict):
             self.last_usage, self.model = msg["usage"], msg.get("model") or self.model
         if typ == "assistant" and isinstance(content, list):
@@ -229,7 +237,7 @@ class Parser:
                     why = "\n\n".join(t for t in self.pending_text if t.strip()).strip()
                     self.pending_text = []
                     self.tools[c.get("id")] = {"name": c.get("name"), "input": c.get("input") or {},
-                                               "why": why, "ts": ts}
+                                               "why": why, "ts": ts, "turn": self.turn}
             if msg.get("stop_reason") == "end_turn":
                 out += self._flush_text(ts, uid)
         return out
@@ -239,6 +247,18 @@ class Parser:
         t = self.tools.pop(tid, None)
         if not t:
             return None
+        return self._tool_event(tid, t, result, ts, bool(block.get("is_error")))
+
+    def running_tool(self, tid):
+        """The event of tool call `tid` still in flight (no result yet), or None."""
+        t = self.tools.get(tid)
+        if not t:
+            return None
+        ev = self._tool_event(tid, t, None, None, False)
+        ev["turn"] = t.get("turn", ev["turn"])  # (the turn it was made in)
+        return ev
+
+    def _tool_event(self, tid, t, result, ts, error):
         name, inp = t["name"], t["input"]
         path = inp.get("file_path") or inp.get("notebook_path") or inp.get("path")
         rel = _rel(self.root, path) if isinstance(path, str) else None
@@ -247,7 +267,7 @@ class Parser:
             "id": "t-" + (tid or ""), "ts": t["ts"] or ts, "kind": "tool", "turn": self.turn,
             "tool": name, "title": self._title(name, inp, rel, hunks), "why": t["why"],
             "file": rel if name in FILE_TOOLS else None,
-            "hunks": hunks, "input": _short(inp), "detail": _detail(name, inp), "error": bool(block.get("is_error")),
+            "hunks": hunks, "input": _short(inp), "detail": _detail(name, inp), "error": error,
         }
 
     def pending_tools(self):

@@ -1970,6 +1970,119 @@ do
 end
 
 ---------------------------------------------------------------------------
+-- subagents: nested under their Agent call, running calls, gs view
+do
+  aic.show('trace')
+  local function lines_of(b)
+    return vim.api.nvim_buf_get_lines(b, 0, -1, false)
+  end
+  local function line_of(b, pat)
+    for i, t in ipairs(lines_of(b)) do
+      if t:find(pat, 1, true) then
+        return i
+      end
+    end
+  end
+  local agents = {
+    ['t-A1'] = { agent = 'ag1xxxxxxx', type = 'reviewer', description = 'review it', events = 3, calls = 1, state = 'running' },
+    ['t-A2'] = { running = { id = 't-A2', ts = now + 102, kind = 'tool', turn = 50, tool = 'Agent',
+      title = 'Agent: still going', why = 'in parallel', detail = 'still going\nthe prompt', hunks = {} } },
+    ['t-A3'] = { ['in'] = 'ag1xxxxxxx', running = { id = 't-A3', ts = now + 103, kind = 'tool', turn = 1,
+      tool = 'Agent', title = 'Agent: nested one', why = '', detail = 'nested one', hunks = {} } },
+  }
+  write(dir .. '/agents/ag1xxxxxxx.jsonl',
+    jl({ id = 'sp', seq = 1, ts = now + 100, kind = 'prompt', turn = 1, text = 'Review the diff.' })
+    .. jl({ id = 'sr', seq = 2, ts = now + 101, kind = 'tool', turn = 1, tool = 'Read', title = 'Read src/app.js',
+      why = 'look first', file = 'src/app.js', hunks = {} })
+    .. jl({ id = 'sx', seq = 3, ts = now + 104, kind = 'text', turn = 1, text = 'all good' }))
+  write(dir .. '/agents.json', vim.json.encode(agents))
+  f = io.open(dir .. '/trace.jsonl', 'ab')
+  f:write(jl({ id = 'p50', seq = 50, ts = now + 99, kind = 'prompt', turn = 50, text = 'delegate it' }))
+  f:write(jl({ id = 't-A1', seq = 51, ts = now + 100, kind = 'tool', turn = 50, tool = 'Agent', title = 'Agent: review it',
+    why = 'delegating', detail = 'review it\nReview the diff.', hunks = {} }))
+  f:close()
+  ok(wait(3000, function()
+    return line_of(trace.buf, '↳ reviewer ag1xxxx · 1 call · running') ~= nil
+  end), 'subagent header under its Agent call')
+  local a1, sh = line_of(trace.buf, 'Agent: review it'), line_of(trace.buf, '↳ reviewer')
+  ok(vim.fn.foldlevel(sh) > vim.fn.foldlevel(a1) and line_of(trace.buf, 'Review the diff.') < sh,
+    'subagent header inside the Agent call\'s details, after its prompt')
+  ok(line_of(trace.buf, 'Agent: still going ⋯ running — in parallel') ~= nil, 'a running Agent call is shown')
+  vim.api.nvim_win_set_cursor(0, { a1 - 1, 0 })
+  vim.cmd('normal! zv')
+  vim.api.nvim_win_set_cursor(0, { a1, 0 })
+  trace.enter() -- the Agent call's details
+  ok(vim.fn.foldclosed(sh) == sh, 'the subagent arrives folded inside the open Agent call')
+  vim.api.nvim_win_set_cursor(0, { sh, 0 })
+  trace.enter()
+  local rl = line_of(trace.buf, 'Read src/app.js — look first')
+  ok(rl and rl > sh and vim.fn.foldclosed(rl) == -1, '<CR> on the subagent header shows what it did')
+  ok(not lines_of(trace.buf)[rl]:find('●', 1, true) and not table.concat(lines_of(trace.buf), '\n'):find('Turn 1  Review', 1, true),
+    'nested events: no inbox glyph, no prompt repeated')
+  ok(line_of(trace.buf, 'Agent: nested one ⋯ running') ~= nil and line_of(trace.buf, '◆ all good') ~= nil,
+    'a running call inside the subagent, and its report')
+  vim.api.nvim_win_set_cursor(0, { rl, 0 })
+  ok(trace.agent_at() == 'ag1xxxxxxx' and trace.node_at().nested, 'a nested line belongs to its subagent')
+  trace.next_unseen(1)
+  local nn = trace.node_at()
+  ok(not (nn and nn.nested), ']u never stops on a nested line')
+
+  vim.api.nvim_win_set_cursor(0, { a1, 0 })
+  trace.goto_agent()
+  local sb = vim.api.nvim_get_current_buf()
+  ok(vim.api.nvim_buf_get_name(sb) == 'aic://agent/ag1xxxxxxx' and trace.is_view(sb) and view.name_of(sb) == 'trace',
+    'gs on the Agent call shows the subagent in its own view')
+  ok((lines_of(sb)[1] or ''):find('⇡ reviewer ag1xxxx · running · Agent: review it', 1, true) == 1
+    and line_of(sb, 'Turn 1  Review the diff.') and line_of(sb, 'Read src/app.js'),
+    'subagent view: what started it, its turn, its events: ' .. vim.inspect(lines_of(sb)))
+  ok(vim.fn.line('.') == vim.fn.line('$'), 'subagent view starts at its tail')
+  ok(require('aic.ask').context().where == 'trace', 'ask context in a subagent view is the trace')
+  f = io.open(dir .. '/agents/ag1xxxxxxx.jsonl', 'ab')
+  f:write(jl({ id = 'sb', seq = 4, ts = now + 105, kind = 'tool', turn = 1, tool = 'Bash', title = 'Bash: run tests',
+    why = '', hunks = {} }))
+  f:close()
+  agents['t-A1'].events, agents['t-A1'].calls = 4, 2
+  write(dir .. '/agents.json', vim.json.encode(agents))
+  ok(wait(3000, function()
+    return line_of(sb, 'Bash: run tests') ~= nil and line_of(trace.buf, '· 2 calls ·') ~= nil
+  end), 'subagent view and header follow its trace live')
+  vim.api.nvim_win_set_cursor(0, { 1, 0 })
+  trace.goto_agent()
+  ok(vim.api.nvim_get_current_buf() == trace.buf, 'gs on the first line goes back to what started it')
+  a1, sh = line_of(trace.buf, 'Agent: review it'), line_of(trace.buf, '↳ reviewer')
+  vim.api.nvim_win_set_cursor(0, { a1, 0 })
+  trace.enter()
+  ok(vim.fn.foldclosed(a1) == a1, '<CR> hides the Agent call (its subagent open inside)')
+  agents['t-A1'].state = 'done'
+  write(dir .. '/agents.json', vim.json.encode(agents))
+  ok(wait(3000, function()
+    return line_of(trace.buf, '· 2 calls · done') ~= nil
+  end) and vim.fn.foldclosed(a1) == a1, 'a hidden Agent call stays hidden when its open subagent re-renders')
+  trace.enter()
+  ok(vim.fn.foldclosed(a1) == -1 and vim.fn.foldclosed(sh) == -1, 'shown again: its subagent still open')
+  -- the cursor on the ↳ line stays there while the subagent works (it shares its Agent call's event)
+  vim.api.nvim_win_set_cursor(0, { sh, 0 })
+  f = io.open(dir .. '/agents/ag1xxxxxxx.jsonl', 'ab')
+  f:write(jl({ id = 'sc', seq = 5, ts = now + 106, kind = 'tool', turn = 1, tool = 'Bash', title = 'Bash: lint', why = '', hunks = {} }))
+  f:close()
+  agents['t-A1'].events, agents['t-A1'].calls = 5, 3
+  write(dir .. '/agents.json', vim.json.encode(agents))
+  ok(wait(3000, function()
+    return line_of(trace.buf, '· 3 calls ·') ~= nil
+  end) and vim.api.nvim_get_current_line():find('↳ reviewer', 1, true) ~= nil, 'cursor stays on the ↳ line across re-renders')
+  ok(line_of(sb, 'Bash: lint') == nil, 'a hidden subagent view is not re-rendered')
+  trace.goto_agent()
+  ok(vim.api.nvim_get_current_buf() == sb and line_of(sb, 'Bash: lint') ~= nil, '...until it is shown again')
+  ok((function()
+    vim.api.nvim_win_set_cursor(0, { vim.fn.line('$'), 0 })
+    trace.next_unseen(-1)
+    return vim.fn.line('.') ~= 1
+  end)() and trace.node_at(1).nested, 'the subagent view\'s first line is not an inbox item')
+  vim.cmd([[execute "normal! \<C-o>"]])
+  ok(vim.api.nvim_get_current_buf() == trace.buf, '<C-o> from the subagent view comes back to the history')
+end
+
+---------------------------------------------------------------------------
 -- `aic watch` per project root; all stopped on exit
 do
   local backend = require('aic.backend')

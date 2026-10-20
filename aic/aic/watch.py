@@ -6,6 +6,7 @@ persists its read offsets and parser state in watch.json and resumes from
 them. It rebuilds from scratch only when that state is missing or does not
 match the trace (the rebuild is written as a new file so editors reload).
 """
+import glob
 import json
 import os
 import signal
@@ -22,6 +23,9 @@ SKIP_DIRS = {".git", ".aic", ".omc", ".claude", "node_modules", "__pycache__", "
              "dist", "build", ".next", ".cache", "target", "coverage", ".pytest_cache", "out"}
 MAX_FILE = 512 * 1024
 MAX_FILES = 5000
+AGENT_TOOLS = ("Agent", "Task")
+AGENT_QUIET = 120  # s without a transcript write after which an unfinished subagent counts as stopped
+AGENT_STUCK = 1800  # ...even with a call in flight (its process was killed mid-call)
 
 
 def log(msg):
@@ -213,7 +217,8 @@ class Watcher:
     def save_state(self):
         paths.write_json(self._state_path(), {
             "session_id": self.sid, "seq": self.seq, "offsets": self.offsets,
-            "parser": self.parser.to_state()})
+            "parser": self.parser.to_state(),
+            "agents": {aid: dict(a, parser=a["parser"].to_state()) for aid, a in self.agents.items()}})
 
     def resume(self):
         st = paths.read_json(self._state_path())
@@ -225,6 +230,19 @@ class Watcher:
         self.seq = last
         self.offsets = st["offsets"]
         self.parser.from_state(st.get("parser") or {})
+        for aid, a in (st.get("agents") or {}).items():
+            if not isinstance(a, dict):
+                continue
+            sub = os.path.join(self.dir, "agents", aid + ".jsonl")
+            tr = paths.read_jsonl(sub)
+            if (tr[-1].get("seq", 0) if tr else 0) != a.get("seq"):  # (a crash between its append and save_state)
+                if os.path.exists(sub):
+                    os.unlink(sub)
+                self.offsets.pop("agent:" + aid, None)
+                continue  # read again from the start
+            p = Parser(self.root, sidechain=True)
+            p.from_state(a.get("parser") or {})
+            self.agents[aid] = dict(a, parser=p)
         t = paths.read_json(os.path.join(self.dir, "touched.json"), {})
         self.touched = t if isinstance(t, dict) else {}
         return True
@@ -237,6 +255,8 @@ class Watcher:
         self.offsets = {}
         self.seq = 0
         self.touched = {}
+        self.agents = {}  # subagent id -> {seq, calls, tool, type, description, parser}
+        self.index = None  # agents.json as last written
         self.trace_path = os.path.join(self.dir, "trace.jsonl")
         self.tpath = paths.transcript_path(self.root, sid)
         self.snap = None
@@ -251,6 +271,8 @@ class Watcher:
     def rebuild(self):
         """Everything that already exists, merged by time, written as a new
         file (new inode) so editors know to reload instead of appending."""
+        for p in glob.glob(os.path.join(self.dir, "agents", "*.jsonl")):
+            os.unlink(p)  # re-read from the start below (and their readers see the files go)
         evs = self.read_transcript() + self.read_side("human.jsonl") + self.read_side("control.jsonl")
         evs.sort(key=lambda e: e["ts"])
         turn = 0
@@ -327,6 +349,96 @@ class Watcher:
             evs.append(ev)
         return evs
 
+    # -- subagents ------------------------------------------------------------
+    def agents_dir(self):
+        """Claude Code keeps a subagent's transcript next to its parent's:
+        <transcript without .jsonl>/subagents/agent-<id>.jsonl (+ .meta.json)."""
+        return os.path.join(os.path.splitext(self.tpath)[0], "subagents") if self.tpath else None
+
+    def read_agents(self):
+        """Each subagent's transcript -> agents/<id>.jsonl (trace events, own
+        seq); agents.json indexes them by the trace id of the Agent call that
+        started them. Returns True when anything was read."""
+        d = self.agents_dir()
+        read = False
+        for p in sorted(glob.glob(os.path.join(d, "agent-*.jsonl"))) if d else []:
+            aid = os.path.basename(p)[len("agent-"):-len(".jsonl")]
+            a = self.agents.get(aid)
+            if a is None:
+                a = self.agents[aid] = {"seq": 0, "calls": 0, "tool": None, "type": None,
+                                        "description": None, "parser": Parser(self.root, sidechain=True)}
+            # the meta file can come after the transcript, and gets "finished" when the subagent is done
+            mp = p[:-len(".jsonl")] + ".meta.json"
+            try:
+                mt = os.path.getmtime(mp)
+            except OSError:
+                mt = None
+            if mt is not None and mt != a.get("meta_mtime"):
+                meta = paths.read_json(mp)
+                if isinstance(meta, dict) and isinstance(meta.get("toolUseId"), str):
+                    a.update(tool=meta["toolUseId"], type=meta.get("agentType"), description=meta.get("description"),
+                             finished=bool(meta.get("finished")), meta_mtime=mt)
+                    read = True
+            evs = []
+            for rec in self._new_records(p, "agent:" + aid):
+                read = True
+                try:
+                    got = a["parser"].feed(rec)
+                except Exception as e:
+                    log("skipped a subagent record: %r" % e)
+                    continue
+                for ev in got:
+                    ev["ts"] = to_ts(ev.get("ts"))
+                    a["seq"] += 1
+                    ev["seq"] = a["seq"]
+                    if ev["kind"] == "tool":
+                        a["calls"] += 1
+                        f = ev.get("file")
+                        if self.snap and ev.get("hunks") and isinstance(f, str) and not os.path.isabs(f):
+                            self.snap.refresh(f)  # (not the worker's next Bash call's edit)
+                    evs.append(ev)
+            if evs:
+                os.makedirs(os.path.join(self.dir, "agents"), exist_ok=True)
+                with open(os.path.join(self.dir, "agents", aid + ".jsonl"), "a", encoding="utf-8") as f:
+                    for ev in evs:
+                        f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+        return read
+
+    def write_index(self):
+        """agents.json: {"t-<tool_use_id>": {agent, type, description, events,
+        calls, state, running?, in?}}. `running` is the event of an Agent call
+        still in flight (a trace has it only once it returns); `in` the subagent
+        that made that call (absent: the worker itself). Written after the
+        trace, so a returned call is never in neither."""
+        d = self.agents_dir()
+        if not d:
+            return
+        parsers = [(None, self.parser)] + [(aid, a["parser"]) for aid, a in self.agents.items()]
+        busy = {tid for _, p in parsers for tid in p.tools}
+        index = {}
+        for aid, p in parsers:
+            for tid, t in p.tools.items():
+                if t.get("name") in AGENT_TOOLS:
+                    ev = p.running_tool(tid)
+                    ev["ts"] = to_ts(ev["ts"]) if ev.get("ts") else 0.0  # (never "now": the index would change every tick)
+                    index["t-" + tid] = dict({"running": ev}, **({"in": aid} if aid else {}))
+        for aid, a in self.agents.items():
+            if not a["tool"]:
+                continue
+            try:
+                quiet = paths.now() - os.path.getmtime(os.path.join(d, "agent-%s.jsonl" % aid))
+            except OSError:
+                quiet = AGENT_QUIET
+            sp = a["parser"]
+            st = "done" if a.get("finished") or (sp.stopped and not sp.tools) else \
+                "running" if a["tool"] in busy or quiet < AGENT_QUIET or (sp.tools and quiet < AGENT_STUCK) \
+                else "stopped"
+            index.setdefault("t-" + a["tool"], {}).update(
+                agent=aid, type=a["type"], description=a["description"], events=a["seq"], calls=a["calls"], state=st)
+        if index != self.index:
+            paths.write_json(os.path.join(self.dir, "agents.json"), index)
+            self.index = index
+
     # -- Bash attribution ----------------------------------------------------
     def attribute_bash(self, evs):
         """After a worker Bash call, changes found in the tree become their own
@@ -385,11 +497,13 @@ class Watcher:
         # at the same moment isn't blamed for the human's edit
         before = dict(self.offsets)
         evs = self.read_side("human.jsonl") + self.read_transcript() + self.read_side("control.jsonl")
+        agents = self.read_agents()
         if evs:
             self.emit(self.attribute_bash(evs))
-        elif self.offsets != before:
+        elif self.offsets != before or agents:
             self.save_state()
-        if self.offsets != before and self.parser.last_usage:
+        self.write_index()
+        if self.offsets.get("transcript") != before.get("transcript") and self.parser.last_usage:
             try:
                 usage.record_worker(self.dir, self.parser.model, self.parser.last_usage, self.parser.turn)
             except Exception as e:  # display only
