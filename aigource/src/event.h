@@ -31,7 +31,13 @@ typedef enum {
                    * last one counts), or a subagent's task (text = its description, who = its
                    * type and session; ts 0, emitted when its transcript is found) */
     EV_BASH_END,  /* the Bash call tool_id answered: ts = then, t0 = its start, err = its result
-                   * is marked is_error; text = the whole command (BASH has its first line) */
+                   * is marked is_error; text = the whole command (BASH has its first line);
+                   * path = where it ran (the record's cwd) when that isn't the repo root,
+                   * repo-relative or absolute. failed_out: not is_error, but a test or build
+                   * run of the repo had its status piped away (`make | tail`, pipefail off)
+                   * and its output shows a failure. Either fails it. not_run: the command never
+                   * ran (rejected by the user, blocked by a hook or Claude Code, interrupted
+                   * before any output): it neither passes nor fails a verification. */
     EV_TURN_COPY, /* a prompt a resumed session's file copied from an earlier one: as TURN.
                    * Not drawn (the original was), but it starts a turn of this session too. */
     EV_KIND_COUNT
@@ -65,9 +71,10 @@ typedef struct {
         struct { int out, in, cached; } tok; /* USAGE: output, new input (incl. cache writes), cache reads */
         struct { int first, last; } range;   /* READ: lines first..last; first 0 = the whole file (a
                                               * command's read, or unrecorded), last 0 = to the end;
+                                              * first 0 and last < 0: the last -last lines (tail);
                                               * first -1 = not text (an image, a PDF): no lines */
         int prompt;                          /* TURN, TURN_COPY: PROMPT_* */
-        int err;                             /* BASH_END */
+        struct { int err, failed_out, not_run; }; /* BASH_END */
         struct { char *type, *session; } who; /* TITLE of a subagent: its agentType (after the last
                                                * ':') and the actor id of the session it works for */
     };

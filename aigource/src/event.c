@@ -53,6 +53,8 @@ void ev_print_json(FILE *f, const Event *e) {
         fprintf(f, ",\"prompt\":\"%s\"", e->prompt >= 0 && e->prompt < 4 ? prompts[e->prompt] : "?");
     }
     if (e->kind == EV_BASH_END) fprintf(f, ",\"err\":%s", e->err ? "true" : "false");
+    if (e->kind == EV_BASH_END && e->failed_out) fputs(",\"failed_out\":true", f);
+    if (e->kind == EV_BASH_END && e->not_run) fputs(",\"ran\":false", f);
     if (e->kind == EV_TITLE && e->who.type) {
         fputs(",\"type\":", f);
         json_str(f, e->who.type);

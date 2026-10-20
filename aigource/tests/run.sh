@@ -40,15 +40,51 @@ check discover env CLAUDE_CONFIG_DIR="$cfg" $BIN --dump --all --root /proj
 repo="$cfg/repo"
 mkdir -p "$repo/sub"
 echo a > "$repo/a.txt"; echo b > "$repo/sub/b.txt"; echo c > "$repo/c.txt"
-bash_call() { # id, command, is_error, result
-    printf '{"type":"assistant","timestamp":"2026-10-14T10:00:0%sZ","cwd":"%s","message":{"content":[{"type":"tool_use","id":"%s","name":"Bash","input":{"command":"%s"}}]}}\n' "$1" "$repo" "$1" "$2"
-    printf '{"type":"user","timestamp":"2026-10-14T10:00:0%sZ","cwd":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"%s","is_error":%s,"content":"%s"}]}}\n' "$1" "$repo" "$1" "$3" "$4"
+bash_call() { # id (two digits: its second), command, is_error, result
+    printf '{"type":"assistant","timestamp":"2026-10-14T10:00:%sZ","cwd":"%s","message":{"content":[{"type":"tool_use","id":"%s","name":"Bash","input":{"command":"%s"}}]}}\n' "$1" "$repo" "$1" "$2"
+    printf '{"type":"user","timestamp":"2026-10-14T10:00:%sZ","cwd":"%s","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"%s","is_error":%s,"content":"%s"}]}}\n' "$1" "$repo" "$1" "$3" "$4"
 }
 {
-    bash_call 1 'cat a.txt | head -5; cd sub && sed -n 1p b.txt; cat ../missing.txt 2>/dev/null' false ok
-    bash_call 2 'cat c.txt && false' true 'Exit code 1'
+    bash_call 01 'cat a.txt | head -5; cd sub && sed -n 1p b.txt; cat ../missing.txt 2>/dev/null' false ok
+    bash_call 02 'cat c.txt && false' true 'Exit code 1'
+    # Line ranges: one read per file and range, a repeated one once; tail counts from the end.
+    bash_call 03 "sed -n '1,2p;4p' a.txt c.txt; head -3 a.txt; tail -n 2 c.txt; sed -n 1,2p a.txt; tail -n +2 a.txt" false ok
 } > "$cfg/cmdread.jsonl"
 check cmdread sh -c "$BIN --dump --root '$repo' '$cfg/cmdread.jsonl' | sed 's|$repo|REPO|g'"
+
+# A test run piped into another command has the pipe's exit status: failed_out
+# when its output shows a failure. Passing and failing piped runs (the output in
+# the result block, or in toolUseResult's stdout), a trusted status (pipefail),
+# FAIL in the output of a piped command that isn't the test run, a run in another
+# tree (not checked), LeakSanitizer's exit-time report, "make | tail" quoted in a
+# python string (no run), "pipefail" inside a here-document (not set), a
+# traceback from <stdin> (an inline script), Neovim's E5113, "1 failure(s)";
+# calls that never ran (ran:false).
+bash_out() { # id, command, stdout: the output in toolUseResult as well
+    printf '{"type":"assistant","timestamp":"2026-10-14T10:00:%sZ","cwd":"%s","message":{"content":[{"type":"tool_use","id":"%s","name":"Bash","input":{"command":"%s"}}]}}\n' "$1" "$repo" "$1" "$2"
+    printf '{"type":"user","timestamp":"2026-10-14T10:00:%sZ","cwd":"%s","toolUseResult":{"stdout":"%s","stderr":"","interrupted":false},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"%s","is_error":false,"content":"see stdout"}]}}\n' "$1" "$repo" "$3" "$1"
+}
+{
+    bash_call 01 'make test 2>&1 | tail -3' false 'ok   parse\n== 5 passed, 0 failed in 0.1s ==\nno errors; error_count=0'
+    bash_call 02 'make 2>&1 | tail -5' false 'src/a.c:3:1: error: expected ;\nmake: *** [Makefile:9: build/a.o] Error 1'
+    bash_out 03 'uv run pytest -q | tail -2' '..F.F..\n2 failed, 5 passed in 0.12s'
+    bash_call 04 'set -o pipefail; make 2>&1 | tail -3' false 'FAIL parse'
+    bash_call 05 'make && grep -r FAIL logs | head' false 'logs/x.log: FAIL y\nFAIL z'
+    bash_out 06 'make check | grep -v ^ok' 'make: *** [Makefile:3: check] Error 2'
+    bash_call 07 'cd /tmp/wt && make test 2>&1 | tail -3' false 'FAIL parse'
+    bash_out 08 'make asan 2>&1 | tail -3' '==9==ERROR: LeakSanitizer: detected memory leaks\nSUMMARY: AddressSanitizer: 64 byte(s) leaked in 1 allocation(s).'
+    bash_call 09 "python3 -c \\\"print('(cd x && make) | tail')\\\" | tail -1" false 'FAIL x'
+    bash_call 10 'cat <<EOF > s.sh\nset -o pipefail\nEOF\nmake test 2>&1 | tail -3' false 'FAIL parse'
+    bash_out 11 'make test 2>&1 | tail -4' 'Traceback (most recent call last):\n  File \"<stdin>\", line 4, in <module>\nAssertionError'
+    bash_out 12 'nvim --headless -u NONE -l tests/smoke.lua 2>&1 | tail -2' 'E5113: Lua chunk: tests/smoke.lua:9: boom'
+    bash_out 13 'nvim --headless -u NONE -l tests/smoke.lua 2>&1 | tail -2' 'ok   - opens\n\n1 failure(s)'
+    # Never ran (ran:false, no verdict): rejected by the user, blocked by a hook, interrupted before any output.
+    bash_call 14 'make test' true "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."
+    bash_call 15 'make test' true 'PreToolUse:Bash hook error: blocked'
+    printf '{"type":"assistant","timestamp":"2026-10-14T10:00:16Z","cwd":"%s","message":{"content":[{"type":"tool_use","id":"16","name":"Bash","input":{"command":"make test"}}]}}\n' "$repo"
+    printf '{"type":"user","timestamp":"2026-10-14T10:00:16Z","cwd":"%s","toolUseResult":{"stdout":"","stderr":"","interrupted":true},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"16","is_error":false,"content":""}]}}\n' "$repo"
+} > "$cfg/verify.jsonl"
+check verify sh -c "$BIN --dump --root '$repo' '$cfg/verify.jsonl' | grep bash_end"
 
 # Structure analysis on a throwaway repo: its first state committed (git
 # baselines), today's files on disk; a session, its subagent and a resumed copy.

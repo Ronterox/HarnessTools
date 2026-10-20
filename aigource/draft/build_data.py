@@ -3,7 +3,7 @@
 # as it was at that moment), with its turn (the prompt), the agent's comment before it, which lines of today's
 # code it wrote (AI blame), and flags: edited without reading it, untested or failing afterwards, the next
 # prompt reading like a correction, the turn interrupted. Plus complexity per def.
-import datetime, difflib, glob, json, os, re, subprocess, sys
+import datetime, difflib, glob, json, os, re, shlex, subprocess, sys
 from collections import Counter, defaultdict
 
 root = os.path.abspath(sys.argv[1])
@@ -197,9 +197,103 @@ def shown(path, cwd=None):
     return "~" + p[len(home):] if p.startswith(home + "/") else p
 
 
+def sed_ranges(script, out):
+    """Adds sed -n's line prints in script to out: every command is `A,Bp`, `Ap` or `A,$p` (; or newlines
+    between); False for anything else (the whole file is read)."""
+    for c in re.split(r"[;\n]", script):
+        c = c.strip(" \t")
+        if not c:
+            continue
+        m = re.fullmatch(r"([0-9]+)(?:,([0-9]+|\$))?[ \t]*p", c)
+        if not m or int(m[1]) < 1 or len(out) == 16:
+            return False
+        a = int(m[1])
+        out.append((a, a if m[2] is None else 10 ** 9 if m[2] == "$" else max(int(m[2]), a)))  # 5,2p prints line 5
+    return True
+
+
+def sed_lines(words):
+    """The lines sed reads of each file: with -n and a script of line prints only, those ranges; else all."""
+    quiet = script = ddash = False
+    ok, out, k = True, [], 0
+    while k < len(words):
+        s = words[k]
+        if not ddash and s[:1] == "-" and len(s) > 1:
+            if s == "--":
+                ddash = True
+            elif s in ("--quiet", "--silent"):
+                quiet = True
+            elif s == "--expression":
+                if k + 1 < len(words):
+                    script, ok = True, ok and sed_ranges(words[k + 1], out)
+                k += 1
+            elif s.startswith("--expression="):
+                script, ok = True, ok and sed_ranges(s[13:], out)
+            elif s == "--file" or s.startswith("--file="):
+                script, ok = True, False
+                k += s == "--file"
+            elif s[1] != "-":
+                for j, ch in enumerate(s[1:], 1):
+                    last = j == len(s) - 1
+                    if ch == "i":
+                        break
+                    if ch in "ef":
+                        if ch == "f":
+                            script, ok = True, False
+                        elif not last:
+                            script, ok = True, ok and sed_ranges(s[j + 1:], out)
+                        elif k + 1 < len(words):
+                            script, ok = True, ok and sed_ranges(words[k + 1], out)
+                        k += last
+                        break
+                    if ch == "n":
+                        quiet = True
+                    if ch == "l":
+                        k += last  # takes a value
+                        break
+        elif not script:
+            script, ok = True, ok and sed_ranges(s, out)
+        k += 1
+    return out if quiet and ok and out else [(1, 10 ** 9)]
+
+
+def head_tail_lines(words, tail):
+    """head: lines 1..N; tail: the last N (0, -N), or from line N with +N. N from -n N, -nN, -N, --lines[=]N,
+    the last one given; 10 without one. Bytes (-c), head -n -N or a count that isn't a plain number: all of it.
+    N = 0 reads nothing."""
+    v, whole, k = "10", False, 0
+    while k < len(words) and words[k] != "--":
+        s, val = words[k], None
+        if s[:1] == "-" and len(s) > 1:
+            if s in ("-n", "--lines"):
+                val = words[k + 1] if k + 1 < len(words) else None
+                k += 1
+            elif s.startswith("--lines="):
+                val = s[8:]
+            elif s[1] == "n":
+                val = s[2:]
+            elif s[1] in "0123456789":
+                val = s[1:]
+            elif s[1] == "c" or s.startswith("--bytes"):
+                whole = True
+        if val is not None:
+            v = val
+        k += 1
+    m = re.fullmatch(r"([+-]?)([0-9]+)", v)
+    if not m or whole or m[1] == "-" and not tail:
+        return [(1, 10 ** 9)]
+    n = int(m[2])
+    if not n:
+        return []
+    if tail:
+        return [(n, 10 ** 9) if m[1] == "+" else (0, -n)]
+    return [(1, n)]
+
+
 def cmd_reads(cmd, cwd):
-    """Files (and line ranges) a command reads: cat, head, less, bat, nl, sed -n 'a,bp'.
-    (shown path, repo-relative path when it's one we map or None, first line, last line)"""
+    """Files (and line ranges) a command reads: cat, head, tail, less, bat, nl, sed (see sed_lines, head_tail_lines).
+    (shown path, repo-relative path when it's one we map or None, first line, last line); tail's last N lines
+    are (0, -N), resolved against the file's text when the read is replayed."""
     out = []
     for seg in re.split(r"&&|\|\||;|\||\n", cmd):
         seg = seg.strip()
@@ -207,29 +301,28 @@ def cmd_reads(cmd, cwd):
         if m:
             cwd = os.path.normpath(os.path.join(cwd, os.path.expanduser(m.group(1).strip("'\""))))
             continue
-        m = re.match(r"(cat|head|less|bat|batcat|nl|sed)\b(.*)", seg)
+        m = re.match(r"(cat|head|tail|less|bat|batcat|nl|sed)\b(.*)", seg)
         if not m:
             continue
         prog, rest = m.groups()
         if prog == "sed" and re.search(r"(^|\s)-i", rest):
             continue
+        try:
+            words = shlex.split(rest)
+        except ValueError:
+            words = rest.split()
+        rngs = sed_lines(words) if prog == "sed" else head_tail_lines(words, prog == "tail") \
+            if prog in ("head", "tail") else [(1, 10 ** 9)]
         for tok in re.findall(r"(?<![\w-])[\w./~-]*[\w~]/?[\w.-]*\.[A-Za-z]\w*\b", rest):
             tok = os.path.expanduser(tok)
             if not os.path.isfile(tok if os.path.isabs(tok) else os.path.join(cwd, tok)):
                 continue  # a sed pattern or a variable, not a file (or one gone since)
             rel, where = rel_of(tok, cwd), shown(tok, cwd)
-            if prog == "sed":
-                rngs = [(int(a), int(b)) for a, b in re.findall(r"(\d+),(\d+)p", rest)]
-                out += [(where, rel, a, b) for a, b in rngs] or [(where, rel, 1, 10 ** 9)]
-            elif prog == "head":
-                n = re.search(r"-n\s*(\d+)|-(\d+)\b", rest)
-                out.append((where, rel, 1, int(n.group(1) or n.group(2)) if n else 10))
-            else:
-                out.append((where, rel, 1, 10 ** 9))
+            out += [(where, rel, a, b) for a, b in rngs]
     return out
 
 
-# A command segment (see `segments`) that starts with:
+# A command segment (see `cmd_runs`) that starts with:
 VERIFY = re.compile(r"(?:(?:ba)?sh\s+|python3?\s+|uv\s+run\s+)?"
                     r"(?:make|pytest|python3? -m (?:pytest|unittest)|\S*tests?/\S+|\S*/test_\w+\S*|ctest|cargo (?:test|build)|"
                     r"npm (?:test|run)|cc|gcc|clang|nvim --headless)(?:\s|$)")
@@ -238,17 +331,381 @@ FIX = re.compile(r"\b(?:bugs?|broken|doesn'?t work|does not work|not working|did
 SEARCH = re.compile(r"(?:grep|rg|ag|fd|find|git\s+grep)(?:\s|$)")
 
 
-def segments(cmd):
-    """The commands in a command line, each without the wrappers that only set how it runs."""
-    for seg in re.split(r"&&|\|\||;|\||\n", cmd):
-        seg = re.sub(r"^\s*\(?\s*(?:env\s+|\w+=\S*\s+|sudo\s+|time\s+|timeout\s+(?:-\S+\s+(?:\S+\s+)?)*\S+\s+)*", "", seg)
-        seg = re.sub(r"[\s)]+$", "", seg)  # the end of a subshell
-        if seg:
-            yield seg
+# ---- command segments: aigource's shell lexer (cmdguess.c: read_word, skip_parens, lex, end_cmd, cmd_cd), ported
+# so that both split a command the same way: quotes, here-documents, $(...) and comments understood, redirects
+# dropped, and where cd went before each simple command.
+DELIM = " \t\n;&|()<>\0"
 
 
-def runs(pattern, cmd):
-    return any(pattern.match(seg) for seg in segments(cmd))
+def line_end(s, i):
+    while s[i] != "\0" and s[i] != "\n":
+        i += 1
+    return i
+
+
+def skip_body(s, i, delim, tabs):
+    while s[i] != "\0":
+        b = i + 1 if s[i] == "\n" else i
+        e = line_end(s, b)
+        c = b
+        if tabs:
+            while c < e and s[c] == "\t":
+                c += 1
+        if s[c:e] == delim:
+            return e
+        i = e
+        if s[i] == "\0":
+            break
+    return i
+
+
+def skip_parens(s, i):
+    """Past a balanced (...) at s[i] == "(" (quotes and here-documents respected)."""
+    depth, delim, tabs, arith = 0, None, False, s[i + 1] == "("
+    while s[i] != "\0":
+        if s[i] == "\n" and delim is not None:
+            i = skip_body(s, i, delim, tabs)
+            delim = None
+            if s[i] == "\0":
+                break
+            i += 1
+            continue
+        if s[i] == "<" and s[i + 1] == "<" and s[i + 2] != "<" and delim is None and not arith:
+            k = i + 2
+            tabs = s[k] == "-"
+            k += tabs
+            while s[k] in " \t":
+                k += 1
+            delim, _, i = read_word(s, k)
+            continue
+        if s[i] == "(" and s[i + 1] == "(" and depth:
+            i = skip_parens(s, i)
+            continue
+        if s[i] == "\\" and s[i + 1] != "\0":
+            i += 1
+        elif s[i] == "'":
+            while s[i + 1] != "\0" and s[i + 1] != "'":
+                i += 1
+            if s[i + 1] != "\0":
+                i += 1
+        elif s[i] == '"':
+            while s[i + 1] != "\0" and s[i + 1] != '"':
+                if s[i + 1] == "\\" and s[i + 2] != "\0":
+                    i += 1
+                i += 1
+            if s[i + 1] != "\0":
+                i += 1
+        elif s[i] == "(":
+            depth += 1
+        elif s[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return i
+
+
+def read_word(s, i):
+    """One word from s[i]: quotes removed, escapes resolved. (word, built at run time, index after it)"""
+    b, dyn = [], False
+    while s[i] not in DELIM:
+        c = s[i]
+        if c == "'":
+            i += 1
+            while s[i] != "\0" and s[i] != "'":
+                b.append(s[i])
+                i += 1
+            if s[i] != "\0":
+                i += 1
+        elif c == '"':
+            i += 1
+            while s[i] != "\0" and s[i] != '"':
+                if s[i] == "$" and s[i + 1] == "(":
+                    dyn = True
+                    i = skip_parens(s, i + 1)
+                    continue
+                if s[i] == "\\" and s[i + 1] != "\0" and s[i + 1] in "$`\"\\\n":
+                    i += 1
+                elif s[i] in "$`":
+                    dyn = True
+                b.append(s[i])
+                i += 1
+            if s[i] != "\0":
+                i += 1
+        elif c == "\\":
+            if s[i + 1] == "\n":
+                i += 2
+                continue
+            if s[i + 1] != "\0":
+                i += 1
+                b.append(s[i])
+            i += 1
+        elif c == "$" and s[i + 1] == "(":
+            dyn = True
+            i = skip_parens(s, i + 1)
+        elif c == "`":
+            dyn = True
+            i += 1
+            while s[i] != "\0" and s[i] != "`":
+                if s[i] == "\\" and s[i + 1] != "\0":
+                    i += 1
+                i += 1
+            if s[i] != "\0":
+                i += 1
+        else:
+            dyn |= c in "$*?[{"
+            b.append(c)
+            i += 1
+    return "".join(b), dyn, i
+
+
+SKIP = ["if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time", "sudo", "command", "nohup", "exec", "env"]
+
+
+def lex_segments(cmd):
+    """(text, piped, dir, lost) per simple command: its words joined by spaces; piped: a single | (or its
+    subshell's) sends its output on; dir: where cd went before it (as written, None = where the command began);
+    lost: a cd we can't follow."""
+    s = cmd.split("\0")[0] + "\0" * 8
+    st = {"dir": None, "lost": False, "words": [], "test": False, "piped": False}
+    sub, push, hd, out = [], [], [], []
+
+    def blank(i):
+        while s[i] in " \t":
+            i += 1
+        return i
+
+    def redir(i):
+        i = blank(i)
+        if s[i] == "(":
+            return skip_parens(s, i)
+        return read_word(s, i)[2]
+
+    def cd(args):
+        k = 0
+        while k < len(args) and args[k][0] in ("-P", "-L", "--"):
+            k += 1
+        if k >= len(args) or args[k][1] or args[k][0] == "-" or (args[k][0][:1] == "~" and args[k][0][1:2] not in ("", "/")):
+            st["lost"] = True
+            return
+        d = args[k][0]
+        if d[:1] in ("/", "~") or st["dir"] is None:
+            if st["lost"] and d[:1] not in ("/", "~"):
+                return
+            st["dir"], st["lost"] = d, False
+        else:
+            st["dir"] = st["dir"] + "/" + d
+
+    def end():
+        a = st["words"]
+        if a:
+            out.append((" ".join(w for w, _ in a), st["piped"], st["dir"], st["lost"]))
+        st["piped"] = False
+        k, again = 0, True
+        while again and k < len(a):
+            again = False
+            if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", a[k][0], re.S):
+                k, again = k + 1, True
+                continue
+            if a[k][0] in SKIP:
+                x = SKIP.index(a[k][0])
+                k += 1
+                while k < len(a) and x >= 11 and a[k][0][:1] == "-":
+                    k += 1
+                again = True
+        if k < len(a) and not a[k][1]:
+            w = a[k][0]
+            n = len(w)
+            while n > 1 and w[n - 1] == "/":
+                n -= 1
+            name = w[w.rfind("/", 0, n) + 1:n][:63]
+            if name == "cd":
+                cd(a[k + 1:])
+            elif name == "pushd" and len(push) < 8:
+                push.append((st["dir"], st["lost"]))
+                cd(a[k + 1:])
+            elif name == "popd":
+                st["dir"], st["lost"] = push.pop() if push else (None, True)
+        st["words"], st["test"] = [], False
+
+    i = 0
+    while s[i] != "\0":
+        c = s[i]
+        if c in " \t":
+            i += 1
+            continue
+        if c == "\\" and s[i + 1] == "\n":
+            i += 2
+            continue
+        if c == "\n":
+            end()
+            i += 1
+            for delim, tabs in hd:  # the bodies of pending here-documents
+                while s[i] != "\0":
+                    e = line_end(s, i)
+                    b = i
+                    if tabs:
+                        while b < e and s[b] == "\t":
+                            b += 1
+                    done = s[b:e] == delim
+                    i = e + 1 if s[e] != "\0" else e
+                    if done:
+                        break
+            hd = []
+            continue
+        if c == "#":
+            i = line_end(s, i)
+            continue
+        if c == "&" and s[i + 1] == ">":
+            i = redir(i + 2 + (s[i + 2] == ">"))
+            continue
+        if c == "(" and s[i + 1] == "(":
+            i = skip_parens(s, i)
+            continue
+        if c in "()":
+            if c == ")":  # (make) 2>&1 | tail: the subshell's last command is piped
+                j = blank(i + 1)
+                if s[j:j + 4] == "2>&1":
+                    j = blank(j + 4)
+                st["piped"] = s[j] == "|" and s[j + 1] != "|"
+            end()
+            if c == "(" and len(sub) < 8:
+                sub.append((st["dir"], st["lost"]))
+            elif c == ")" and sub:
+                st["dir"], st["lost"] = sub.pop()
+            i += 1
+            continue
+        if c in ";&|":
+            st["piped"] = c == "|" and s[i + 1] != "|" and (i == 0 or s[i - 1] != "|")
+            end()
+            i += 1
+            continue
+        if st["test"] and c in "<>":
+            st["words"].append((c, False))
+            i += 1
+            continue
+        j = i
+        while s[j] in "0123456789":
+            j += 1
+        if s[j] == "<":
+            if s[j + 1] == "<" and s[j + 2] == "<":
+                i = redir(j + 3)
+                continue
+            if s[j + 1] == "<":
+                k = j + 2
+                tabs = s[k] == "-"
+                d, _, i = read_word(s, blank(k + tabs))
+                if len(hd) < 8:
+                    hd.append((d, tabs))
+                continue
+            i = skip_parens(s, j + 1) if s[j + 1] == "(" else redir(j + 2) if s[j + 1] == "&" else redir(j + 1)
+            continue
+        if s[j] == ">":
+            k = j + 1
+            if s[k] in ">|":
+                k += 1
+            i = redir(k + 1 if s[k] == "&" else k)
+            continue
+        w, dyn, i = read_word(s, i)
+        if w == "[[":
+            st["test"] = True
+        elif w == "]]":
+            st["test"] = False
+        st["words"].append((w, dyn))
+    end()
+    return out
+
+
+def norm_path(p):
+    """Lexically, as cd does: "." and ".." resolved, repeated slashes dropped."""
+    out = []
+    for part in p.split("/"):
+        if part == "..":
+            out = out[:-1]
+        elif part not in ("", "."):
+            out.append(part)
+    return "/" + "/".join(out)
+
+
+RUN, PIPED, AWAY = 1, 2, 4
+
+
+def cmd_runs(pattern, cmd, root_=None, start=None):
+    """aigource's cmd_runs: RUN, a segment matching pattern ran under root_ (relative to start; no root_: any
+    segment); PIPED, one of those was piped on while pipefail was off; AWAY, a matching segment ran after a cd
+    out of root_ or one we can't follow ($VAR, $(...), cd -, a bare cd)."""
+    hit, pipefail = 0, False
+    rt = norm_path(root_) if root_ else None
+    st = norm_path(start or root_) if root_ else None
+    home = os.environ.get("HOME")
+    for text, piped, d, lost in lex_segments(cmd):
+        if text.startswith("set "):  # set -o pipefail, set -euo pipefail; set +o pipefail
+            p = 4
+            while (p := text.find(" pipefail", p)) >= 0:
+                w = p
+                while w > 0 and text[w - 1] != " ":
+                    w -= 1
+                if text[w:w + 1] in ("-", "+") and "o" in text[w:p] and (p + 9 == len(text) or text[p + 9] == " "):
+                    pipefail = text[w] == "-"
+                p += 9
+        seg = re.sub(r"^\s*\(?\s*(?:env\s+|\w+=\S*\s+|sudo\s+|time\s+|timeout\s+(?:-\S+\s+(?:\S+\s+)?)*\S+\s+)*", "",
+                     text).rstrip(" \t\n\r\f\v")
+        if not seg or not pattern.match(seg):
+            continue
+        if rt:
+            inside = False
+            if not lost:
+                p = st if d is None else d if d[:1] == "/" else home + d[1:] if d[:1] == "~" and home else st + "/" + d
+                p = norm_path(p)
+                inside = p == rt or p.startswith(rt + "/") or rt == "/"
+            if not inside:
+                hit |= AWAY
+                continue
+        hit |= RUN | (PIPED if piped and not pipefail else 0)
+    return hit
+
+
+# Strong signs that a test or build failed (aigource's transcript.c, FAILED_OUT_ERE, which says why each is anchored
+# as it is): make's "***", compiler errors, FAIL / FAILED, a traceback from a file (not <stdin>/<string>: an inline
+# script), a sanitizer error that stops the run (not LeakSanitizer's exit-time report), a runtime error, a crash,
+# "N failed" / "N errors" / "N failure(s)" (N > 0), make's "Error N" ending a line, "Exit code N" starting one,
+# Neovim's E5108 / E5113. [^...] lists exclude "\n", as POSIX's do under REG_NEWLINE.
+FAILED_OUT = re.compile(r"^make(\[[0-9]+\])?: \*\*\* |:[0-9]+:([0-9]+:)? error:|(:[0-9]+:([0-9]+:)? |^[^ :\n]+: )fatal error:|"
+                        r"^collect2: error:|^(--- )?FAIL\b|\bFAILED\b|Traceback \(most recent call last\):\n  File \"[^<\n]|"
+                        r"ERROR: (Address|Memory|Thread|UndefinedBehavior)Sanitizer|:[0-9]+:[0-9]+: runtime error:|"
+                        r"(^|[0-9] )Segmentation fault|\(core dumped\)|\b[1-9][0-9]* (failed|errors?)\b|\bError [0-9]+$|"
+                        r"^[Ee]xit (code|status) [1-9]|^E5(108|113): |\b[1-9][0-9]* failures?\b", re.M | re.A)
+
+
+def never_ran(block, res, err):
+    """A Bash call that never ran (aigource's transcript.c, never_ran): rejected by the user, blocked by a hook or
+    Claude Code (as recorded in this repo's transcripts), or interrupted before it printed anything."""
+    if err:
+        c = block.get("content")
+        m = c if isinstance(c, str) else c[0].get("text") if isinstance(c, list) and c and isinstance(c[0], dict) else None
+        if isinstance(m, str):
+            m = m[7:] if m.startswith("Error: ") else m
+            if m.startswith(("The user doesn't want to proceed with this tool use", "The user doesn't want to take this action right now",
+                             "[Request interrupted by user for tool use]", "<tool_use_error>", "PreToolUse:", "Hook PreToolUse",
+                             "This session is isolated in the worktree")):
+                return True
+    if not isinstance(res, dict):
+        return False
+    o, e = res.get("stdout"), res.get("stderr")
+    return res.get("interrupted") is True and not (isinstance(o, str) and o) and not (isinstance(e, str) and e)
+
+
+def failed_out(cmd, cwd, block, res):
+    """A run not marked is_error whose status a pipe hid: failed when its output shows it (toolUseResult's
+    stdout and stderr, else the result block's text)."""
+    if not cmd_runs(VERIFY, cmd, root, cwd) & PIPED:
+        return False
+    if isinstance(res, dict) and (isinstance(res.get("stdout"), str) or isinstance(res.get("stderr"), str)):
+        texts = [res.get("stdout"), res.get("stderr")]
+    else:
+        c = block.get("content")
+        texts = [c] if isinstance(c, str) else [x.get("text") for x in c if isinstance(x, dict)] if isinstance(c, list) else []
+    return any(isinstance(t, str) and FAILED_OUT.search(t) for t in texts)
 CORRECTION = re.compile(r"\b(?:bugs?|broken|wrong|doesn'?t work|does not work|not working|didn'?t work|revert|undo|"
                         r"regress\w*|crash\w*|fail(?:s|ed|ing)?|errors?|strange|weird|horrible|not what i|why did you)\b|^no\b", re.I)
 
@@ -346,9 +803,12 @@ for f in sorted(glob.glob(PROJ + "/**/*.jsonl", recursive=True)):
         name, inp, ccwd = calls.get(tid, ("", {}, cwd))
         if name == "Bash" and isinstance(inp.get("command"), str):
             cmd = inp["command"]
-            if runs(VERIFY, cmd):
-                push(ts, "verify", key=("v", tid), session=session, ok=not err, cmd=cmd[:120])
-            if runs(SEARCH, cmd):
+            lone = res if len(results) == 1 else None
+            # a run in another tree (cd out of the repo), or one that never ran, is ignored
+            if cmd_runs(VERIFY, cmd, root, ccwd) & RUN and not never_ran(results[0], lone, err):
+                hidden = not err and failed_out(cmd, ccwd, results[0], res if len(results) == 1 else None)
+                push(ts, "verify", key=("v", tid), session=session, ok=not err and not hidden, cmd=cmd[:120])
+            if cmd_runs(SEARCH, cmd) & RUN:
                 push(ts, "search", key=("s", tid), ctx=ctx)
             if not err:
                 for where, rel, a, b in cmd_reads(cmd, ccwd):
@@ -493,8 +953,9 @@ for ts, _, kind, d in stream:
         text = tracked[rel][0] if rel in tracked and rel not in unplaced else git_text(rel, ts)
         if text is None:
             continue
+        ra, rb = (max(1, nlines(text) + d["b"] + 1), 10 ** 9) if d["b"] < 0 else (d["a"], d["b"])  # tail: this text's end
         for k, _, a, b in defs(rel, text):
-            if a <= d["b"] and b >= d["a"]:
+            if a <= rb and b >= ra:
                 seen[d["ctx"]][rel].add(k)
         continue
     if kind != "change":

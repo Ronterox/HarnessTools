@@ -1,5 +1,7 @@
 #include "transcript.h"
 
+#include <pthread.h>
+#include <regex.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -403,9 +405,10 @@ typedef struct {
     const char *cwd;
     double ts;
     bool reads; /* the files it read (a command that ran fine), else wrote */
-    StrMap seen; /* repo path -> index in rel/kind: the last action on a file wins */
+    StrMap seen; /* repo path (and a read's range) -> index in rel/kind: the last action on a file wins */
     char **rel;
     GuessKind *kind;
+    int (*range)[2];
     int n, cap;
 } GuessCtx;
 
@@ -417,8 +420,10 @@ static char *cat3(const char *a, const char *b, const char *c) {
 
 /* A file a command read, or a failed one probably wrote or removed: resolved
  * like the shell would from the session's cwd and the command's own cds; kept
- * when in the repo. */
-static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind, const char *into) {
+ * when in the repo. Each range of a file read is a read of its own (once per
+ * file and range per command). */
+static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind, const char *into, int first,
+                     int last) {
     GuessCtx *g = ud;
     if ((kind == GUESS_READ) != g->reads) return;
     Transcript *t = g->t;
@@ -453,9 +458,12 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
     }
     free(abs);
     if (!rel || !*rel) { free(rel); return; }
-    int k = strmap_get(&g->seen, rel);
+    char *key = g->reads ? xmalloc(strlen(rel) + 32) : rel;
+    if (g->reads) sprintf(key, "%s\x1f%d\x1f%d", rel, first, last);
+    int k = strmap_get(&g->seen, key);
     if (k >= 0) { /* touch x && rm x: it ends deleted */
         g->kind[k] = kind;
+        if (key != rel) free(key);
         free(rel);
         return;
     }
@@ -463,21 +471,32 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
         g->cap = g->cap ? g->cap * 2 : 8;
         g->rel = xrealloc(g->rel, (size_t)g->cap * sizeof *g->rel);
         g->kind = xrealloc(g->kind, (size_t)g->cap * sizeof *g->kind);
+        g->range = xrealloc(g->range, (size_t)g->cap * sizeof *g->range);
     }
-    strmap_put(&g->seen, rel, g->n);
+    strmap_put(&g->seen, key, g->n);
+    if (key != rel) free(key);
     g->rel[g->n] = rel;
+    g->range[g->n][0] = first, g->range[g->n][1] = last;
     g->kind[g->n++] = kind;
 }
 
 static void emit_guesses(GuessCtx *g) {
     Transcript *t = g->t;
     t->ev_via = g->reads ? VIA_CMD : VIA_GUESS;
-    for (int i = 0; i < g->n; i++)
-        emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : g->kind[i] == GUESS_READ ? EV_READ : EV_TOUCH, g->ts,
-             g->rel[i], NULL, 0, 0, g->kind[i] == GUESS_DELETE ? 0 : -1);
+    for (int i = 0; i < g->n; i++) {
+        if (g->kind[i] != GUESS_READ) {
+            emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : EV_TOUCH, g->ts, g->rel[i], NULL, 0, 0,
+                 g->kind[i] == GUESS_DELETE ? 0 : -1);
+            continue;
+        }
+        Event e = mk(t, EV_READ, g->ts, g->rel[i], NULL, 0, 0, -1);
+        e.range.first = g->range[i][0], e.range.last = g->range[i][1];
+        t->emit(t->ud, &e);
+    }
     t->ev_via = 0;
     free(g->rel);
     free(g->kind);
+    free(g->range);
     strmap_free(&g->seen);
 }
 
@@ -498,6 +517,69 @@ static void bash_failed(Transcript *t, const Pending *p, yyjson_val *block, doub
     GuessCtx g = {.t = t, .cwd = p->cwd, .ts = ts};
     cmd_guess(p->cmd, on_guess, &g);
     emit_guesses(&g);
+}
+
+/* ---- a test run's status hidden by a pipe ------------------------------- */
+
+/* Strong signs that a test or build failed, anchored where a tool prints them:
+ * make's "***" and collect2 at a line's start, compiler errors at file:line[:col]
+ * (fatal error also after "cc1: "), FAIL / FAILED, a Python traceback whose first
+ * frame is a file (not <stdin> or <string>: an inline script, usually an edit),
+ * a sanitizer error that stops the run (LeakSanitizer's exit-time report doesn't
+ * count), a runtime error at file:line:col, a segfault or "(core dumped)",
+ * "N failed" / "N errors" / "N failure(s)" (N > 0), make's "Error N" ending a
+ * line (not "(ignored)"), "Exit code N" starting one, Neovim's E5108 / E5113 (a
+ * -l script that aborted). Not weak words: "0 failed", "error" in a name, "no
+ * errors". draft/build_data.py's FAILED_OUT is the same pattern. */
+#define FAILED_OUT_ERE                                                                                   \
+    "^make(\\[[0-9]+\\])?: \\*\\*\\* |:[0-9]+:([0-9]+:)? error:|(:[0-9]+:([0-9]+:)? |^[^ :]+: )fatal error:|" \
+    "^collect2: error:|^(--- )?FAIL\\b|\\bFAILED\\b|Traceback \\(most recent call last\\):\n  File \"[^<]|"  \
+    "ERROR: (Address|Memory|Thread|UndefinedBehavior)Sanitizer|:[0-9]+:[0-9]+: runtime error:|"            \
+    "(^|[0-9] )Segmentation fault|\\(core dumped\\)|\\b[1-9][0-9]* (failed|errors?)\\b|\\bError [0-9]+$|"   \
+    "^[Ee]xit (code|status) [1-9]|^E5(108|113): |\\b[1-9][0-9]* failures?\\b"
+
+static regex_t verify_re, failed_re;
+static pthread_once_t re_once = PTHREAD_ONCE_INIT;
+static void re_init(void) {
+    regcomp(&verify_re, CMD_VERIFY_ERE, REG_EXTENDED | REG_NOSUB);
+    regcomp(&failed_re, FAILED_OUT_ERE, REG_EXTENDED | REG_NOSUB | REG_NEWLINE);
+}
+
+static bool says_failed(const char *s) { return s && !regexec(&failed_re, s, 0, NULL, 0); }
+
+/* A Bash call not marked is_error whose test or build run was piped into
+ * another command (`make | tail`, no pipefail before it): its status is the
+ * pipe's end's, so its output decides. The output is toolUseResult's stdout
+ * and stderr, else the result block's text. */
+static bool failed_out(const Transcript *t, const Pending *p, yyjson_val *block, yyjson_val *res) {
+    pthread_once(&re_once, re_init);
+    if (!(cmd_runs(&verify_re, p->cmd, t->root, p->cwd) & CMD_PIPED)) return false;
+    if (yyjson_is_str(yyjson_obj_get(res, "stdout")) || yyjson_is_str(yyjson_obj_get(res, "stderr")))
+        return says_failed(jstr(res, "stdout")) || says_failed(jstr(res, "stderr"));
+    yyjson_val *c = yyjson_obj_get(block, "content"), *b;
+    if (yyjson_is_str(c)) return says_failed(yyjson_get_str(c));
+    size_t i, n;
+    yyjson_arr_foreach(c, i, n, b) if (says_failed(jstr(b, "text"))) return true;
+    return false;
+}
+
+/* A Bash call that never ran: the user rejected it, a hook or Claude Code
+ * blocked it (as recorded in this repo's transcripts), or it was interrupted
+ * before it printed anything. draft/build_data.py's never_ran is the same. */
+static bool never_ran(yyjson_val *block, yyjson_val *res, int err) {
+    static const char *const no[] = {"The user doesn't want to proceed with this tool use",
+                                     "The user doesn't want to take this action right now",
+                                     "[Request interrupted by user for tool use]", "<tool_use_error>", "PreToolUse:",
+                                     "Hook PreToolUse", "This session is isolated in the worktree", NULL};
+    if (err) {
+        yyjson_val *c = yyjson_obj_get(block, "content");
+        const char *m = yyjson_is_str(c) ? yyjson_get_str(c) : jstr(yyjson_arr_get_first(c), "text");
+        if (m && !strncmp(m, "Error: ", 7)) m += 7;
+        for (int i = 0; m && no[i]; i++)
+            if (!strncmp(m, no[i], strlen(no[i]))) return true;
+    }
+    const char *o = jstr(res, "stdout"), *e = jstr(res, "stderr");
+    return yyjson_get_bool(yyjson_obj_get(res, "interrupted")) && (!o || !*o) && (!e || !*e);
 }
 
 /* A file tool call with no effect on the graph (failed, or outside the repo):
@@ -528,8 +610,14 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     t->ev_notes = p.notes;
 
     if (!strcmp(name, "Bash")) {
-        Event end = mk(t, EV_BASH_END, ts, NULL, xstrdup(p.cmd ? p.cmd : ""), 0, 0, -1);
+        /* path: where it ran when that isn't the repo root (relative to it, or absolute) */
+        char *at = p.cwd ? rel_path(t, p.cwd) : NULL;
+        if (!at && p.cwd) at = xstrdup(p.cwd);
+        if (at && !*at) { free(at); at = NULL; }
+        Event end = mk(t, EV_BASH_END, ts, at, xstrdup(p.cmd ? p.cmd : ""), 0, 0, -1);
         end.err = err;
+        end.failed_out = !err && p.cmd && failed_out(t, &p, block, res);
+        end.not_run = never_ran(block, res, err);
         t->emit(t->ud, &end);
         if (!err && p.cmd) { /* what it read (cat, sed -n, ...), before what it changed */
             GuessCtx g = {.t = t, .cwd = p.cwd, .ts = ts, .reads = true};

@@ -37,12 +37,12 @@
 {"ts":1791972088.000,"kind":"usage","actor":"s1","name":"claude·s1","turn":6,"id":"msg1","tok":[9,103,2000]}
 {"ts":1791972088.000,"kind":"usage","actor":"s2","name":"claude·s2","turn":1,"id":"msg1","tok":[11,103,2000]}
 {"ts":1791972090.000,"kind":"bash","actor":"s1","name":"claude·s1","turn":6,"text":"make test"}
-{"ts":1791972091.000,"kind":"bash_end","actor":"s1","name":"claude·s1","turn":6,"text":"make test","err":false}
+{"ts":1791972091.000,"kind":"bash_end","actor":"s1","name":"claude·s1","path":"pkg","turn":6,"text":"make test","err":false}
 {"ts":1791972093.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"src/a.py","add":1,"del":1,"lines":2,"turn":6}
 {"ts":1791972095.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"src/a.py","add":3,"del":2,"lines":4,"turn":6}
 {"ts":1791972097.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"README.md","add":1,"del":1,"lines":2,"turn":6}
 {"ts":1791972098.000,"kind":"bash","actor":"s1","name":"claude·s1","turn":6,"text":"sed -i s/x/y/ Makefile sub/Makefile"}
-{"ts":1791972099.000,"kind":"bash_end","actor":"s1","name":"claude·s1","turn":6,"text":"sed -i s/x/y/ Makefile sub/Makefile","err":false}
+{"ts":1791972099.000,"kind":"bash_end","actor":"s1","name":"claude·s1","path":"pkg","turn":6,"text":"sed -i s/x/y/ Makefile sub/Makefile","err":false}
 {"ts":1791972099.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"sub/Makefile","add":1,"del":1,"turn":6}
 {"ts":1791972099.000,"kind":"edit","actor":"s1","name":"claude·s1","path":"Makefile","add":1,"del":1,"turn":6}
 {"ts":1791972100.000,"kind":"interrupt","actor":"s1","name":"claude·s1","turn":6,"text":"[Request interrupted by user for tool use]"}

@@ -1,0 +1,16 @@
+{"ts":1791972001.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make test 2>&1 | tail -3","err":false}
+{"ts":1791972002.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make 2>&1 | tail -5","err":false,"failed_out":true}
+{"ts":1791972003.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"uv run pytest -q | tail -2","err":false,"failed_out":true}
+{"ts":1791972004.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"set -o pipefail; make 2>&1 | tail -3","err":false}
+{"ts":1791972005.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make && grep -r FAIL logs | head","err":false}
+{"ts":1791972006.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make check | grep -v ^ok","err":false,"failed_out":true}
+{"ts":1791972007.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"cd /tmp/wt && make test 2>&1 | tail -3","err":false}
+{"ts":1791972008.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make asan 2>&1 | tail -3","err":false}
+{"ts":1791972009.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"python3 -c \"print('(cd x && make) | tail')\" | tail -1","err":false}
+{"ts":1791972010.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"cat <<EOF > s.sh\nset -o pipefail\nEOF\nmake test 2>&1 | tail -3","err":false,"failed_out":true}
+{"ts":1791972011.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make test 2>&1 | tail -4","err":false}
+{"ts":1791972012.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"nvim --headless -u NONE -l tests/smoke.lua 2>&1 | tail -2","err":false,"failed_out":true}
+{"ts":1791972013.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"nvim --headless -u NONE -l tests/smoke.lua 2>&1 | tail -2","err":false,"failed_out":true}
+{"ts":1791972014.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make test","err":true,"ran":false}
+{"ts":1791972015.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make test","err":true,"ran":false}
+{"ts":1791972016.000,"kind":"bash_end","actor":"verify","name":"claude·verify","turn":0,"text":"make test","err":false,"ran":false}

@@ -60,7 +60,7 @@ transcript format lives in `transcript.c`; analysis never reads JSONL.
 | compact | a `system` record with subtype `compact_boundary`, or a record marked `isCompactSummary` |
 | read | a Read tool result (`file.startLine`, `file.numLines`), any path; or a **successful** Bash command (command reads, below) |
 | search | a Grep or Glob call; or a Bash command segment starting with `grep`, `rg`, `ag`, `fd`, `find` or `git grep` (followed by a space or the end), whether it succeeded or not |
-| verify | a Bash command segment matching `VERIFY` (below); ok = the result isn't marked `is_error` |
+| verify | a Bash command segment matching `VERIFY` (below) that ran in the repo (not after a `cd` out of it), of a call that ran at all (below); ok = the result isn't marked `is_error` and, when a pipe hid the run's status, its output shows no failure (`failed_out`, below) |
 | usage | an assistant response's `usage`: output tokens, new input (`input_tokens` + `cache_creation_input_tokens`), cached input (`cache_read_input_tokens`) |
 | change | an Edit/MultiEdit/Write result (`structuredPatch`, `originalFile`, or `type: create` with `content`), or one file of a Bash result's `bashEditDiff`; only what the transcript recorded (guessed changes of failed commands and watcher events are left out, `an_add`) |
 | title | a session's `ai-title` record, or a subagent's `agentType` and `description` from its `.meta.json` |
@@ -73,10 +73,15 @@ turns of that session too: its work before its first new prompt is in its
 turn. Subagents' prompts start none; their work belongs to the parent
 session's turn (below).
 
-**Command segments** (`unwrap`, `runs` in analysis.c): a command line split on
-`&&`, `||`, `;`, `|` and newlines; each segment loses a leading `(`, `env`,
-`VAR=value`, `sudo`, `time` and `timeout [options] N` (any number of them), and
-trailing `)` and spaces (the end of a subshell).
+**Command segments** (`cmd_runs` in `cmdguess.c`, `cmd_runs` in
+`build_data.py`): the simple commands of a command line as the shell lexer of
+command reads sees them (`lex`): quotes, escapes, here-documents (their bodies
+are not commands), `$(…)` and backquotes (not split), `(( ))` and comments are
+understood, and redirects (`2>&1`, `> f`) are dropped. A segment is a simple
+command's words joined by spaces; it is split off at `&&`, `||`, `;`, `&`, `|`,
+newlines and `(`/`)`. Each loses a leading `env`, `VAR=value`, `sudo`, `time`
+and `timeout [options] N` (any number of them). So `python3 -c "…; make | tail"`
+holds no run, and a here-document's lines aren't commands.
 
 ```
 VERIFY = (?:(?:ba)?sh\s+|python3?\s+|uv\s+run\s+)?
@@ -85,18 +90,88 @@ VERIFY = (?:(?:ba)?sh\s+|python3?\s+|uv\s+run\s+)?
 ```
 So `(cd x && make)`, `sudo make`, `bash tests/run.sh`, `uv run pytest` count;
 `git commit -m "make …"` and `echo make` don't. (The C side compiles the same
-pattern as a POSIX extended expression, `an_new`.)
+pattern as a POSIX extended expression, `CMD_VERIFY_ERE` in `cmdguess.h`.)
 
-**Command reads** (`cmd_guess` in `cmdguess.c`, `emit_guesses` in
-`transcript.c`): for a Bash call that succeeded, the shell words of the command
-are walked, following `cd`, `pushd` and `popd`. A segment starting with `cat`,
-`more`, `less`, `head`, `tail`, `bat`, `batcat`, `nl` or `sed` (not `sed -i`),
-or a `<` redirect, reads each operand that is a regular file existing today (a
-path needs no extension; `-` and `+cmd` aren't files; words built at run time
-(`$VAR`, `$(…)`, globs) are skipped; directories aren't read). Such a read is
-**the whole file, once per file per command**: sed `a,bp` ranges and `head -n`
-are not turned into line ranges (a known limit). A file outside the repo is
-read by its absolute path.
+**Runs in another tree** (`CMD_AWAY`; `verify` in analysis.c). A run checks the
+repo's changes only when it runs in the repo. The lexer follows `cd`, `pushd`
+and `popd` (a subshell's `cd` ends with it) from where the command began (the
+record's `cwd`, carried as `EV_BASH_END`'s path when it isn't the repo root): a
+`VERIFY` segment after a `cd` to a directory outside the repo root (a git
+worktree, a scratch copy, `/tmp/…`, `~`), or after one that can't be followed
+(`cd $W`, `cd "$(mktemp -d)"`, `cd -`, a bare `cd`), is not a run of this repo:
+such a command neither passes nor fails a change, and the turn's earlier run in
+the repo decides. Other segments of the same command still count.
+
+**Calls that never ran** (`never_ran` in `transcript.c`, `EV_BASH_END`'s
+`not_run`, dumped as `"ran":false`; `never_ran` in `build_data.py`). A Bash
+result marked `is_error` whose message (after an optional `Error: `) starts
+with one of the texts Claude Code records for a call it didn't run: `The user
+doesn't want to proceed with this tool use` / `… to take this action right now`
+(rejected), `[Request interrupted by user for tool use]`, `<tool_use_error>`
+(Claude Code blocked it), `PreToolUse:` or `Hook PreToolUse` (a hook blocked
+it), `This session is isolated in the worktree` (refused); or a result marked
+`interrupted` with no output at all. Such a call neither passes nor fails a
+change: `verify` skips it. The stage shows it as before.
+
+**Piped runs** (`failed_out` in `transcript.c`, carried on `EV_BASH_END`). A
+line's exit status is its last command's: `make test | tail -20` is never
+`is_error`, whatever make did. So when a Bash result isn't marked `is_error`
+and a `VERIFY` segment of the repo is followed by a single `|` (or ends a
+subshell that is: `(cd x && make) 2>&1 | tail`) while pipefail is off, the
+status is not the run's own and the output decides. Pipefail is on after a
+`set` segment with `-o pipefail` (or a cluster ending in `o`: `set -euo
+pipefail`) and off again after `set +o pipefail`; the word elsewhere (a string,
+a here-document) changes nothing. The output is scanned for strong failure
+signals, and any match makes the event `failed_out`. The output is
+`toolUseResult`'s `stdout` and `stderr` (for a record holding one result), else
+the result block's text. `err` stays the recorded `is_error`; the analysis
+fails a run on `err` or `failed_out` (`an_add`). The signals (`FAILED_OUT_ERE`,
+POSIX ERE under `REG_NEWLINE`: `^`/`$` per line; `build_data.py`'s `FAILED_OUT`):
+```
+^make(\[[0-9]+\])?: \*\*\*                           make's "make: *** [...]", "make[2]: ***"
+:[0-9]+:([0-9]+:)? error:                            a compiler error at file:line[:col]
+(:[0-9]+:([0-9]+:)? |^[^ :]+: )fatal error:          ... a fatal one, also "cc1: fatal error:"
+^collect2: error:                                    the linker
+^(--- )?FAIL\b   \bFAILED\b                          test runners (go's "--- FAIL")
+Traceback \(most recent call last\):\n  File "[^<]   a traceback whose first frame is a file, not
+                                                     <stdin>/<string> (an inline script: usually an edit)
+ERROR: (Address|Memory|Thread|UndefinedBehavior)Sanitizer   not LeakSanitizer's exit-time report
+:[0-9]+:[0-9]+: runtime error:                       UBSan at file:line:col
+(^|[0-9] )Segmentation fault   \(core dumped\)       the shell's crash reports
+\b[1-9][0-9]* (failed|errors?)\b                     "2 failed", "1 error" in summaries
+\b[1-9][0-9]* failures?\b                            "1 failure(s)"
+\bError [0-9]+$                                      make's "Error 2" (not "Error 1 (ignored)")
+^[Ee]xit (code|status) [1-9]
+^E5(108|113):                                        a Neovim -l script that aborted
+```
+Weak words are left out on purpose: "0 failed", "no errors", "error" inside a
+name, a signal quoted mid-line (source code, a grep of it). Only `VERIFY`
+segments matter: in `make && grep FAIL log | head` the run isn't piped, so FAIL
+in the output changes nothing. The whole line's output is scanned, so a failure
+printed by a later command of the same line counts too.
+
+**Command reads** (`cmd_guess` in `cmdguess.c`, `on_guess` and `emit_guesses`
+in `transcript.c`): for a Bash call that succeeded, the shell words of the
+command are walked, following `cd`, `pushd` and `popd`. A segment starting with
+`cat`, `more`, `less`, `head`, `tail`, `bat`, `batcat`, `nl` or `sed` (not
+`sed -i`), or a `<` redirect, reads each operand that is a regular file
+existing today (a path needs no extension; `-` and `+cmd` aren't files; words
+built at run time (`$VAR`, `$(…)`, globs) are skipped; directories aren't
+read). A file outside the repo is read by its absolute path. Which lines:
+- `sed` with `-n` (`--quiet`, `--silent`) and a script (the first operand, or
+  every `-e`) made only of line prints, `A,Bp`, `Ap` or `A,$p` (`;` or
+  newlines between): each print is a read of lines A..B (`5,2p` is line 5) of
+  each file (`cmd_inplace`, `sed_ranges`). Anything else in the script, `-f`,
+  or no `-n`: the whole file.
+- `head`: lines 1..N; `tail`: the last N lines, or from line N with `+N`. N
+  comes from `-n N`, `-nN`, `-N`, `--lines N` or `--lines=N` (the last one
+  given), 10 without one (`cmd_headtail`). Bytes (`-c`), `head -n -N` (all but
+  the last N) or a count that isn't a plain number: the whole file; N = 0
+  reads nothing.
+- the other readers: the whole file.
+
+A command's reads are **once per file and range**: `sed -n '1,5p;9p' f` is two
+reads, `cat f; cat f` one (`on_guess` keys them by file and range).
 
 **Reads outside the repo.** A Read of a path outside the repo is an event with
 an absolute path and no node; it counts as a read for the context cost and
@@ -107,8 +182,12 @@ of something that isn't text (an image, a PDF: `type` other than `text`) has no
 lines and is **not counted** at all.
 
 **Read ranges.** A Read result carries `startLine` and `numLines`: those lines
-were read; without `numLines` the read goes to the end. A command read has no
-range: the whole file.
+were read; without `numLines` the read goes to the end. A command read has its
+range from above (`EV_READ.range`: 0, 0 the whole file; A, 0 from A to the
+end). `tail`'s last N lines are stored as 0, −N, since the file's length then
+isn't known when the transcript is read: the analysis resolves them against
+the text the read is matched with (`replay_read`: the tracked text, or the git
+version), so they are that text's last N lines.
 
 **Paths.** A path under the repo maps to its file (`rel_path` in
 `transcript.c`); paths outside are kept for display only.
@@ -300,7 +379,11 @@ screen that holds it.
   "changed unread": there's no text before them.
 - **Untested / failing** (per change; "Verification" comment): verify events
   later in the same turn, by any agent of that session (subagents included)
-  (`verify`). None → untested; the last one failed → failing.
+  (`verify`). None → untested; the last one failed → failing. A run failed
+  when its result is `is_error`, or when a pipe hid its status and its output
+  shows a failure (`failed_out`, section 0, Piped runs). Runs in another tree
+  and calls that never ran (rejected, blocked) are ignored (section 0). A subagent's changes take the parent turn's last
+  run, which may be the parent's, after the subagent finished.
 - **Corrected** (per turn): the next prompt in that session, on its first line
   (≤ 140 chars), case-insensitive, matches
   ```
@@ -352,8 +435,8 @@ it** ("Context cost" comment): reads, searches, and the 8 most-read paths
 measures the context the agent built before touching it. Shown: the average of
 reads + searches over the node's turns; "read to change it" = each path's
 highest read count over those first changes. A read is one Read result or one
-file of a command (once per file per command); a read of something that isn't
-text isn't counted.
+file and line range of a command (once each per command, section 0); a read of
+something that isn't text isn't counted.
 
 ## 9. Prompt-to-code traceability
 For a turn (`st_build`, TINFO; `StTurn`): the changes in it; the files and
@@ -420,8 +503,11 @@ with no known lines gets 0.
 | `nlines` | `nlines` |
 | `prompt_of` | `prompt_text` (transcript.c), `setup_prompts` |
 | `rel_of`, `shown` | `rel_path` (transcript.c), `shown_path` |
-| `cmd_reads` | `cmd_guess` (cmdguess.c), `emit_guesses` (transcript.c) |
-| `segments`, `runs`, `VERIFY`, `SEARCH` | `unwrap`, `runs`, regexes in `an_new` |
+| `cmd_reads`, `sed_lines`, `sed_ranges`, `head_tail_lines` | `cmd_guess`, `cmd_inplace`, `sed_ranges`, `cmd_headtail` (cmdguess.c), `on_guess`, `emit_guesses` (transcript.c) |
+| `lex_segments`, `read_word`, `skip_parens`, `cmd_runs`, `VERIFY`, `SEARCH` | `lex`, `read_word`, `skip_parens`, `cmd_runs`, `unwrap` (cmdguess.c), `CMD_VERIFY_ERE` (cmdguess.h), regexes in `an_new` |
+| `FAILED_OUT`, `failed_out` (`cmd_runs` & `PIPED`) | `FAILED_OUT_ERE`, `failed_out` (transcript.c), `CMD_PIPED` |
+| verify runs in another tree (`cmd_runs` & `RUN`) | `verify` (analysis.c), `CMD_RUN` / `CMD_AWAY` |
+| `never_ran` | `never_ran` (transcript.c), `not_run` on `EV_BASH_END`, skipped in `verify` |
 | `FIX`, `CORRECTION` | regexes in `an_new`; used in `turn_of` |
 | `push` and its duplicate rules | `ingest.c`, `an_add` |
 | `actor_of` | `setup_actors`, `actor_out` |
@@ -449,7 +535,22 @@ What the port fixed, from the draft's list:
   indentation for Python, so any language with a textobjects query has them.
 
 What remains:
-- A build piped into `tail` hides its exit code, so it counts as passing.
+- A run piped into another command (`make | tail`, no pipefail) is judged by
+  its output: only the signals listed (section 0, Piped runs) fail it, so a
+  failure that prints none of them passes. What the output can't tell:
+  - a check that breaks a file on purpose, runs the tests expecting FAIL and
+    restores the file (a mutation check) reads as a failing run;
+  - another command's output in the same call counts: `make | tail; head
+    old-asan.log` fails on the old log's report;
+  - `run > log; tail log`, `make; echo done` and `make || true` lose the status
+    through `;`, newlines or `||` and are not checked (104 such runs on this
+    repo's history, about 6 of them real failures): out of scope;
+  - a sanitizer report that doesn't stop the run (`halt_on_error=0`, a report
+    in a child process) is only caught by its `ERROR:` line.
+- A subagent's changes take the parent turn's last run: a run the parent made
+  after the subagent finished decides them too.
+- A run after a `cd` that can't be followed (`$VAR`, `$(…)`) counts as one in
+  another tree, even when the variable points into the repo.
 - Test runs are recognized by how a command starts: wrappers other than those
   listed (e.g. `nix develop -c make`) and project scripts with other names are
   missed.
@@ -457,9 +558,12 @@ What remains:
   (few false hits), so polite corrections are missed.
 - "2 turns later" counts turns of all sessions in time order; parallel
   sessions interleave.
-- Command reads count only files that exist today, and always the whole file:
-  `sed -n 10,20p`, `head -n 5` and `tail` are not turned into ranges, so they
-  cover every function of the file for "changed unread" and count one read.
+- Command reads count only files that exist today. Only `sed -n` scripts of
+  line prints, `head` and `tail` give line ranges; other sed scripts (`/re/p`,
+  `1,10d`) and the other readers read the whole file. `sed -n 1,5p a b` takes
+  the range in each file (sed counts lines across both unless `-s`). A
+  `tail`'s lines are the last N of the text known when it is replayed, which
+  may not be the file as it was then.
 - Sessions no longer on disk leave lines "unknown" and their turns uncounted.
 - Tokens per change only cover the agent's own responses since its previous
   change; work done before an earlier change in the turn counts there.
@@ -483,7 +587,7 @@ Statuses of the caveats noted while building the draft:
 
 | Caveat | Status |
 |---|---|
-| A build piped into `tail` hides the exit code, so verification overcounts passes | still a limit: the result's `is_error` is all there is, and a segment is matched by how it starts |
+| A build piped into `tail` hides the exit code, so verification overcounts passes | fixed: a `VERIFY` segment of the repo piped with pipefail off is judged by anchored failure signals in its output (`failed_out`); runs in another tree are ignored; segments come from the shell lexer. Still a limit: the signals are a fixed list, mutation checks and other commands' output in the same call read as failures, `;` and `||` aren't checked, a segment is matched by how it starts |
 | Corrections and fixes are keywords on the first line of a prompt | still a limit: same patterns, deliberately strict |
 | "2 turns later" interleaves parallel sessions | still a limit |
 | Command (Bash) edits need a baseline; missing sessions leave lines unknown | still a limit: same fallbacks (tracked text, git, later text, file level); `stats` counts how often each was used |
@@ -491,4 +595,4 @@ Statuses of the caveats noted while building the draft:
 | Resumed sessions copy earlier records | fixed in the port: dedupe by tool-use id (and file or range) in `ingest.c`, turns by (time, text) kept as `EV_TURN_COPY` for the resumed session |
 | Time uses response starts with each gap capped at 5 min; the slow flag is file-level | changed only in where it runs (`active`, `ST_SLOW_X`); the rule is the same and stays a limit |
 | C defs by regex, Python by indentation; use tree-sitter textobjects | fixed in the port (`syn_defs`); new limit: a language without the grammar or query has no functions, and function numbers differ from the draft's |
-| Command reads: `sed`/`head` ranges (draft) | changed: the port reads the whole file (no ranges); readers `tail`, `less`, `more`, `<` and extension-less names are added |
+| Command reads: `sed`/`head` ranges (draft) | ranges in both now, the same rule: `sed -n` line prints, `head`, `tail` (last N resolved against the replayed text); the draft gained `tail`. The port also reads `less`, `more`, `tac`, `<` and extension-less names, and lexes the shell (quotes, here-documents), where the draft's pattern splits inside quotes and counts `cat > f`: `structure_parity.py` allows 4 + 10% reads per change for that |

@@ -359,7 +359,11 @@ e4_use = say("m11", "Back to a plain fallback.", call("e4", "Edit", {"file_path"
 e4_res = res("e4", {"filePath": P + "app.py", "originalFile": app3, "structuredPatch": h_e4})
 main3 = [prompt2, e4_use, e4_res,
          say("m12", "", call("t3", "Bash", {"command": "bash tests/run.sh"})),
-         res("t3", {"stdout": "ok"})]
+         res("t3", {"stdout": "ok"}),
+         # A run in another tree (a worktree in /tmp) checks nothing here, whatever it says: e4 stays passed.
+         say("m12", "", call("t4", "Bash", {"command": "cd /tmp/wt && make test 2>&1 | tail -3"}), ts=sts_last()),
+         srec("user", [{"type": "tool_result", "tool_use_id": "t4", "is_error": False, "content": "FAIL greet"}],
+              sts_last(), toolUseResult={"stdout": "FAIL greet", "stderr": ""})]
 resumed = [  # copies of the last records, then new work
     prompt2, dict(e4_use, message=dict(e4_use["message"], usage=dict(e4_use["message"]["usage"], output_tokens=99))),
     e4_res,
