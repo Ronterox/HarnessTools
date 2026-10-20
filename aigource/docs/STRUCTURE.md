@@ -1,0 +1,494 @@
+# How the structure view gets its numbers
+
+The spec for aigource's structure screen (`S`). Everything comes from two
+places: Claude Code's transcripts of the repo and the repo itself (today's
+files, and git for baselines). The transcripts are
+`$CLAUDE_CONFIG_DIR/projects/<repo path with / and . as ->/**/*.jsonl`
+(`~/.claude` by default), subagents included. Which of them are loaded is the
+stage's choice (`--since HOURS`, `--all`, explicit files), so the structure
+view agrees with the stage; `--all` gives the whole history.
+
+`src/analysis.c` collects facts change by change (`an_build`); `src/metrics.c`
+turns them into the numbers the screen draws (`st_build`). Both run on a worker
+thread and produce an immutable snapshot that the screen swaps in. This file
+names the function that does the work next to each rule. The port was made
+from a Python and HTML draft (`draft/build_data.py` + `draft/structure.tpl.html`);
+the draft is now the test oracle (`tests/structure_parity.py` compares
+`--structure-dump` with `build_data.py`, `tests/metrics_parity.js` runs the
+page's own JavaScript against `--metrics`). A table at the end maps the
+draft's names to the C functions.
+
+`aigource --structure-dump` prints the snapshot as JSON (counts go to stderr);
+with `--metrics FILE` it also writes what the screen derives from it.
+
+## 0. Foundations
+
+### The tree
+The tree is the repo as it is today: `git ls-files -z --cached --others
+--exclude-standard` (tracked files, and untracked ones git doesn't ignore),
+binary files (a NUL in the first 8000 bytes) and files over 8 MB skipped
+(`setup_files`, `list_tree`). It is capped at 5000 files: the files history
+changed come first, then the others in path order; `stats.cut` counts the ones
+left out. Files that history changed and that are gone from disk are kept as
+nodes unless git ignores them (`git check-ignore`), since a temporary file in an
+ignored folder isn't part of the repo. Outside a git repo the tree is the files
+history touched that still exist, under the same cap. Untouched files are in the
+tree and show cold.
+
+A folder whose only child is a folder (and has no files) merges with it into
+one node (`a/b/c`), as on the stage; the root never merges (`tmp_build`).
+
+### Git calls
+Baselines come from git (`git`, `git_text`): `--literal-pathspecs`,
+`core.fsmonitor=` off, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, stdin
+and stderr on `/dev/null`, no shell (paths are argv), and a 10 s timeout after
+which the process is killed and the call counts as failed. A file's baseline at
+time T is the first commit at or before T's second in `git log -- FILE`, read
+with `git show COMMIT:./FILE`; one `git log` per file, one `git show` per
+commit used.
+
+### The stream
+`transcript.c` reads every transcript into events; `ingest.c` merges them in
+time order; `an_add` hands them to the analysis. Every assumption about the
+transcript format lives in `transcript.c`; analysis never reads JSONL.
+
+| Event | Comes from |
+|---|---|
+| turn (`EV_TURN`) | a user message that isn't a tool result, meta or a compact summary: typed by the human (`origin` human or none) or pasted (`<pasted_content …>` is dropped); main sessions only. It doesn't start with `<local-command`, `<command-message>`, `[Request interrupted`, `Caveat:` and isn't empty. `PROMPT_*` tells the kind (`prompt_text`) |
+| turn copy (`EV_TURN_COPY`) | a prompt a resumed session's file copied from an earlier file (`ingest.c`): the same as a turn for the resumed session |
+| interrupt | a user message starting `[Request interrupted` |
+| compact | a `system` record with subtype `compact_boundary`, or a record marked `isCompactSummary` |
+| read | a Read tool result (`file.startLine`, `file.numLines`), any path; or a **successful** Bash command (command reads, below) |
+| search | a Grep or Glob call; or a Bash command segment starting with `grep`, `rg`, `ag`, `fd`, `find` or `git grep` (followed by a space or the end), whether it succeeded or not |
+| verify | a Bash command segment matching `VERIFY` (below); ok = the result isn't marked `is_error` |
+| usage | an assistant response's `usage`: output tokens, new input (`input_tokens` + `cache_creation_input_tokens`), cached input (`cache_read_input_tokens`) |
+| change | an Edit/MultiEdit/Write result (`structuredPatch`, `originalFile`, or `type: create` with `content`), or one file of a Bash result's `bashEditDiff`; only what the transcript recorded (guessed changes of failed commands and watcher events are left out, `an_add`) |
+| title | a session's `ai-title` record, or a subagent's `agentType` and `description` from its `.meta.json` |
+
+**Turn kinds.** Only human and pasted prompts start turns. A slash command
+(`/clear`; `PROMPT_COMMAND`) and records Claude Code writes itself (a task
+notification; `PROMPT_HARNESS`) don't, so what follows them stays in the turn
+before. A resumed session's copies of earlier prompts (`EV_TURN_COPY`) start
+turns of that session too: its work before its first new prompt is in its
+turn. Subagents' prompts start none; their work belongs to the parent
+session's turn (below).
+
+**Command segments** (`unwrap`, `runs` in analysis.c): a command line split on
+`&&`, `||`, `;`, `|` and newlines; each segment loses a leading `(`, `env`,
+`VAR=value`, `sudo`, `time` and `timeout [options] N` (any number of them), and
+trailing `)` and spaces (the end of a subshell).
+
+```
+VERIFY = (?:(?:ba)?sh\s+|python3?\s+|uv\s+run\s+)?
+         (?:make|pytest|python3? -m (?:pytest|unittest)|\S*tests?/\S+|\S*/test_\w+\S*|ctest|cargo (?:test|build)|
+            npm (?:test|run)|cc|gcc|clang|nvim --headless)(?:\s|$)       — matched at the start of a segment
+```
+So `(cd x && make)`, `sudo make`, `bash tests/run.sh`, `uv run pytest` count;
+`git commit -m "make …"` and `echo make` don't. (The C side compiles the same
+pattern as a POSIX extended expression, `an_new`.)
+
+**Command reads** (`cmd_guess` in `cmdguess.c`, `emit_guesses` in
+`transcript.c`): for a Bash call that succeeded, the shell words of the command
+are walked, following `cd`, `pushd` and `popd`. A segment starting with `cat`,
+`more`, `less`, `head`, `tail`, `bat`, `batcat`, `nl` or `sed` (not `sed -i`),
+or a `<` redirect, reads each operand that is a regular file existing today (a
+path needs no extension; `-` and `+cmd` aren't files; words built at run time
+(`$VAR`, `$(…)`, globs) are skipped; directories aren't read). Such a read is
+**the whole file, once per file per command**: sed `a,bp` ranges and `head -n`
+are not turned into line ranges (a known limit). A file outside the repo is
+read by its absolute path.
+
+**Reads outside the repo.** A Read of a path outside the repo is an event with
+an absolute path and no node; it counts as a read for the context cost and
+shows as `~/…` or the absolute path (`shown_path`). A Grep or Glob outside the
+repo, or one that failed, is a plain step that still counts as a search; other
+tool calls count for nothing. A read
+of something that isn't text (an image, a PDF: `type` other than `text`) has no
+lines and is **not counted** at all.
+
+**Read ranges.** A Read result carries `startLine` and `numLines`: those lines
+were read; without `numLines` the read goes to the end. A command read has no
+range: the whole file.
+
+**Paths.** A path under the repo maps to its file (`rel_path` in
+`transcript.c`); paths outside are kept for display only.
+
+**Duplicates** (`ingest.c`). A resumed session copies earlier records into its
+new file. Events are unique by tool-use id (and file for changes, path and line
+range for reads), interrupts by timestamp, turns by (prompt time, prompt text);
+a copied turn becomes `EV_TURN_COPY` instead of being dropped. The first copy
+seen wins; it sets the event's session and agent, and the comments of a
+resumed session's records come from that copy as well. Usage is unique per
+response id; a response's parts each repeat it with output growing, so the
+copy with the most output wins (its time is the first seen).
+
+### Turns
+A turn is one prompt, until the next prompt in that session (`turn_of`,
+`prompt_at`). A subagent's events belong to the parent session's turn running
+at that time. Its title is the prompt's first non-empty line, cut to 140
+characters. Its **time** (`secs`) runs from the prompt to the start of the last
+response in that turn (any agent of the session); waiting for the next prompt
+is not in it. Gaps between responses (a background wait, a long command) count
+at most 5 min each (`IDLE_CAP`, `active`), so the time is close to time spent
+working. Seconds are rounded half to even.
+
+**Only turns that changed a file exist.** Turns are created when their first
+change is replayed; everything else (interrupts, tests, tokens, reads) only
+attaches to turns that exist. So the turn strip, the rework gap (5) and turn
+counts all count these turns only.
+
+### Comments
+The agent's comment on a call is the text it wrote since the last tool result
+or typed or pasted prompt, before that `tool_use` (parallel calls share it).
+Task notifications, slash commands and interrupts don't end it. When there is
+none, the turn's latest text stands in, shown as "earlier in the turn"
+(`comment_of`; stored as `-1 - index`). Trimmed to 900 characters. The text is
+read back from the transcript (`tr_notes`) for the calls that need it.
+
+### Functions and classes
+Found in each version of a file by tree-sitter (`syn_defs` in `syntax.c`,
+cached per file and text by `defs_of`):
+- The grammar is the one Neovim has installed, as for highlighting. The
+  definitions are the captures `@function.outer` and `@class.outer` of
+  `nvim-treesitter-textobjects`' `textobjects.scm` for the language, looked up
+  next to Neovim's queries (the plugin's own `queries/` first, then the places
+  highlight queries come from). Only the patterns that capture those two are
+  kept.
+- A def's name is its `name` field, or the end of its declarator chain (C:
+  `function_definition` → `function_declarator` → `identifier`); an unnamed
+  struct takes its typedef's name. Defs without a name are dropped.
+- A class (struct, enum, class, ...) is told from a function by its capture.
+  Lines run from the first to the last line of the node. Defs nest by
+  containment: `Class.method`, `outer.inner`, `Class.method.inner`.
+- A language with no grammar or no textobjects query has **no functions**: its
+  files are measured at file level only (no function nodes, no function
+  numbers). `AIG_NO_DEFS=1` turns functions off everywhere (tests that mustn't
+  depend on installed grammars).
+- A text with syntax errors is parsed afresh rather than incrementally, since
+  error recovery can come out differently.
+
+A file's functions are matched across versions by their keys (names, with their
+parents').
+
+### Replaying the files (AI blame)
+Each file is rebuilt at every change, and every line carries the id of the
+change that wrote it (`replay_change`, `resync`):
+
+1. **Edit/Write with `originalFile`**: line up the tracked version with
+   `originalFile` (below), then apply the patch (`an_apply`): kept lines keep
+   their origin, `+` lines get this change. Equal lines keep their origin;
+   other lines get the last change that couldn't be placed, else "unknown".
+2. **Create**: every line gets this change.
+3. **Command (`bashEditDiff`), or an Edit without `originalFile`**, in order:
+   - apply the hunks to the tracked version, if every context and removed line
+     matches;
+   - else to the file as of the last git commit before the change (`git_text`),
+     after lining the tracked version up with it, so origins carry over;
+   - else find each hunk's new side in the first later known text of the file
+     that holds all of them (`later_text`, `an_relocate`): the before and after
+     texts of later Edit/Write results, created files, and today's file; each
+     hunk goes to the match nearest its `newStart`. This maps the change to
+     functions but places no lines, and the file is **unplaced**: the next
+     line-up (step 1, the git case, or the end) gives the lines it can't match
+     to this change; a create just clears the mark. While unplaced, command
+     changes skip the tracked text and reads use the git version;
+   - else the change counts for the file only (`+/−`, no functions, no trend
+     point), and the file is unplaced as well.
+4. **Recorded twice**: Claude Code also credits an edit made while a command
+   ran to that command. A command change whose hunks' new side already sits at
+   their `newStart` lines in the tracked file is dropped (`an_has_new`).
+5. At the end every file is lined up with today's file, so each of today's
+   lines has an origin or "unknown" (written before these transcripts).
+
+**Lining up** (`line_map`, `an_line_map`). Texts are split on `\n`. Up to
+10^7 pairs of lines (`DIFFLIB_MAX`, lines of one side times lines of the
+other) the alignment is what Python's `difflib.SequenceMatcher(None, a, b,
+autojunk=False)` gives: the longest matching block first (earliest in `a`, then
+in `b`), then recursively either side of it; origins therefore carry over as
+the oracle's do. Above that, difflib's cost grows with repeated lines, so the
+common prefix and suffix are matched first and the rest is anchored on lines
+that occur exactly once on each side (patience: the longest increasing run of
+them), the gaps in between recursively, and difflib again in gaps small enough.
+A gap with no unique line and too big for difflib stays unmatched, so on such
+files the lines it can't place become "unknown" or the unplaced change's.
+
+The functions a change touched are those holding its `+` lines (in the new
+version) or `-` lines (in the old one); for a create, all of them, and all its
+lines count as added. A change with an empty patch adds nothing.
+
+A file's length is its number of lines, one final newline ending the last line
+rather than starting another (`nlines`); blame is trimmed to it.
+
+Texts are not newline-translated (the oracle reads files with Python's
+universal newlines), so a CRLF file differs from the oracle's.
+
+The replay runs twice: first in time order for texts, origins, turns and costs
+(nothing there needs a file's functions), then per file on worker threads for
+everything that does (functions touched, changed unread, rework and trend per
+function; `work_all`), each file's versions parsed incrementally.
+
+`stats` in the snapshot counts what had to fall back: duplicate events dropped
+(`dups`), changes with no text before them, placed from git, placed in a later
+text, at file level only, and changed unread.
+
+### Heat
+Every heat mode is a metric per node, on a log scale against the busiest node
+of the same level (folders, files, functions/classes):
+`log(1 + value) / log(1 + max)`, with max at least 1 (`st_build`, METRIC / MAX
+/ heat). Colors run dark blue → amber; folders are drawn darker.
+
+| Mode | Value |
+|---|---|
+| turns | turns that changed it |
+| lines | lines added + lines removed |
+| risk | turns × complexity (2) |
+| rework | reworked lines (count, not the rate; 5) |
+| fixes | fix turns (7) |
+| context | average reads + searches per turn (8) |
+| cost | output tokens (10) |
+| time | agent time on its changes (10) |
+| age | already 0–1, newest = 1 (12) |
+| owner | not a scale: one color per author (11) |
+
+## 1. AI blame
+Each line of today's code → the change that wrote it → its turn, tool, agent,
+time and comment. The code view colors a strip per line by turn (newest turn
+first in the palette, 8 colors repeating); the legend counts lines per turn
+(`st_blame_slot`, `st_line_origins`). Unknown lines are grey.
+
+## 2. Hotspots × complexity
+**Complexity**, on today's code (`measure` in `syntax.c`; `SynDef.cx` and
+`.depth`): `1 +` the number of branch nodes inside the definition, nested
+definitions included. The branch nodes, by tree-sitter node type across
+grammars (`BRANCHES`): if, else-if and elif, unless, for and foreach loops,
+while, until, do, repeat, case and switch labels, match arms, catch, except and
+rescue clauses, conditional and ternary expressions, comprehension `for` and
+`if` clauses. A binary or boolean expression counts one more for a `&&`, `||`,
+`and` or `or` operator in it, so `a && b && c` adds two, as counting the
+operators does.
+- **Depth** = the deepest nesting of block nodes (`BLOCKS`: compound
+  statements, blocks, class and declaration bodies, ...) below the
+  definition's own body (the body itself is 0).
+- A class or a function with nested functions is measured over its whole body:
+  its branches and those of everything inside it.
+- A file's complexity is the sum of its top-level definitions'; a folder's, the
+  sum of its files'.
+- A file with no functions (no query for its language, or `AIG_NO_DEFS=1`) has
+  complexity 0, so its risk is 0.
+
+**Risk** = turns × complexity. The badge turns amber from complexity 15.
+
+## 3. Change coupling
+For a file or function changed in at least 2 turns: every other node of the
+same level (file↔file, function/class↔function/class, never its own ancestors
+or descendants) that changed in **2 or more of the same turns**. Sorted by
+shared turns, then by `shared / min(turns of both)`; top 8 (`ST_TOP_ROWS`;
+partners in `st_build`). Each partner shows `shared/turns (P% match)`, where
+turns are the inspected node's and P = shared / turns, rounded.
+"Other folder" / "other file" when the partner sits in another folder (files)
+or file (functions). Arcs go to the partner, or dashed to the nearest node on
+screen that holds it.
+
+## 4. Friction and verification flags
+- **Changed unread** (per change and function; "Blind" comment): the function
+  existed before the change and, in this agent's context (main session or one
+  subagent) since its last compaction, no read covered any of its lines and
+  nothing wrote it. A read finds its functions in the tracked text, or the git
+  version when the file isn't tracked yet or is unplaced; a read with neither
+  is ignored. A read covers the lines of its range (a command read: all of
+  them). Creates, and changes placed in a later text (step 3), are never
+  "changed unread": there's no text before them.
+- **Untested / failing** (per change; "Verification" comment): verify events
+  later in the same turn, by any agent of that session (subagents included)
+  (`verify`). None → untested; the last one failed → failing.
+- **Corrected** (per turn): the next prompt in that session, on its first line
+  (≤ 140 chars), case-insensitive, matches
+  ```
+  \b(?:bugs?|broken|wrong|doesn'?t work|does not work|not working|didn'?t work|revert|undo|regress\w*|crash\w*|
+     fail(?:s|ed|ing)?|errors?|strange|weird|horrible|not what i|why did you)\b|^no\b
+  ```
+- **Interrupted** (per turn): an interrupt event during it (`finish_turns`).
+
+- **Slow** (per file; `ST_SLOW_X`, 2): its agent time (10) per turn that changed
+  it is at least 2× the average of that over all files with turns. A folder
+  counts its slow files. Functions get no flag: their time is a share by lines
+  (10), too rough to call one slow. A **slow turn** took at least 2× the average
+  turn time (see Turns).
+
+A node's dots: coral = corrected or interrupted turns, yellow = untested or
+failing changes, violet = changed-unread changes, cyan = slow.
+
+## 5. Rework rate
+While replaying, every removed line reports the change that wrote it. Each
+(writing change, removing change) pair is counted for the file and for the
+function the line was in ("Rework" comment). A pair is **rework** when the
+removing turn is 0–2 turns after the writing turn (`ST_REWORK_TURNS`), counting
+turns (that exist, see Turns) in time order across all sessions. Rework rate =
+reworked lines / lines added there (capped at 100%); the heat mode uses the
+count. "Same turn" = gap 0.
+
+## 6. Complexity trend
+After every change that touched a function: its length and complexity in the
+new version ("Trend" comment); for a file, its length. Creates add no function
+points (only the file's length); points from a later text a change was lined
+up with (step 3) are skipped, since that's not the file right after it. If
+today's values differ from the last point, a "now" point is added.
+**Growing**, first point vs last (including "now"): lines ≥ 1.5× and +20 or
+more, or, for functions, complexity +8 or more.
+
+## 7. Fix hotspots
+A **fix turn** is a turn whose own prompt's first line (≤ 140 chars),
+case-insensitive, matches
+```
+\b(?:bugs?|broken|doesn'?t work|does not work|not working|didn'?t work|crash\w*|regress\w*|fail(?:s|ed|ing)|errors?|
+   wrong|can'?t|cannot|still|isn'?t|not (?:showing|working|catching)|horrible)\b
+```
+Fixes for a node = its fix turns (and of how many).
+
+## 8. Context cost
+Per change: everything the same agent read and searched **in this turn before
+it** ("Context cost" comment): reads, searches, and the 8 most-read paths
+(`reads_of`). A node's cost in a turn is that of its first change there, so it
+measures the context the agent built before touching it. Shown: the average of
+reads + searches over the node's turns; "read to change it" = each path's
+highest read count over those first changes. A read is one Read result or one
+file of a command (once per file per command); a read of something that isn't
+text isn't counted.
+
+## 9. Prompt-to-code traceability
+For a turn (`st_build`, TINFO; `StTurn`): the changes in it; the files and
+functions they touched with `+/−`; tests after them; what was read (as in 8);
+the agent's comments in order; its time next to the average turn. **Survives
+today** = today's lines whose origin is a change of this turn / lines the turn
+added. Its cost: every response in the turn (any agent), and the share that led
+up to its changes (10).
+
+## 10. Cost per area
+Per change ("Cost" comment): the usage of this agent's responses in this turn
+since its previous change (or since the turn began), and the time since then
+(or since its first such response), with each gap between those responses
+capped at 5 min as for turns. When one call changes several files, the
+first file gets it. A node's cost sums its distinct changes: output tokens (the
+cost heat), new input, cached input, agent time (the time heat). A function gets
+each change's share that its changed lines (added + removed) are of the file's
+in that change (lineShare, `cid_lines` in `metrics.c`; 1 when the file has none
+for it, which the analysis never produces), so one call writing 30 functions
+doesn't count 30 times; nested functions count inside their class too.
+
+**Turn strip:** bar height = lines changed (`5 + 17·sqrt(lines / lines of the
+largest turn)` pixels, `bar_h`); bar width = turn time, `0.4 + sqrt(secs /
+average turn)` (`bar_w`), so one long turn can't crowd out the rest. Fix turns
+are coral, slow turns have a cyan top edge. The bars are in time order; `[` and
+`]` step through them.
+Responses after a turn's last change (checking, summing up) belong to no change;
+the turn view shows them in the turn's total.
+
+## 11. Ownership
+Each change belongs to an agent (`setup_actors`, `actor_out`), one per
+transcript file (so each resumed session file is its own agent):
+- a main session, named by its AI title (the last `ai-title` record), or
+  "session <first 8 characters of its id>" without one;
+- a subagent, named by the `agentType` (after its last `:`) and `description`
+  in its `.meta.json`.
+
+Each of today's lines belongs to the agent of the change that wrote it (1).
+Per node: lines per agent; the **owner** is the known agent with most lines
+(lines from before the transcripts don't count; a tie goes to the agent seen
+first). Owner mode colors each node by its owner: 8 colors (`ST_ACTOR_COLORS`),
+by lines in the whole repo, repeating after 8.
+
+## 12. Code age
+Each of today's lines is as old as the change that wrote it, counted back from
+the last change in the data (not the clock, so a screen reads the same later).
+Per node: the median age (the upper median) of its lines that have an origin,
+and their spread over < 1 hour, < 1 day, < 1 week, older, and before these
+transcripts. Age heat = `1 − log(1 + median minutes) / log(1 + span minutes)`,
+span = first to last change, at least an hour; newest is hottest, and a node
+with no known lines gets 0.
+
+## Where each number lives
+
+| Draft (`build_data.py` / page) | C |
+|---|---|
+| `defs_c`, `defs_py`, `defs` | `syn_defs` (syntax.c), `defs_of` (analysis.c) |
+| `complexity` | `measure` (syntax.c); the file's sum in `build_tree` |
+| `apply` | `an_apply`, `replay_change` |
+| `has_new` | `an_has_new` |
+| `relocate`, `later_text` | `an_relocate`, `later_text` |
+| `git_text` | `git_text`, `git` |
+| `resync`, difflib | `resync`, `line_map` / `an_line_map` |
+| `nlines` | `nlines` |
+| `prompt_of` | `prompt_text` (transcript.c), `setup_prompts` |
+| `rel_of`, `shown` | `rel_path` (transcript.c), `shown_path` |
+| `cmd_reads` | `cmd_guess` (cmdguess.c), `emit_guesses` (transcript.c) |
+| `segments`, `runs`, `VERIFY`, `SEARCH` | `unwrap`, `runs`, regexes in `an_new` |
+| `FIX`, `CORRECTION` | regexes in `an_new`; used in `turn_of` |
+| `push` and its duplicate rules | `ingest.c`, `an_add` |
+| `actor_of` | `setup_actors`, `actor_out` |
+| `turn_of` | `turn_of`, `prompt_at` |
+| `comment_of` | `comment_of`, `cut_comment` |
+| `active`, `IDLE_CAP` | `active`, `IDLE_CAP` |
+| verify flags | `verify` |
+| turn time, tokens, interrupts | `finish_turns` |
+| tree (`FILES`, folder merge) | `setup_files`, `list_tree`, `build_tree` |
+| page: `prep` | `tmp_build`, `st_build` |
+| page: per node loop, `METRIC`, `MAX`, `heat`, `SLOW_X` | `st_build` (metrics.c) |
+| page: `partners` | `st_build`, `ST_TOP_ROWS` |
+| page: `TINFO`, `inspectTurn` | `st_build`, `StTurn` |
+| page: `turnBar` | `bar_h`, `bar_w` in `st_build` |
+| page: `readsOf` | `reads_of` |
+| page: `blameOf` | `st_blame_slot`, `st_line_origins` |
+| page: `lineShare` | `cid_lines` in `st_build` |
+
+## Known limits
+
+What the port fixed, from the draft's list:
+- Resumed sessions' copies are counted once, and their prompts start turns of
+  the resumed session (`EV_TURN_COPY`).
+- Functions and classes come from tree-sitter, no longer from a regex for C and
+  indentation for Python, so any language with a textobjects query has them.
+
+What remains:
+- A build piped into `tail` hides its exit code, so it counts as passing.
+- Test runs are recognized by how a command starts: wrappers other than those
+  listed (e.g. `nix develop -c make`) and project scripts with other names are
+  missed.
+- Fixes and corrections are keyword matches on a prompt's first line: strict
+  (few false hits), so polite corrections are missed.
+- "2 turns later" counts turns of all sessions in time order; parallel
+  sessions interleave.
+- Command reads count only files that exist today, and always the whole file:
+  `sed -n 10,20p`, `head -n 5` and `tail` are not turned into ranges, so they
+  cover every function of the file for "changed unread" and count one read.
+- Sessions no longer on disk leave lines "unknown" and their turns uncounted.
+- Tokens per change only cover the agent's own responses since its previous
+  change; work done before an earlier change in the turn counts there.
+- Times are timestamps of response starts with gaps capped at 5 min: a long
+  build counts as 5 min, and a pause under 5 min counts in full.
+- Command edits need a baseline (tracked text, git, or a later text); when none
+  fits the change counts for the file only (`stats.file_level_only`).
+- `bashEditDiff` also credits edits made by other agents while the command ran;
+  they are dropped only when the tracked file already has the change.
+- Past 10^7 line pairs the alignment is patience-anchored, not difflib's, and
+  can leave lines unmatched (see Lining up).
+- Function numbers need Neovim's grammars and `nvim-treesitter-textobjects`
+  queries; without them for a language the file has file-level numbers only,
+  and function-level numbers differ from the draft's (a different complexity
+  count and different definition boundaries), so the parity test reports them
+  without enforcing them.
+- The tree is capped at 5000 files; the rest is left out (`stats.cut`).
+- A CRLF file isn't newline-translated.
+
+Statuses of the caveats noted while building the draft:
+
+| Caveat | Status |
+|---|---|
+| A build piped into `tail` hides the exit code, so verification overcounts passes | still a limit: the result's `is_error` is all there is, and a segment is matched by how it starts |
+| Corrections and fixes are keywords on the first line of a prompt | still a limit: same patterns, deliberately strict |
+| "2 turns later" interleaves parallel sessions | still a limit |
+| Command (Bash) edits need a baseline; missing sessions leave lines unknown | still a limit: same fallbacks (tracked text, git, later text, file level); `stats` counts how often each was used |
+| `bashEditDiff` credits concurrent edits to the running command | still a limit: dropped when the tracked file already has the change (`an_has_new`), as in the draft |
+| Resumed sessions copy earlier records | fixed in the port: dedupe by tool-use id (and file or range) in `ingest.c`, turns by (time, text) kept as `EV_TURN_COPY` for the resumed session |
+| Time uses response starts with each gap capped at 5 min; the slow flag is file-level | changed only in where it runs (`active`, `ST_SLOW_X`); the rule is the same and stays a limit |
+| C defs by regex, Python by indentation; use tree-sitter textobjects | fixed in the port (`syn_defs`); new limit: a language without the grammar or query has no functions, and function numbers differ from the draft's |
+| Command reads: `sed`/`head` ranges (draft) | changed: the port reads the whole file (no ranges); readers `tail`, `less`, `more`, `<` and extension-less names are added |
