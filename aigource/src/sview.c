@@ -1288,15 +1288,16 @@ static void draw_hint(const Geo *g) {
     DrawRectangleRec(r, C_WIN);
     hline(0, r.width, r.y, C_LINE);
     float cy = r.y + r.height / 2;
-    static const char *const keys[][2] = {{"hover", "inspect + partners"}, {"click", "open"},
-                                          {"center / path / Esc", "back"}, {"1 2 3", "views"},
-                                          {"[ ]", "turns"},                {"S", "stage"}};
+    static const char *const keys[][2] = {{"hover", "inspect + partners"}, {"wheel", "scroll panel"},
+                                          {"click", "open"},               {"center / path / Esc", "back"},
+                                          {"1 2 3", "views"},              {"[ ]", "turns"},
+                                          {"S", "stage"}};
     static const char *const flags[] = {"corrected / interrupted", "untested / failing", "changed unread", "slow"};
     static const int fk[] = {STK_CORR, STK_TEST, STK_BLIND, STK_SLOW};
     float kw = 0;
     for (int i = 0; i < 4; i++) kw += 13 + sv_tw(F_MONO, flags[i], 12) + (i ? 12 : 0);
     float kx = r.width - 12 - kw, x = 12;
-    for (int i = 0; i < 6; i++) {
+    for (int i = 0; i < 7; i++) {
         float w = sv_tw(F_MONO_B, keys[i][0], 12) + 6 + sv_tw(F_MONO, keys[i][1], 12);
         if (x + w > kx - 18) break;
         sv_tx(F_MONO_B, keys[i][0], x, sv_mid(cy, 12), 12, C_DIM);
@@ -1414,7 +1415,9 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
         }
         drop_press(s);
     }
-    if (wheel != 0 && ready && CheckCollisionPointRec(mp, g.insp))
+    /* Over the stage the wheel scrolls the panel too (si_wheel: outside the code box), so the hovered
+     * node's panel reads without crossing other nodes to reach it. */
+    if (wheel != 0 && ready && (CheckCollisionPointRec(mp, g.insp) || CheckCollisionPointRec(mp, g.stage)))
         si_wheel(&s->insp, g.insp, mp, wheel, IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT));
     if (ready && s->view == 2 && l->sim.n) {
         s->clock += dt;
