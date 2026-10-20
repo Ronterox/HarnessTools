@@ -1,0 +1,1050 @@
+<title>aigource Structure Draft</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: one app window like aigource's own (dark, single theme): view tabs and path on top, the chart left, an inspector right. */
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --win: #10161e;
+  --panel: #131a23;
+  --raised: #18212c;
+  --line: #253041;
+  --fg: #e6edf3;
+  --dim: #8b949e;
+  --faint: #5b6673;
+  --hot: #f2a541;
+  --focus: #9ecbff;
+  --add: #56d364;
+  --del: #f85149;
+  --f-corr: #ff7b72;   /* flag: a correction or an interruption followed */
+  --f-test: #e3b341;   /* flag: untested, or the test after it failed */
+  --f-blind: #bc8cff;  /* flag: changed without reading it first */
+  --f-slow: #39c5cf;   /* flag: took far longer per turn than its peers */
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+html, body { background: var(--bg); color: var(--fg); }
+body {
+  font: 14px/1.5 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+}
+.app { max-width: 1440px; margin: 0 auto; display: grid; gap: 12px; }
+.window {
+  display: grid; grid-template-rows: auto auto 1fr auto auto;
+  height: clamp(580px, calc(100vh - 80px), 940px);
+  background: var(--win); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+}
+.bar { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font: 600 14px var(--mono); color: var(--fg); }
+.brand span { color: var(--dim); font-weight: 400; }
+.tabs, .modes { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs button, .modes button {
+  font: 500 13px var(--sans); color: var(--dim); background: transparent; border: 1px solid transparent;
+  border-radius: 5px; padding: 4px 10px; cursor: pointer;
+}
+.tabs button kbd { font: 11px var(--mono); color: var(--faint); margin-left: 6px; }
+.tabs button:hover, .modes button:hover { color: var(--fg); background: var(--raised); }
+.tabs button[aria-selected="true"] { color: var(--fg); background: var(--raised); border-color: var(--line); }
+.tabs button[aria-selected="true"] kbd { color: var(--dim); }
+.modes { margin-left: auto; align-items: center; }
+.modes .label { font-size: 12px; color: var(--faint); margin-right: 2px; }
+.modes button[aria-pressed="true"] { color: var(--bg); background: var(--hot); }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.crumbs { display: flex; flex-wrap: wrap; gap: 2px; align-items: center; padding: 6px 12px; font: 13px var(--mono); border-bottom: 1px solid var(--line); min-height: 34px; }
+.crumbs button { font: inherit; color: var(--focus); background: none; border: 0; padding: 2px 5px; border-radius: 4px; cursor: pointer; }
+.crumbs button:hover { background: var(--raised); }
+.crumbs .sep { color: var(--faint); }
+.crumbs .here { color: var(--fg); padding: 2px 5px; }
+.crumbs .scale { margin-left: auto; display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--faint); }
+.crumbs .scale i { width: 120px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, #1e2b40, #3b5a7a 30%, #c98a3d 70%, var(--hot)); }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 420px; min-height: 0; }
+.stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+.stage svg { display: block; width: 100%; height: 100%; }
+.stage text { font-family: var(--mono); pointer-events: none; }
+.node { cursor: pointer; }
+.node.lit > .shape { stroke: var(--focus) !important; stroke-width: 2px !important; }
+.node.partner > .shape { stroke: #ffffff !important; stroke-width: 1.5px !important; }
+.arcs { pointer-events: none; }
+.inspector { border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; overflow-x: hidden; min-height: 0; padding: 14px 14px 24px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; }
+.inspector > div { min-width: 0; }
+.inspector h2 { margin: 0; font: 600 16px var(--mono); overflow-wrap: anywhere; }
+.chip { display: inline-block; font: 600 10.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--dim); border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; margin-right: 6px; vertical-align: 2px; }
+.path { font: 12px var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.stats { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12.5px var(--mono); color: var(--dim); }
+.stats b { color: var(--fg); font-weight: 600; }
+.stats .a { color: var(--add); } .stats .d { color: var(--del); }
+.stats .cx { color: var(--fg); border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; }
+.stats .cx.high { border-color: var(--hot); color: var(--hot); }
+.inspector h3 { margin: 0 0 6px; font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.code { display: grid; grid-template-columns: 6px auto minmax(0, 1fr); max-height: 320px; overflow: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 5px; font: 12px var(--mono); }
+.code pre { margin: 0; padding: 6px 10px; line-height: 18px; }
+.code .strips { padding: 6px 0; position: sticky; left: 0; z-index: 1; background: var(--bg); }
+.code .strips div { height: 18px; cursor: default; }
+.code .strips.focus div:not(.on) { opacity: .15; }
+.code .gutter { color: var(--faint); text-align: right; user-select: none; border-right: 1px solid var(--line); position: sticky; left: 6px; background: var(--bg); }
+.code .src { color: var(--fg); }
+.blame-card { margin-top: 6px; font-size: 12.5px; color: var(--dim); border-left: 3px solid var(--line); padding: 2px 0 2px 9px; min-height: 40px; }
+.blame-card b { color: var(--fg); font-weight: 500; }
+.blame-card .q { color: #c9d1d9; display: block; margin-top: 2px; white-space: pre-wrap; max-height: 7.5em; overflow: hidden; }
+.legend { display: grid; gap: 1px; margin-top: 8px; }
+.legend div { display: flex; gap: 8px; align-items: baseline; font-size: 12.5px; color: var(--dim); padding: 1px 4px; border-radius: 3px; cursor: default; }
+.legend div:hover { background: var(--raised); color: var(--fg); }
+.legend i { flex: none; width: 10px; height: 10px; border-radius: 2px; transform: translateY(1px); }
+.legend span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend em { flex: none; padding-right: 2px; font: 11.5px var(--mono); font-style: normal; color: var(--faint); }
+.more { font: 12px var(--mono); color: var(--faint); margin-top: 4px; }
+.turn { display: grid; gap: 6px; padding: 10px 0 2px; border-top: 1px solid var(--line); }
+.turn:first-of-type { border-top: 0; padding-top: 0; }
+.turn .title { font-size: 13.5px; color: var(--fg); display: flex; gap: 8px; align-items: baseline; }
+.turn .title::before { content: "›"; color: var(--hot); font-weight: 600; }
+.turn .meta { font: 11.5px var(--mono); color: var(--faint); display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.turn .meta .a { color: var(--add); } .turn .meta .d { color: var(--del); }
+.flag { font: 600 10.5px var(--mono); border-radius: 3px; padding: 0 5px; border: 1px solid; }
+.flag.corr { color: var(--f-corr); border-color: var(--f-corr); }
+.flag.test { color: var(--f-test); border-color: var(--f-test); }
+.flag.blind { color: var(--f-blind); border-color: var(--f-blind); }
+.flag.slow { color: var(--f-slow); border-color: var(--f-slow); }
+.flag.fix { color: var(--bg); background: var(--f-corr); border-color: var(--f-corr); }
+.flag.grow { color: var(--hot); border-color: var(--hot); }
+.trend svg { display: block; width: 100%; height: 64px; overflow: visible; }
+.trend .sum { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font: 12px var(--mono); color: var(--dim); margin-top: 4px; }
+.trend .sum b { color: var(--fg); font-weight: 600; }
+.trend .k { display: inline-block; width: 12px; height: 2px; vertical-align: 3px; margin-right: 5px; }
+.pairs { display: grid; gap: 4px; margin-top: 6px; }
+.pairs div { font-size: 12.5px; color: var(--dim); display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; }
+.pairs span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pairs b { color: #c9d1d9; font-weight: 400; }
+.pairs em { font: 11.5px var(--mono); font-style: normal; color: var(--faint); }
+.big { font: 600 13.5px var(--sans); color: var(--fg); }
+.stack { display: flex; height: 10px; border-radius: 3px; overflow: hidden; margin: 6px 0 8px; background: var(--bg); }
+.stack i { display: block; height: 100%; }
+.who-list .kind { flex: none !important; font: 600 10px var(--mono); color: var(--faint); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+.crumbs .scale .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 4px 0 8px; vertical-align: -1px; }
+.note { background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; font-size: 13px; color: #c9d1d9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.note.earlier { background: transparent; border-style: dashed; color: var(--dim); }
+.note .who { display: block; font: 600 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); margin-bottom: 3px; }
+.note code, .blame-card code { font: 12px var(--mono); color: #d2a8ff; }
+.flags { display: grid; gap: 6px; }
+.flags div { display: grid; grid-template-columns: 10px 1fr; gap: 8px; font-size: 13px; color: #c9d1d9; }
+.flags i { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; }
+.flags small { display: block; color: var(--dim); font-size: 12px; }
+.list { display: grid; gap: 2px; }
+.list button { display: flex; justify-content: space-between; gap: 10px; text-align: left; font: 12.5px var(--mono); color: var(--fg); background: none; border: 0; border-radius: 4px; padding: 3px 6px; cursor: pointer; }
+.list button:hover { background: var(--raised); }
+.list button > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.list button > span:last-child { color: var(--dim); white-space: nowrap; }
+.list .sw { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+.list .ctx { color: var(--faint); }
+.list .cross { color: var(--f-corr); font-size: 10.5px; border: 1px solid; border-radius: 3px; padding: 0 4px; margin-left: 6px; }
+.empty { color: var(--faint); font-size: 13px; }
+.node.dim { opacity: .14; }
+.turnbar { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.turnbar .lbl { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.turnbar .ticks { flex: 1; display: flex; gap: 2px; align-items: flex-end; height: 22px; min-width: 0; }
+.turnbar .ticks button { flex: 1 1 0; min-width: 4px; border: 0; padding: 0; border-radius: 2px 2px 0 0; cursor: pointer; background: #3b5a7a; }
+.turnbar .ticks button.fix { background: var(--f-corr); }
+.turnbar .ticks button.slow { box-shadow: inset 0 3px 0 var(--f-slow); }
+.turnbar .ticks button:hover { filter: brightness(1.4); }
+.turnbar .ticks button[aria-pressed="true"] { background: var(--hot); outline: 1px solid var(--fg); }
+.turnbar .nav { display: flex; gap: 2px; }
+.turnbar .nav button { font: 13px var(--mono); color: var(--dim); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; width: 24px; height: 22px; cursor: pointer; }
+.turnbar .cur { font-size: 12.5px; color: var(--dim); max-width: 38%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.turnbar .cur b { color: var(--fg); font-weight: 500; }
+.turn .title[data-turn] { cursor: pointer; }
+.turn .title[data-turn]:hover { color: var(--focus); }
+.hint { display: flex; gap: 18px; flex-wrap: wrap; padding: 6px 12px; border-top: 1px solid var(--line); font: 12px var(--mono); color: var(--faint); align-items: center; }
+.hint b { color: var(--dim); font-weight: 600; }
+.hint .key { margin-left: auto; display: flex; gap: 12px; }
+.hint .key i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; }
+#tip { position: fixed; z-index: 20; pointer-events: none; background: #0b0f15; border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font: 12px var(--mono); color: var(--dim); white-space: nowrap; }
+#tip b { color: var(--fg); }
+.about { font-size: 13px; color: var(--dim); max-width: 100ch; margin: 0; }
+/* GitHub-dark syntax colors, as in aigource's detail window */
+.hljs-keyword, .hljs-meta .hljs-keyword, .hljs-type.hljs-keyword { color: #ff7b72; }
+.hljs-string, .hljs-meta .hljs-string { color: #a5d6ff; }
+.hljs-comment { color: #8b949e; font-style: italic; }
+.hljs-title, .hljs-title.function_ { color: #d2a8ff; }
+.hljs-type, .hljs-built_in, .hljs-title.class_ { color: #ffa657; }
+.hljs-number, .hljs-literal { color: #79c0ff; }
+.hljs-meta { color: #ff7b72; }
+.hljs-params { color: #e6edf3; }
+.hljs-attr, .hljs-variable, .hljs-property { color: #79c0ff; }
+@media (max-width: 900px) {
+  .window { height: auto; grid-template-rows: auto auto auto auto auto; }
+  .body { grid-template-columns: 1fr; }
+  .stage { height: 460px; }
+  .inspector { border-left: 0; border-top: 1px solid var(--line); max-height: 560px; }
+  .modes { margin-left: 0; }
+  .crumbs .scale, .hint .key { margin-left: 0; }
+  .crumbs .scale { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <div class="window">
+    <div class="bar">
+      <div class="brand">aigource <span>· structure</span></div>
+      <div class="tabs" role="tablist" aria-label="View">
+        <button type="button" role="tab" id="tab-icicle" data-view="icicle">Icicle<kbd>1</kbd></button>
+        <button type="button" role="tab" id="tab-treemap" data-view="treemap">Treemap<kbd>2</kbd></button>
+        <button type="button" role="tab" id="tab-floating" data-view="floating">Floating nodes<kbd>3</kbd></button>
+      </div>
+      <div class="modes" role="group" aria-label="Color by">
+        <span class="label">heat</span>
+        <button type="button" id="mode-turns" data-mode="turns" title="How many turns changed it">turns</button>
+        <button type="button" id="mode-lines" data-mode="lines" title="Lines added and removed">lines</button>
+        <button type="button" id="mode-risk" data-mode="risk" title="Turns × complexity: changed often and hard to follow">risk</button>
+        <button type="button" id="mode-rework" data-mode="rework" title="Lines rewritten within 2 turns of being written">rework</button>
+        <button type="button" id="mode-fixes" data-mode="fixes" title="Turns that were fixes: the prompt reports a problem">fixes</button>
+        <button type="button" id="mode-context" data-mode="context" title="Reads and searches the agent needed before touching it, per turn">context</button>
+        <button type="button" id="mode-cost" data-mode="cost" title="Output tokens the agent spent on the changes to it">cost</button>
+        <button type="button" id="mode-time" data-mode="time" title="Agent time spent on the changes to it">time</button>
+        <button type="button" id="mode-age" data-mode="age" title="How recently today's lines were written: newest is hottest">age</button>
+        <button type="button" id="mode-owner" data-mode="owner" title="Which session or subagent wrote most of today's lines">owner</button>
+      </div>
+    </div>
+    <nav class="crumbs" aria-label="Where you are"></nav>
+    <div class="body">
+      <div class="stage" id="stage"></div>
+      <aside class="inspector" id="inspector" aria-live="polite"></aside>
+    </div>
+    <div class="turnbar">
+      <span class="lbl" title="Bar height: lines changed · bar width: time the turn took">Turns</span>
+      <div class="nav"><button type="button" id="turn-prev" title="Previous turn ([)">‹</button><button type="button" id="turn-next" title="Next turn (])">›</button></div>
+      <div class="ticks" role="group" aria-label="Turns in time order"></div>
+      <span class="cur" id="turn-cur">pick a turn: everything one prompt changed</span>
+    </div>
+    <div class="hint">
+      <span><b>hover</b> inspect + partners</span><span><b>click</b> open</span><span><b>center / path / Esc</b> back</span><span><b>1 2 3</b> views</span>
+      <span class="key"><span><i style="background:var(--f-corr)"></i>corrected / interrupted</span><span><i style="background:var(--f-test)"></i>untested / failing</span><span><i style="background:var(--f-blind)"></i>changed unread</span><span><i style="background:var(--f-slow)"></i>slow</span></span>
+    </div>
+  </div>
+  <p class="about">Draft on real data: this repo's <code>aigource/src</code> and <code>aic/aic</code> as they are now, from the Claude Code transcripts. Every change is replayed on the file as it was then (Edit/Write results; command changes lined up with git), so each line of today's code knows the change that wrote it, and each change knows the functions it landed in. A turn is one prompt; a subagent's work counts toward the turn running at that time. Comments are what the agent wrote just before the change, or its latest words in that turn when it wrote nothing then. Partners are what changed in the same turns (at least two). Flags: <b>changed unread</b>, no Read, <code>cat</code> or <code>sed -n</code> of that function (nor an earlier write of it) in the agent's context since its last compaction; <b>untested / failing</b>, no build or test run later in that turn, or the last one failed; <b>corrected</b>, the next prompt reads like a correction; <b>interrupted</b>, you stopped the turn; <b>slow</b>, a file whose agent time per turn is over twice the average file's (time runs between responses, a gap over 5 min counts as 5 min). <b>Rework</b>: lines rewritten within 2 turns of being written (in time order). <b>Fixes</b>: turns whose prompt reports a problem (bug, broken, doesn't work, can't, still, wrong…). <b>Trend</b>: each function's size and complexity right after every change that touched it. <b>Context</b>: what the agent had read (Read, <code>cat</code>, <code>sed -n</code>…) and searched (Grep, Glob, <code>grep</code>, <code>rg</code>…) in the turn before its first change to it. <b>Cost</b>: output tokens and agent time of the responses leading to each change. <b>Age</b>: how long before the last change each of today's lines was written. <b>Owner</b>: the session (by its title) or subagent (by its type and task) that wrote most of today's lines. <b>Turns</b> (bottom strip, <code>[</code> <code>]</code>): pick one to see everything that prompt changed, what it read, what the agent said, and how much of its code is still there.</p>
+</div>
+<div id="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+const RAW = __DATA__;
+const TURNS = RAW.turns, NOTES = RAW.comments, CHANGES = RAW.changes, PATHS = RAW.paths;
+/* change: [turn, comment, tool, verify (0 none, 1 ok, 2 failed), reads, searches (in its turn before it), [[path, times read]],
+ *          time (s), actor, output tokens, new input tokens, cached input tokens, agent seconds] */
+const ACTORS = RAW.actors;
+const NOW = d3.max(CHANGES, c => c[7]), FIRST = d3.min(CHANGES, c => c[7]);
+const fmtK = n => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(n);
+const fmtAge = s => s < 3600 ? Math.max(1, Math.round(s / 60)) + " min" : s < 86400 ? Math.round(s / 3600) + " h" : Math.round(s / 86400) + " d";
+const fmtDur = s => s < 60 ? s + " s" : s < 3600 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h";
+
+/* Turns in time order: how far apart two changes are. */
+const RANK = []; TURNS.map((t, i) => i).sort((a, b) => TURNS[a].ts.localeCompare(TURNS[b].ts)).forEach((t, r) => RANK[t] = r);
+const REWORK_TURNS = 2;
+
+/* ---- one model for every view ---- */
+function prep(n, parentPath) {
+  while (n.kind === "dir" && parentPath !== "" && n.kids.length === 1 && n.kids[0].kind === "dir")
+    n = { ...n.kids[0], name: n.name + "/" + n.kids[0].name }; /* a folder chain shows as one node, as on the stage */
+  n.id = parentPath ? parentPath + "/" + n.name : n.name;
+  n.kids = (n.kids || []).map(k => prep(k, n.id));
+  if (n.kind === "dir") {
+    n.ch = n.kids.flatMap(k => k.ch);
+    n.rw = n.kids.flatMap(k => k.rw);
+    n.lines = d3.sum(n.kids, k => k.lines);
+    n.cx = d3.sum(n.kids, k => k.cx);
+  }
+  n.turnSet = new Set(n.ch.map(c => CHANGES[c[0]][0]));
+  n.turns = n.turnSet.size;
+  n.edits = n.ch.length;
+  n.add = d3.sum(n.ch, c => c[1]);
+  n.dels = d3.sum(n.ch, c => c[2]);
+  /* rework: lines written, then rewritten within REWORK_TURNS turns */
+  n.rw = n.rw || [];
+  n.rework = n.reworkSame = 0;
+  for (const [o, c, k] of n.rw) {
+    const gap = RANK[CHANGES[c][0]] - RANK[CHANGES[o][0]];
+    if (gap >= 0 && gap <= REWORK_TURNS) n.rework += k;
+    if (gap === 0) n.reworkSame += k;
+  }
+  n.fixTurns = [...n.turnSet].filter(t => TURNS[t].fix).length;
+  /* context cost: per turn, what the agent had read and searched before its first change here */
+  const first = new Map();
+  for (const c of n.ch) { const t = CHANGES[c[0]][0]; if (!first.has(t) || c[0] < first.get(t)) first.set(t, c[0]); }
+  n.ctxFirst = [...first.values()];
+  n.ctxAvg = n.ctxFirst.length ? d3.mean(n.ctxFirst, c => CHANGES[c][4] + CHANGES[c][5]) : 0;
+  const ts = [...n.turnSet];
+  n.flags = {
+    corrected: ts.filter(t => TURNS[t].corr).length,
+    interrupted: ts.filter(t => TURNS[t].intr).length,
+    untested: n.ch.filter(c => CHANGES[c[0]][3] === 0).length,
+    failing: n.ch.filter(c => CHANGES[c[0]][3] === 2).length,
+    blind: n.ch.filter(c => c[3]).length,
+    slow: 0, /* set once times are known, below */
+  };
+  return n;
+}
+const DATA = prep(RAW.tree, "");
+const own = d => d.kids.length ? Math.max(0, d.lines - d3.sum(d.kids, k => k.lines)) : d.lines;
+const ROOT = d3.hierarchy(DATA, d => d.kids.length ? d.kids : null).sum(own).sort((a, b) => b.value - a.value);
+const BY_ID = new Map(ROOT.descendants().map(n => [n.data.id, n]));
+
+const fileOf = n => n.ancestors().find(a => a.data.kind === "file");
+const isDef = n => n.data.kind === "function" || n.data.kind === "class";
+
+/* 10–12. Per node: tokens and time of its changes; who wrote today's lines and how old they are. */
+const AGE_BUCKETS = [["< 1 h", 3600], ["< 1 day", 86400], ["< 1 week", 7 * 86400], ["older", Infinity]];
+const linesBy = ch => { const m = new Map(); for (const [c, a, r] of ch) m.set(c, (m.get(c) || 0) + a + r); return m; };
+const lineShare = (ch, fileCh) => { const mine = linesBy(ch), all = linesBy(fileCh); return c => all.get(c) ? Math.min(1, (mine.get(c) || 0) / all.get(c)) : 1; };
+const originsOf = f => f.data._origins ||= f.data.blame.flatMap(([k, c]) => Array(k).fill(c));
+for (const n of ROOT.descendants().reverse()) { /* children first */
+  const d = n.data, cids = [...new Set(d.ch.map(c => c[0]))];
+  /* a function gets the share of each change that its lines are of the file's, so one call writing 30 functions doesn't count 30 times */
+  const share = isDef(n) ? lineShare(d.ch, fileOf(n).data.ch) : () => 1;
+  d.tok = [9, 10, 11, 12].map(i => Math.round(d3.sum(cids, c => CHANGES[c][i] * share(c))));
+  let own = new Map(), ages = [];
+  if (d.kind === "dir") {
+    for (const k of n.children || []) { for (const [a, v] of k.data.own) own.set(a, (own.get(a) || 0) + v); ages = ages.concat(k.data.ages); }
+  } else {
+    const o = originsOf(fileOf(n)), lines = d.kind === "file" ? o : o.slice(d.a - 1, d.b);
+    for (const c of lines) {
+      const a = c >= 0 ? CHANGES[c][8] : -1;
+      own.set(a, (own.get(a) || 0) + 1);
+      ages.push(c >= 0 ? NOW - CHANGES[c][7] : Infinity);
+    }
+  }
+  d.own = own;
+  d.ages = ages;
+  const known = ages.filter(x => x !== Infinity).sort((a, b) => a - b);
+  d.ageMedian = known.length ? known[Math.floor(known.length / 2)] : null;
+  d.owner = [...own.entries()].filter(([a]) => a >= 0).sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
+}
+const ACTOR_TOTAL = ROOT.data.own;
+const ACTOR_PALETTE = ["#4e9be6", "#f28e2b", "#59c27a", "#e15759", "#b07aa1", "#edc948", "#76b7b2", "#ff9da7"];
+const ACTOR_COLOR = new Map([...ACTOR_TOTAL.entries()].filter(([a]) => a >= 0).sort((a, b) => b[1] - a[1]).map(([a], i) => [a, ACTOR_PALETTE[i % ACTOR_PALETTE.length]]));
+ACTOR_COLOR.set(-1, "#2a3442");
+const actorName = a => a < 0 ? "before these transcripts" : ACTORS[a].kind === "subagent" ? `${ACTORS[a].name.replace(/^.*:/, "")} · ${ACTORS[a].task}` : ACTORS[a].name;
+const AGE_SPAN = Math.max(3600, NOW - FIRST);
+
+/* Heat next to the busiest node of the same level (folders, files, functions/classes), log scale. */
+const ramp = d3.scaleLinear().domain([0, 0.3, 0.7, 1]).range(["#1e2b40", "#3b5a7a", "#c98a3d", "#f2a541"]).interpolate(d3.interpolateLab).clamp(true);
+const level = d => d.kind === "dir" || d.kind === "file" ? d.kind : "def";
+const METRIC = { turns: d => d.turns, lines: d => d.add + d.dels, risk: d => d.turns * (d.cx || 0),
+                 rework: d => d.rework, fixes: d => d.fixTurns, context: d => d.ctxAvg, cost: d => d.tok[0], time: d => d.tok[3],
+                 age: d => d.ageMedian == null ? 0 : 1 - Math.log1p(d.ageMedian / 60) / Math.log1p(AGE_SPAN / 60),
+                 owner: d => d.turns };
+const METRIC_WORD = { turns: d => plural(d.turns, "turn"), lines: d => `+${d.add} −${d.dels}`, risk: d => `${plural(d.turns, "turn")} · cx ${d.cx || 0}`,
+                      rework: d => `${d.rework} ln reworked`, fixes: d => plural(d.fixTurns, "fix turn"),
+                      context: d => `${d.ctxAvg.toFixed(1)} reads/turn`, cost: d => `${fmtK(d.tok[0])} out · ${fmtDur(d.tok[3])}`,
+                      time: d => `${fmtDur(d.tok[3])}${d.turns ? ` · ${fmtDur(Math.round(perTurn(d)))}/turn` : ""}`,
+                      age: d => d.ageMedian == null ? "older" : `median ${fmtAge(d.ageMedian)}`,
+                      owner: d => (actorName(d.owner).split(" · ")[0]).slice(0, 24) };
+const MAX = {};
+for (const n of ROOT.descendants())
+  for (const m in METRIC) {
+    const k = level(n.data) + m;
+    MAX[k] = Math.max(MAX[k] || 1, METRIC[m](n.data));
+  }
+/* Slow: agent time per turn on a file, next to the average file. A folder counts its slow files. Functions get no flag:
+   their time is a share of each change by lines, too rough to call one slow (their median is seconds). */
+const SLOW_X = 2;
+const perTurn = d => d.turns ? d.tok[3] / d.turns : 0;
+const AVG_TIME = {};
+for (const lv of ["file", "def"]) AVG_TIME[lv] = d3.mean(ROOT.descendants().filter(n => n.data.turns && level(n.data) === lv), n => perTurn(n.data)) || 0;
+for (const n of ROOT.descendants().reverse()) { /* children first */
+  const d = n.data;
+  d.flags.slow = d.kind === "dir" ? d3.sum(n.children || [], k => k.data.flags.slow)
+                : d.kind === "file" ? +(d.turns > 0 && AVG_TIME.file > 0 && perTurn(d) >= SLOW_X * AVG_TIME.file) : 0;
+}
+const TURN_AVG = d3.mean(TURNS, t => t.secs) || 0;
+const slowTurn = t => TURN_AVG > 0 && TURNS[t].secs >= SLOW_X * TURN_AVG;
+const S = { view: "floating", mode: "turns", focus: ROOT, shown: ROOT, sim: null };
+/* age is already 0..1 (newest 1); owner is a color per session/subagent, not a scale */
+const heat = d => S.mode === "age" ? METRIC.age(d) : Math.log1p(METRIC[S.mode](d)) / Math.log1p(MAX[level(d) + S.mode]);
+const fill = d => {
+  const c = S.mode === "owner" ? ACTOR_COLOR.get(d.owner) : ramp(heat(d));
+  return d.kind === "dir" ? d3.color(c).darker(0.5) : c;
+};
+const ink = c => d3.hsl(c).l > 0.55 ? "#0d1117" : "#e6edf3";
+const kindWord = { dir: "folder", file: "file", class: "class", function: "function" };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const CW = 7.2;
+const clip = (s, px) => { const n = Math.floor((px - 8) / CW); return n >= s.length ? s : n >= 3 ? s.slice(0, n - 1) + "…" : ""; };
+const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+const FLAG_COLORS = { corr: "#ff7b72", test: "#e3b341", blind: "#bc8cff", slow: "#39c5cf" };
+const flagKinds = d => { const f = d.flags; return [f.corrected + f.interrupted && "corr", f.untested + f.failing && "test", f.blind && "blind", f.slow && "slow"].filter(Boolean); };
+const CX_HIGH = 15; /* branch points past which a function is hard to follow */
+
+/* ---- change coupling: what changed in the same turns ---- */
+const PEERS = { file: ROOT.descendants().filter(n => n.data.kind === "file" && n.data.turns),
+                def: ROOT.descendants().filter(n => isDef(n) && n.data.turns) };
+const partnerCache = new Map();
+function partners(n) {
+  const lv = n.data.kind === "file" ? "file" : isDef(n) ? "def" : null;
+  if (!lv || n.data.turns < 2) return [];
+  if (partnerCache.has(n)) return partnerCache.get(n);
+  const mine = n.data.turnSet, out = [];
+  for (const p of PEERS[lv]) {
+    if (p === n || p.ancestors().includes(n) || n.ancestors().includes(p)) continue;
+    let shared = 0;
+    for (const t of p.data.turnSet) shared += mine.has(t);
+    if (shared >= 2) out.push({ node: p, shared, degree: shared / Math.min(n.data.turns, p.data.turns),
+                                cross: lv === "file" ? p.parent !== n.parent : fileOf(p) !== fileOf(n) });
+  }
+  out.sort((a, b) => b.shared - a.shared || b.degree - a.degree);
+  partnerCache.set(n, out.slice(0, 8));
+  return out.slice(0, 8);
+}
+
+/* Arcs from the inspected node to its partners, in whatever view is on: to the partner, or to the nearest
+ * thing on screen that holds it (dashed). pos(id) is the view's own position lookup. */
+const ARC = { g: null, pos: () => null, list: [], from: null };
+function setArcs(n) {
+  ARC.from = n;
+  ARC.list = [];
+  if (ARC.g && ARC.pos(n.data.id)) {
+    const seen = new Set();
+    for (const p of partners(n)) {
+      const vis = p.node.ancestors().find(a => ARC.pos(a.data.id));
+      if (!vis || vis.ancestors().includes(n) || n.ancestors().includes(vis) || seen.has(vis)) continue;
+      seen.add(vis);
+      ARC.list.push({ ...p, vis, exact: vis === p.node });
+    }
+  }
+  d3.selectAll(".partner").classed("partner", false);
+  ARC.list.forEach(a => d3.selectAll(`[data-id="${CSS.escape(a.vis.data.id)}"]`).classed("partner", true));
+  drawArcs();
+}
+function drawArcs() {
+  if (!ARC.g) return;
+  const a = ARC.from && ARC.pos(ARC.from.data.id);
+  ARC.g.selectAll("path").data(a ? ARC.list : []).join("path")
+    .attr("fill", "none")
+    .attr("stroke", x => x.cross ? "#ff7b72" : "#9ecbff")
+    .attr("stroke-width", x => 1 + Math.min(x.shared, 6) * 0.45).attr("stroke-opacity", 0.8)
+    .attr("stroke-dasharray", x => x.exact ? null : "4 4")
+    .attr("d", x => {
+      /* from edge to edge where the shapes are circles, so names inside stay readable */
+      const b = ARC.pos(x.vis.data.id), dx = b.x - a.x, dy = b.y - a.y, len = Math.hypot(dx, dy) || 1, k = 0.22;
+      const ra = Math.min(a.r || 0, len / 3), rb = Math.min(b.r || 0, len / 3);
+      const ax = a.x + dx / len * ra, ay = a.y + dy / len * ra, bx = b.x - dx / len * rb, by = b.y - dy / len * rb;
+      return `M${ax},${ay} Q${(ax + bx) / 2 - dy * k},${(ay + by) / 2 + dx * k} ${bx},${by}`;
+    });
+}
+
+/* ---- inspector ---- */
+const insp = document.getElementById("inspector");
+const when = ts => new Date(ts).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const md = s => esc(s).replace(/`([^`\n]+)`/g, "<code>$1</code>").replace(/\*\*([^*\n]+)\*\*/g, "<b>$1</b>");
+const noteOf = c => { const ix = c >= 0 ? c : -1 - c; return { text: NOTES[ix] || "", earlier: c < 0 }; };
+const fileCache = new Map();
+function fileData(f) {
+  if (!fileCache.has(f)) {
+    const origins = f.data.blame.flatMap(([n, c]) => Array(n).fill(c));
+    fileCache.set(f, { lines: f.data.src.split("\n"), origins });
+  }
+  return fileCache.get(f);
+}
+const BLAME_COLORS = ["#f2a541", "#56d364", "#79c0ff", "#d2a8ff", "#ff7b72", "#39c5cf", "#e3b341", "#ffa198"];
+/* Who wrote these lines: per turn (newest first) a color, line count and its changes. */
+function blameOf(origins) {
+  const by = new Map();
+  origins.forEach((c, i) => {
+    const t = c >= 0 ? CHANGES[c][0] : -1;
+    if (!by.has(t)) by.set(t, { t, n: 0, cids: new Set() });
+    by.get(t).n++;
+    if (c >= 0) by.get(t).cids.add(c);
+  });
+  const rows = [...by.values()].sort((a, b) => a.t < 0 ? 1 : b.t < 0 ? -1 : TURNS[b.t].ts.localeCompare(TURNS[a.t].ts));
+  rows.forEach((r, i) => r.color = r.t < 0 ? "#2a3442" : BLAME_COLORS[i % BLAME_COLORS.length]);
+  return new Map(rows.map(r => [r.t, r]));
+}
+function legendHtml(rows, total) {
+  return `<div class="legend">` + [...rows.values()].map(r =>
+    `<div data-t="${r.t}"><i style="background:${r.color}"></i><span>${r.t < 0 ? "before these transcripts" : esc(TURNS[r.t].title)}</span><em>${r.n} ln</em></div>`).join("") + `</div>`;
+}
+function snippet(n) {
+  const f = fileOf(n), d = n.data, fd = fileData(f), MAXL = 80, b = Math.min(d.b, d.a + MAXL - 1);
+  const code = fd.lines.slice(d.a - 1, b).join("\n"), origins = fd.origins.slice(d.a - 1, b);
+  let html;
+  try { html = hljs.highlight(code, { language: f.data.lang, ignoreIllegals: true }).value; } catch { html = esc(code); }
+  const rows = blameOf(fd.origins.slice(d.a - 1, d.b));
+  const strips = origins.map((c, i) => {
+    const t = c >= 0 ? CHANGES[c][0] : -1;
+    return `<div data-c="${c}" data-t="${t}" data-l="${d.a + i}" style="background:${rows.get(t).color}"></div>`;
+  }).join("");
+  return `<div><h3>Code · lines ${d.a}–${d.b} · who wrote each line</h3>` +
+    `<div class="code"><div class="strips">${strips}</div><pre class="gutter">${d3.range(d.a, b + 1).join("\n")}</pre><pre class="src"><code>${html}</code></pre></div>` +
+    (d.b > b ? `<div class="more">… ${d.b - b} more lines</div>` : "") +
+    `<div class="blame-card">Hover the strip beside the line numbers: the turn and the comment behind each line.</div>` +
+    legendHtml(rows) + `</div>`;
+}
+function blameCard(c, line) {
+  if (c < 0) return `<b>Line ${line}</b> · written before these transcripts (or by a change they don't show).`;
+  const [t, note, tool, v] = CHANGES[c], nt = noteOf(note);
+  return `<b>Line ${line}</b> · ${esc(tool)} · ${when(TURNS[t].ts)} (${fmtAge(NOW - CHANGES[c][7])} before the last change) · ${esc(actorName(CHANGES[c][8]).split(" · ")[0])}<br><b>${esc(TURNS[t].title)}</b>` +
+    (nt.text ? `<span class="q">${nt.earlier ? "(earlier in the turn) " : ""}${md(nt.text)}</span>` : "");
+}
+function fileBlame(f) {
+  const rows = blameOf(fileData(f).origins);
+  return `<div><h3>Today's ${f.data.lines} lines by the turn that wrote them</h3>${legendHtml(rows)}</div>`;
+}
+function flagChips(r) {
+  const out = [], t = r.t;
+  if (TURNS[t].fix) out.push(`<span class="flag fix" title="The prompt reports a problem">fix</span>`);
+  if (TURNS[t].corr) out.push(`<span class="flag corr" title="Next prompt: ${esc(TURNS[t].corr)}">corrected next</span>`);
+  if (TURNS[t].intr) out.push(`<span class="flag corr">interrupted</span>`);
+  if (r.untested) out.push(`<span class="flag test">untested</span>`);
+  if (r.failing) out.push(`<span class="flag test">test failed after</span>`);
+  if (r.blind) out.push(`<span class="flag blind">changed unread</span>`);
+  return out.join("");
+}
+/* A node's turns, newest first: its changes in each, +/−, tools, flags, and (files and functions) the comments with text,
+ * once each, as CHANGES' comment values. */
+function turnRows(n) {
+  const by = new Map();
+  for (const c of n.data.ch) {
+    const t = CHANGES[c[0]][0];
+    if (!by.has(t)) by.set(t, []);
+    by.get(t).push(c);
+  }
+  return [...by.keys()].sort((a, b) => TURNS[b].ts.localeCompare(TURNS[a].ts)).map(t => {
+    const cs = by.get(t), v = cs.map(c => CHANGES[c[0]][3]), seen = new Set(), notes = [];
+    if (n.data.kind !== "dir")
+      for (const c of cs) {
+        const note = CHANGES[c[0]][1], ix = note >= 0 ? note : -1 - note;
+        if (!noteOf(note).text || seen.has(ix)) continue;
+        seen.add(ix);
+        notes.push(note);
+      }
+    return { t, cs, a: d3.sum(cs, c => c[1]), d: d3.sum(cs, c => c[2]), tools: [...new Set(cs.map(c => CHANGES[c[0]][2]))],
+             untested: v.includes(0), failing: v.includes(2), blind: cs.some(c => c[3]), notes };
+  });
+}
+function noteHtml(note, tool) {
+  const nt = noteOf(note);
+  return `<div class="note${nt.earlier ? " earlier" : ""}"><span class="who">${nt.earlier ? "earlier in the turn" : "agent, before " + esc(tool)}</span>${md(nt.text)}</div>`;
+}
+function turnsHtml(n, withNotes, maxTurns) {
+  const rows = turnRows(n);
+  if (!rows.length) return `<div><h3>Turns</h3><div class="empty">No recorded change: it was only read, or changed before these transcripts.</div></div>`;
+  let h = `<div><h3>Turns that changed it · newest first</h3>`;
+  for (const r of rows.slice(0, maxTurns)) {
+    const t = r.t;
+    h += `<div class="turn"><div class="title" data-turn="${t}" title="Everything this turn changed">${esc(TURNS[t].title)}</div>` +
+         `<div class="meta"><span>${when(TURNS[t].ts)} · ${plural(r.cs.length, "change")} by ${esc(r.tools.join(", "))} · <span class="a">+${r.a}</span> <span class="d">−${r.d}</span></span>${flagChips(r)}</div>`;
+    if (withNotes) for (const note of r.notes) h += noteHtml(note, CHANGES[r.cs.find(c => CHANGES[c[0]][1] === note)[0]][2]);
+    h += `</div>`;
+  }
+  if (rows.length > maxTurns) h += `<div class="more">… ${rows.length - maxTurns} older turns</div>`;
+  return h + `</div>`;
+}
+/* The turns that changed it and were corrected next, in the order its changes saw them. */
+const corrTurns = d => [...d.turnSet].filter(t => TURNS[t].corr);
+function flagsHtml(n) {
+  const f = n.data.flags, rows = [];
+  const corrTurns_ = corrTurns(n.data);
+  if (f.corrected) rows.push(["corr", `${plural(f.corrected, "turn")} followed by a prompt that reads like a correction`, corrTurns_.slice(0, 2).map(t => `“${esc(TURNS[t].corr)}”`).join("<br>")]);
+  if (f.interrupted) rows.push(["corr", `${plural(f.interrupted, "turn")} you interrupted`, ""]);
+  if (f.failing) rows.push(["test", `${plural(f.failing, "change")} where the last build/test after it failed`, ""]);
+  if (f.untested) rows.push(["test", `${plural(f.untested, "change")} with no build or test after it in the turn`, ""]);
+  if (f.blind) rows.push(["blind", `${plural(f.blind, "change")} made without reading that code first`, "No Read, cat or sed -n of it in the agent's context."]);
+  if (f.slow) rows.push(["slow", n.data.kind === "dir" ? `${plural(f.slow, "file")} that took over ${SLOW_X}× the average file's time per turn`
+                                  : `Slow: ${fmtDur(Math.round(perTurn(n.data)))} per turn, ${(perTurn(n.data) / AVG_TIME.file).toFixed(1)}× the average file`,
+                         n.data.kind === "dir" ? "" : `Average ${fmtDur(Math.round(AVG_TIME.file))}: agent time on its changes, per turn that changed it.`]);
+  if (!rows.length) return "";
+  return `<div><h3>Flags</h3><div class="flags">` + rows.map(([k, t, s]) =>
+    `<div><i style="background:${FLAG_COLORS[k]}"></i><span>${t}${s ? `<small>${s}</small>` : ""}</span></div>`).join("") + `</div></div>`;
+}
+/* 5. Rework: what was rewritten soon after being written, and by which turns. */
+/* (writing turn, rewriting turn, lines) pairs within REWORK_TURNS, most lines first. */
+function reworkPairs(d) {
+  const pairs = new Map();
+  for (const [o, c, k] of d.rw) {
+    const to = CHANGES[o][0], tc = CHANGES[c][0], gap = RANK[tc] - RANK[to];
+    if (gap < 0 || gap > REWORK_TURNS) continue;
+    const key = to + ">" + tc;
+    pairs.set(key, { to, tc, k: (pairs.get(key)?.k || 0) + k });
+  }
+  return [...pairs.values()].sort((a, b) => b.k - a.k);
+}
+const reworkPct = d => d.add ? Math.round(100 * Math.min(1, d.rework / d.add)) : 0;
+function reworkHtml(n) {
+  const d = n.data;
+  if (!d.add || !d.rw.length) return "";
+  const pairs = reworkPairs(d);
+  if (!pairs.length) return "";
+  const pct = reworkPct(d), top = pairs.slice(0, 4);
+  return `<div><h3>Rework</h3><div class="big">${pct}% of the lines written here were rewritten within ${REWORK_TURNS} turns</div>` +
+    `<div class="more">${d.rework} of ${d.add} lines · ${d.reworkSame} in the same turn they were written</div><div class="pairs">` +
+    top.map(p => `<div><span>${p.to === p.tc ? `<b>${esc(TURNS[p.to].title)}</b> · rewrote its own lines`
+                                            : `<b>${esc(TURNS[p.to].title)}</b> → rewritten by <b>${esc(TURNS[p.tc].title)}</b>`}</span><em>${p.k} ln</em></div>`).join("") +
+    `</div></div>`;
+}
+/* 6. Trend: size and complexity after each change, as a sparkline. */
+/* [change, lines, cx] after each change, then today's ([-1, ...]) when it differs from the last. */
+function trendPts(n) {
+  const d = n.data;
+  if (d.kind === "dir" || !d.tr.length) return [];
+  const pts = d.tr.slice();
+  if (isDef(n) ? pts.at(-1)[1] !== d.lines || pts.at(-1)[2] !== d.cx : pts.at(-1)[1] !== d.lines) pts.push([-1, d.lines, d.cx || 0]);
+  return pts;
+}
+/* First point vs last: lines 1.5× and +20, or (functions) complexity +8. */
+function growing(n, pts) {
+  if (pts.length < 2) return false;
+  const first = pts[0], last = pts.at(-1);
+  return last[1] >= first[1] * 1.5 && last[1] - first[1] >= 20 || isDef(n) && last[2] - first[2] >= 8;
+}
+function trendHtml(n) {
+  const d = n.data, pts = trendPts(n);
+  if (pts.length < 2) return "";
+  const def = isDef(n);
+  const W = 380, H = 56, x = d3.scaleLinear().domain([0, pts.length - 1]).range([4, W - 4]);
+  const yl = d3.scaleLinear().domain(d3.extent(pts, p => p[1])).nice().range([H - 4, 6]);
+  const yc = d3.scaleLinear().domain(d3.extent(pts, p => p[2])).nice().range([H - 4, 6]);
+  const path = (y, i) => d3.line().x((p, j) => x(j)).y(p => y(p[i]))(pts);
+  const label = p => p[0] < 0 ? "now" : `${TURNS[CHANGES[p[0]][0]].title}`;
+  const dots = pts.map((p, j) => `<circle cx="${x(j)}" cy="${yl(p[1])}" r="2.6" fill="#f2a541"><title>${esc(label(p))}: ${p[1]} lines${def ? `, cx ${p[2]}` : ""}</title></circle>`).join("");
+  const first = pts[0], last = pts.at(-1);
+  const grow = growing(n, pts);
+  return `<div class="trend"><h3>Size${def ? " and complexity" : ""} after each change</h3>` +
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"><line x1="0" x2="${W}" y1="${H - 4}" y2="${H - 4}" stroke="#253041"/>` +
+    (def && first[2] !== last[2] || def && d3.extent(pts, p => p[2])[0] !== d3.extent(pts, p => p[2])[1] ? `<path d="${path(yc, 2)}" fill="none" stroke="#79c0ff" stroke-width="1.5" stroke-dasharray="3 3"/>` : "") +
+    `<path d="${path(yl, 1)}" fill="none" stroke="#f2a541" stroke-width="2"/>${dots}</svg>` +
+    `<div class="sum"><span><i class="k" style="background:#f2a541"></i>lines <b>${first[1]} → ${last[1]}</b></span>` +
+    (def ? `<span><i class="k" style="background:#79c0ff"></i>cx <b>${first[2]} → ${last[2]}</b></span>` : "") +
+    `<span>${plural(pts.length - (last[0] < 0 ? 1 : 0), "change")}</span>${grow ? `<span class="flag grow">growing</span>` : ""}</div></div>`;
+}
+/* 7. Fix hotspots: turns that changed it because something was wrong. */
+function fixesHtml(n) {
+  const d = n.data;
+  if (!d.fixTurns) return "";
+  const fixes = [...d.turnSet].filter(t => TURNS[t].fix).sort((a, b) => TURNS[b].ts.localeCompare(TURNS[a].ts));
+  return `<div><h3>Fixes</h3><div class="big">${d.fixTurns} of ${plural(d.turns, "turn")} that changed it ${d.fixTurns === 1 ? "was a fix" : "were fixes"}</div><div class="pairs">` +
+    fixes.slice(0, 4).map(t => `<div><span><b>${esc(TURNS[t].title)}</b></span><em>${when(TURNS[t].ts)}</em></div>`).join("") + `</div></div>`;
+}
+/* 8. Context cost: what the agent read and searched before touching it, per turn. */
+const relOf = n => n.data.id.split("/").slice(1).join("/");
+const BY_REL = new Map(ROOT.descendants().filter(n => n.data.kind === "file").map(n => [relOf(n), n]));
+function readsOf(cids) {
+  const by = new Map();
+  for (const c of cids) for (const [p, k] of CHANGES[c][6]) by.set(p, Math.max(by.get(p) || 0, k));
+  return [...by.entries()].sort((a, b) => b[1] - a[1]);
+}
+function readList(rows, self) {
+  return `<div class="list">` + rows.slice(0, 8).map(([p, k]) => {
+    const path = PATHS[p], node = BY_REL.get(path);
+    const name = esc(path.split("/").pop()), dir = esc(path.split("/").slice(0, -1).join("/"));
+    return `<button type="button" ${node ? `data-id="${esc(node.data.id)}"` : "disabled"}><span>${name} <span class="ctx">${dir}</span>${self && path === self ? ` <span class="ctx">(itself)</span>` : ""}</span><span>${k}×</span></button>`;
+  }).join("") + `</div>`;
+}
+/* Average reads and searches before its first change, over the turns that changed it. */
+const ctxMeans = d => [d3.mean(d.ctxFirst, c => CHANGES[c][4]) || 0, d3.mean(d.ctxFirst, c => CHANGES[c][5]) || 0];
+function contextHtml(n) {
+  const d = n.data;
+  if (!d.ctxFirst.length) return "";
+  const [r, s] = ctxMeans(d);
+  const self = n.data.kind === "dir" ? null : relOf(fileOf(n));
+  const rows = readsOf(d.ctxFirst);
+  return `<div><h3>Context cost</h3><div class="big">${r.toFixed(1)} reads and ${s.toFixed(1)} searches before touching it, per turn</div>` +
+    `<div class="more">over ${plural(d.ctxFirst.length, "turn")}: what the agent had read in the turn before its first change here</div>` +
+    (rows.length ? `<h3 style="margin-top:10px">Read to change it</h3>` + readList(rows, self) : "") + `</div>`;
+}
+/* 10. Cost: tokens and agent time spent on the changes to it. */
+function costHtml(n) {
+  const d = n.data;
+  if (!d.tok[0] && !d.tok[1]) return "";
+  return `<div><h3>Cost</h3><div class="big">${fmtK(d.tok[0])} output tokens · ${fmtDur(d.tok[3])} of agent time</div>` +
+    (d.kind !== "dir" && d.turns ? `<div class="more">${fmtDur(Math.round(perTurn(d)))} per turn · the average ${level(d) === "def" ? "function" : "file"} takes ${fmtDur(Math.round(AVG_TIME[level(d)]))}</div>` : "") +
+    `<div class="more">${fmtK(d.tok[1])} new input · ${fmtK(d.tok[2])} cached input · over ${plural(new Set(d.ch.map(c => c[0])).size, "change")}: the agent's responses in each turn since its previous change</div></div>`;
+}
+/* 11. Ownership: who wrote today's lines. */
+/* [agent, lines]: known agents first, most lines first. */
+const ownerRows = d => [...d.own.entries()].sort((a, b) => (a[0] < 0) - (b[0] < 0) || b[1] - a[1]);
+function ownerHtml(n) {
+  const d = n.data, total = d3.sum([...d.own.values()]);
+  if (!total) return "";
+  const rows = ownerRows(d);
+  return `<div><h3>Who wrote today's lines</h3><div class="stack">` + rows.map(([a, k]) => `<i style="width:${100 * k / total}%;background:${ACTOR_COLOR.get(a)}" title="${esc(actorName(a))}"></i>`).join("") +
+    `</div><div class="legend who-list">` + rows.slice(0, 6).map(([a, k]) =>
+      `<div><i style="background:${ACTOR_COLOR.get(a)}"></i><span>${esc(actorName(a))}</span>${a >= 0 ? `<span class="kind">${ACTORS[a].kind}</span>` : ""}<em>${Math.round(100 * k / total)}%</em></div>`).join("") +
+    `</div><div class="more">${plural(rows.filter(r => r[0] >= 0).length, "author")}: sessions and subagents</div></div>`;
+}
+/* 12. Code age: how long ago today's lines were written. */
+/* Lines per AGE_BUCKETS bucket, and those from before these transcripts. */
+function ageBuckets(d) {
+  const counts = AGE_BUCKETS.map(() => 0);
+  let unknown = 0;
+  for (const a of d.ages) { if (a === Infinity) { unknown++; continue; } counts[AGE_BUCKETS.findIndex(b => a < b[1])]++; }
+  return { counts, unknown };
+}
+function ageHtml(n) {
+  const d = n.data, total = d.ages.length;
+  if (!total) return "";
+  const { counts, unknown } = ageBuckets(d);
+  const cols = ["#f2a541", "#c98a3d", "#3b5a7a", "#1e2b40"];
+  const parts = AGE_BUCKETS.map((b, i) => [b[0], counts[i], cols[i]]).concat([["before these transcripts", unknown, "#2a3442"]]).filter(p => p[1]);
+  return `<div><h3>Age of today's lines</h3><div class="big">${d.ageMedian == null ? "Older than these transcripts" : `Median ${fmtAge(d.ageMedian)} old`}</div>` +
+    `<div class="stack">` + parts.map(([l, k, c]) => `<i style="width:${100 * k / total}%;background:${c}" title="${l}: ${k} lines"></i>`).join("") + `</div>` +
+    `<div class="legend">` + parts.map(([l, k, c]) => `<div><i style="background:${c}"></i><span>${l}</span><em>${k} ln</em></div>`).join("") +
+    `</div><div class="more">as of the last change, ${new Date(NOW * 1000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div></div>`;
+}
+function partnersHtml(n) {
+  const ps = partners(n);
+  if (!ps.length) return n.data.kind === "file" || isDef(n) ? `<div><h3>Changes together with</h3><div class="empty">Nothing changed with it in two or more turns.</div></div>` : "";
+  return `<div><h3>Changes together with</h3><div class="list">` + ps.map(p => {
+    const ctx = isDef(p.node) ? fileOf(p.node).data.name : p.node.parent.data.name;
+    return `<button type="button" data-id="${esc(p.node.data.id)}"><span><i class="sw" style="background:${p.cross ? "#ff7b72" : "#9ecbff"}"></i>${esc(p.node.data.name)} <span class="ctx">${esc(ctx)}</span>${p.cross ? `<span class="cross">${isDef(n) ? "other file" : "other folder"}</span>` : ""}</span><span>${p.shared}/${n.data.turns} turns (${Math.round(100 * p.shared / n.data.turns)}% match)</span></button>`;
+  }).join("") + `</div></div>`;
+}
+function hottest(n, title) {
+  const kids = (n.children || []).filter(k => k.data.turns).sort((a, b) => METRIC[S.mode](b.data) - METRIC[S.mode](a.data) || b.data.turns - a.data.turns).slice(0, 8);
+  if (!kids.length) return "";
+  return `<div><h3>${title}</h3><div class="list">` + kids.map(k =>
+    `<button type="button" data-id="${esc(k.data.id)}"><span><i class="sw" style="background:${fill(k.data)}"></i>${esc(k.data.name)}</span><span>${METRIC_WORD[S.mode](k.data)}</span></button>`).join("") + `</div></div>`;
+}
+function inspect(n) {
+  if (!n) return;
+  S.shown = n;
+  const d = n.data, path = n.ancestors().reverse().slice(1, -1).map(a => a.data.name).join(" / ");
+  let h = `<div><h2><span class="chip">${kindWord[d.kind]}</span>${esc(d.name)}</h2>${path ? `<div class="path">${esc(path)}</div>` : ""}</div>`;
+  const cx = isDef(n) ? `<span class="cx${d.cx >= CX_HIGH ? " high" : ""}" title="branch points; nesting depth">cx ${d.cx} · depth ${d.depth}</span>` : d.cx ? `<span title="sum of its functions' branch points">cx ${d.cx}</span>` : "";
+  h += `<div class="stats"><span><b>${d.turns}</b> turn${d.turns === 1 ? "" : "s"}</span><span><b>${d.edits}</b> changes</span><span class="a">+${d.add}</span><span class="d">−${d.dels}</span><span>${d.lines} lines</span>${cx}</div>`;
+  h += flagsHtml(n);
+  const people = costHtml(n) + ownerHtml(n) + ageHtml(n);
+  if (isDef(n)) h += snippet(n) + trendHtml(n) + fixesHtml(n) + reworkHtml(n) + contextHtml(n) + partnersHtml(n) + people + (n.children ? hottest(n, d.kind === "class" ? "Methods" : "Nested functions") : "") + turnsHtml(n, true, 8);
+  else if (d.kind === "file") h += hottest(n, "Hottest functions") + trendHtml(n) + fixesHtml(n) + reworkHtml(n) + contextHtml(n) + partnersHtml(n) + people + fileBlame(n) + turnsHtml(n, true, 6);
+  else h += hottest(n, "Hottest inside") + fixesHtml(n) + reworkHtml(n) + contextHtml(n) + people + turnsHtml(n, false, 10);
+  insp.innerHTML = h;
+  insp.scrollTop = 0;
+  wireInspector();
+  const card = insp.querySelector(".blame-card"), strips = insp.querySelector(".strips");
+  if (strips) {
+    strips.addEventListener("mouseover", e => {
+      const s = e.target.closest("[data-c]");
+      if (!s) return;
+      card.innerHTML = blameCard(+s.dataset.c, s.dataset.l);
+      card.style.borderLeftColor = s.style.background;
+      strips.classList.add("focus");
+      strips.querySelectorAll("div").forEach(x => x.classList.toggle("on", x.dataset.c === s.dataset.c));
+    });
+    strips.addEventListener("mouseleave", () => strips.classList.remove("focus"));
+  }
+  insp.querySelectorAll(".legend [data-t]").forEach(row => {
+    row.onmouseenter = () => { if (!strips) return; strips.classList.add("focus"); strips.querySelectorAll("div").forEach(x => x.classList.toggle("on", x.dataset.t === row.dataset.t)); };
+    row.onmouseleave = () => strips && strips.classList.remove("focus");
+  });
+  setArcs(n);
+}
+/* Open a node from a list: its file or folder in view, it inspected. */
+function go(n) {
+  const holder = n.children ? n : n.parent;
+  if (holder !== S.focus) { S.focus = holder; render(); }
+  inspect(n);
+}
+
+/* ---- hover, focus, views ---- */
+const tip = document.getElementById("tip");
+const stage = document.getElementById("stage");
+let lit = null;
+function hover(n, ev) {
+  if (lit) lit.classList.remove("lit");
+  lit = ev && ev.currentTarget;
+  if (!n) { tip.hidden = true; return; }
+  lit.classList.add("lit");
+  const cx = isDef(n) ? ` · cx ${n.data.cx}` : "";
+  tip.innerHTML = `<b>${esc(n.data.name)}</b> · ${plural(n.data.turns, "turn")}${cx}`;
+  tip.hidden = false;
+  const r = tip.getBoundingClientRect();
+  let x = ev.clientX + 14, y = ev.clientY + 16;
+  if (x + r.width > innerWidth - 8) x = ev.clientX - r.width - 10;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+  if (S.shown !== n) inspect(n);
+}
+function open(n) { if (n.children && n !== S.focus) setFocus(n); else if (n === S.focus && n.parent) setFocus(n.parent); else inspect(n); }
+function bind(sel, nodeOf) {
+  sel.classed("node", true).attr("data-id", x => nodeOf(x).data.id)
+    .on("mousemove", (ev, x) => hover(nodeOf(x), ev))
+    .on("mouseleave", () => { tip.hidden = true; })
+    .on("click", (ev, x) => { if (!ev.defaultPrevented) open(nodeOf(x)); });
+}
+function setFocus(n) { S.focus = n; render(); inspect(n); }
+function crumbs() {
+  const c = document.querySelector(".crumbs"), path = S.focus.ancestors().reverse();
+  c.innerHTML = "";
+  path.forEach((n, i) => {
+    if (i) c.insertAdjacentHTML("beforeend", `<span class="sep">/</span>`);
+    if (i === path.length - 1) c.insertAdjacentHTML("beforeend", `<span class="here">${esc(n.data.name)}</span>`);
+    else {
+      const b = Object.assign(document.createElement("button"), { type: "button", textContent: n.data.name });
+      b.onclick = () => setFocus(n);
+      c.append(b);
+    }
+  });
+  const lo = { turns: "no turn", lines: "no lines", risk: "calm", rework: "kept", fixes: "no fix", context: "self-evident", cost: "cheap", time: "quick", age: "oldest" }[S.mode];
+  const hi = { turns: "most turns", lines: "most +/−", risk: "most turns × complexity", rework: "most lines rewritten soon", fixes: "most fix turns",
+               context: "most reading to change", cost: "most output tokens", time: "most agent time", age: "newest" }[S.mode];
+  if (S.mode === "owner") {
+    c.insertAdjacentHTML("beforeend", `<span class="scale">` + [...ACTOR_COLOR.entries()].filter(([a]) => a >= 0).slice(0, 6).map(([a, col]) =>
+      `<span><i class="sw" style="background:${col}"></i>${esc(actorName(a).split(" · ")[0].slice(0, 22))}</span>`).join("") + `</span>`);
+    return;
+  }
+  c.insertAdjacentHTML("beforeend", `<span class="scale">${lo}<i></i>${hi} at its level</span>`);
+}
+/* Small flag dots for a node: at (x, y) going left, in the order corr, test, blind, slow. */
+function flagDots(g, kindsOf, at) {
+  g.each(function (x) {
+    const ks = kindsOf(x);
+    if (!ks.length) return;
+    const p = at(x);
+    if (!p) return;
+    d3.select(this).selectAll("circle.flagdot").data(ks).join("circle").attr("class", "flagdot")
+      .attr("cx", (k, i) => p.x - i * 9).attr("cy", p.y).attr("r", 3.6)
+      .attr("fill", k => FLAG_COLORS[k]).attr("stroke", "#0d1117").attr("stroke-width", 1.2);
+  });
+}
+function render() {
+  if (S.sim) { S.sim.stop(); S.sim = null; }
+  stage.innerHTML = "";
+  lit = null; tip.hidden = true;
+  const W = Math.max(300, stage.clientWidth), H = Math.max(300, stage.clientHeight);
+  const svg = d3.select(stage).append("svg").attr("viewBox", `0 0 ${W} ${H}`);
+  VIEWS[S.view](svg, W, H);
+  ARC.g = svg.append("g").attr("class", "arcs");
+  crumbs();
+  document.querySelectorAll(".tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.view === S.view)));
+  document.querySelectorAll(".modes button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.mode === S.mode)));
+  if (S.shown) setArcs(S.shown);
+  applyTurn();
+}
+
+const VIEWS = {
+  /* Rows by depth below the focus, width by lines. */
+  icicle(svg, W, H) {
+    const f = S.focus, TOP = 28, rowH = (H - TOP) / Math.max(1, f.height);
+    const y0 = d => d.depth === f.depth ? 0 : TOP + (d.depth - f.depth - 1) * rowH, h = d => d.depth === f.depth ? TOP : rowH;
+    d3.partition().size([1, 1])(ROOT);
+    const sx = d3.scaleLinear().domain([f.x0, f.x1]).range([0, W]);
+    const nodes = f.descendants(), pos = new Map();
+    nodes.forEach(d => pos.set(d.data.id, { x: sx((d.x0 + d.x1) / 2), y: y0(d) + Math.min(h(d) / 2, 40) }));
+    ARC.pos = id => pos.get(id) || null;
+    const g = svg.selectAll("g").data(nodes).join("g").attr("transform", d => `translate(${sx(d.x0)},${y0(d)})`);
+    g.append("rect").attr("class", "shape").attr("width", d => Math.max(0, sx(d.x1) - sx(d.x0) - 1)).attr("height", d => h(d) - 1).attr("fill", d => fill(d.data));
+    g.append("text").attr("x", 5).attr("y", 17).attr("font-size", 12).attr("fill", d => ink(fill(d.data)))
+      .text(d => d.depth === f.depth ? `${d.data.name}  ·  ${plural(d.data.turns, "turn")} · ${d.data.lines} lines${f.parent ? "  ·  click to go up" : ""}` : clip(d.data.name, sx(d.x1) - sx(d.x0) - (flagKinds(d.data).length * 9)));
+    g.append("text").attr("x", 5).attr("y", 33).attr("font-size", 11).attr("opacity", .7).attr("fill", d => ink(fill(d.data)))
+      .text(d => d.depth > f.depth && rowH > 40 && sx(d.x1) - sx(d.x0) > 90 ? `${d.data.turns}t${d.data.cx ? ` · cx ${d.data.cx}` : ""}` : "");
+    flagDots(g, d => d.depth > f.depth ? flagKinds(d.data) : [], d => sx(d.x1) - sx(d.x0) > 14 + flagKinds(d.data).length * 9 ? { x: sx(d.x1) - sx(d.x0) - 8, y: 9 } : null);
+    bind(g, d => d);
+  },
+  /* Nested rectangles, a header strip per group. */
+  treemap(svg, W, H) {
+    const f = S.focus.copy();
+    d3.treemap().tile(d3.treemapSquarify.ratio(1.3)).size([W, H]).round(true)
+      .paddingOuter(3).paddingTop(d => d.depth === 0 ? 3 : d.children && d.y1 - d.y0 > 40 ? 18 : 3).paddingInner(2)(f);
+    const nodes = f.descendants().filter(d => d.depth > 0 || !d.children), pos = new Map();
+    nodes.forEach(d => pos.set(d.data.id, { x: (d.x0 + d.x1) / 2, y: d.children ? d.y0 + 9 : (d.y0 + d.y1) / 2 }));
+    ARC.pos = id => pos.get(id) || null;
+    const g = svg.selectAll("g").data(nodes).join("g").attr("transform", d => `translate(${d.x0},${d.y0})`);
+    g.append("rect").attr("class", "shape").attr("width", d => Math.max(0, d.x1 - d.x0)).attr("height", d => Math.max(0, d.y1 - d.y0))
+      .attr("fill", d => d.children ? d3.color(fill(d.data)).darker(0.5) : fill(d.data)).attr("stroke", "#0d1117").attr("stroke-width", .5);
+    g.append("text").attr("x", 4).attr("y", 13).attr("font-size", 11.5).attr("fill", d => ink(fill(d.data)))
+      .text(d => d.y1 - d.y0 > 16 ? clip(d.data.name, d.x1 - d.x0 - flagKinds(d.data).length * 9) : "");
+    flagDots(g, d => flagKinds(d.data), d => d.x1 - d.x0 > 14 + flagKinds(d.data).length * 9 && d.y1 - d.y0 > 12 ? { x: d.x1 - d.x0 - 7, y: 8 } : null);
+    bind(g, d => BY_ID.get(d.data.id));
+  },
+  /* One level at a time: the focus as a hub, its folders, files, classes or functions floating around it. */
+  floating(svg, W, H) {
+    const f = S.focus, kids = f.children || [];
+    svg.attr("viewBox", `${-W / 2} ${-H / 2} ${W} ${H}`);
+    const hubR = Math.max(34, Math.min(46, f.data.name.length * 3.8));
+    const area = d3.sum(kids, k => k.data.lines) || 1;
+    const k = Math.sqrt((kids.length > 40 ? 0.15 : 0.2) * W * H / (Math.PI * area));
+    const rad = n => Math.max(n.children ? 9 : 5, Math.min(Math.min(W, H) / 6, k * Math.sqrt(n.data.lines)));
+    const nodes = [{ n: f, r: hubR, hub: true, x: 0, y: 0, fx: 0, fy: 0 }].concat(kids.map((n, i) => {
+      const a = i / kids.length * 2 * Math.PI;
+      return { n, r: rad(n), x: Math.cos(a) * (hubR + 4), y: Math.sin(a) * (hubR + 4), phase: Math.random() * 6.28 };
+    }));
+    const byId = new Map(nodes.map(o => [o.n.data.id, o]));
+    ARC.pos = id => byId.get(id) || null;
+    const links = nodes.slice(1).map(o => ({ source: nodes[0], target: o }));
+    const labelBelow = o => !o.hub && o.r < 24;
+    const sim = S.sim = d3.forceSimulation(nodes)
+      .force("link", d3.forceLink(links).distance(l => hubR + l.target.r + 40).strength(0.08))
+      .force("charge", d3.forceManyBody().strength(o => o.hub ? -200 : -20 - o.r * 2.5))
+      .force("collide", d3.forceCollide(o => o.r + (labelBelow(o) ? 15 : 5)).iterations(2))
+      .force("ring", d3.forceRadial(o => o.hub ? 0 : hubR + o.r + (kids.length > 30 ? 70 : 45), 0, 0).strength(o => o.hub ? 0 : 0.05))
+      .force("x", d3.forceX(0).strength(0.02)).force("y", d3.forceY(0).strength(0.03));
+    const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still) { sim.stop(); for (let i = 0; i < 300; i++) sim.tick(); }
+    const line = svg.append("g").selectAll("line").data(links).join("line").attr("stroke", "#2c3a4f").attr("stroke-width", 1);
+    const g = svg.append("g").selectAll("g").data(nodes).join("g");
+    const isHub = o => o.hub, kind = o => o.n.data.kind;
+    g.append("circle").attr("class", "shape").attr("r", o => o.r)
+      .attr("fill", o => isHub(o) ? "#18212c" : kind(o) === "dir" ? d3.interpolateLab("#131a23", fill(o.n.data))(0.35) : o.n.children ? d3.interpolateLab("#131a23", fill(o.n.data))(0.7) : fill(o.n.data))
+      .attr("stroke", o => isHub(o) ? "#9ecbff" : kind(o) === "dir" ? fill(o.n.data) : o.n.children ? d3.color(fill(o.n.data)).brighter(0.6) : "none")
+      .attr("stroke-width", o => isHub(o) ? 2 : kind(o) === "dir" ? 3 : 1.5)
+      .attr("stroke-dasharray", o => kind(o) === "dir" && !isHub(o) ? "5 3" : null);
+    /* name: inside a big circle, under a small one; the hub's inside it */
+    g.append("text").attr("text-anchor", "middle").attr("font-size", o => isHub(o) ? 13 : 11)
+      .attr("font-weight", o => isHub(o) || kind(o) !== "function" ? 600 : 400)
+      .attr("dy", o => isHub(o) ? (f.parent ? "-0.1em" : "0.35em") : labelBelow(o) ? o.r + 12 : "0.35em")
+      .attr("fill", o => isHub(o) || labelBelow(o) ? "#e6edf3" : ink(fill(o.n.data)))
+      .attr("paint-order", "stroke").attr("stroke", o => labelBelow(o) ? "#10161e" : "none").attr("stroke-width", 3)
+      .text(o => isHub(o) ? clip(o.n.data.name, o.r * 2 + 4) : labelBelow(o) ? clip(o.n.data.name, 130) : clip(o.n.data.name, o.r * 2));
+    /* what's inside, for things that open; complexity for functions big enough */
+    g.append("text").attr("text-anchor", "middle").attr("font-size", 10).attr("dy", o => isHub(o) ? "1.3em" : "1.6em")
+      .attr("fill", o => isHub(o) ? "#8b949e" : ink(fill(o.n.data))).attr("opacity", .75)
+      .text(o => isHub(o) ? (f.parent ? "↑ back" : "") : labelBelow(o) ? "" : o.n.children ? `${o.n.children.length} inside` : isDef(o.n) ? `cx ${o.n.data.cx}` : "");
+    flagDots(g, o => isHub(o) ? [] : flagKinds(o.n.data), o => ({ x: o.r * 0.72 + 2, y: -o.r * 0.72 - 2 }));
+    bind(g, o => o.n);
+    g.call(d3.drag()
+      .on("start", (ev, o) => { if (o.hub) return; if (!ev.active) sim.alphaTarget(0.2).restart(); o.fx = o.x; o.fy = o.y; })
+      .on("drag", (ev, o) => { if (o.hub) return; o.fx = ev.x; o.fy = ev.y; })
+      .on("end", (ev, o) => { if (o.hub) return; if (!ev.active) sim.alphaTarget(still ? 0 : 0.01); o.fx = o.fy = null; }));
+    const bx = W / 2, by = H / 2;
+    const draw = () => {
+      const t = performance.now() / 1000;
+      for (const o of nodes) {
+        if (o.hub) continue;
+        if (!still && o.fx == null) { o.vx += Math.sin(t * 0.5 + o.phase) * 0.01; o.vy += Math.cos(t * 0.4 + o.phase) * 0.01; }
+        o.x = Math.max(-bx + o.r + 4, Math.min(bx - o.r - 4, o.x));
+        o.y = Math.max(-by + o.r + 8, Math.min(by - o.r - (labelBelow(o) ? 18 : 4), o.y));
+      }
+      line.attr("x1", l => l.source.x).attr("y1", l => l.source.y).attr("x2", l => l.target.x).attr("y2", l => l.target.y);
+      g.attr("transform", o => `translate(${o.x},${o.y})`);
+      drawArcs();
+    };
+    draw();
+    sim.on("tick", draw);
+    if (!still) sim.alphaTarget(0.01);
+  },
+};
+
+function setView(v) { S.view = v; render(); }
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => setView(b.dataset.view));
+document.querySelectorAll(".modes button").forEach(b => b.onclick = () => { S.mode = b.dataset.mode; render(); inspect(S.shown); });
+addEventListener("keydown", e => {
+  if (e.target.closest && e.target.closest("input, textarea")) return;
+  const v = { 1: "icicle", 2: "treemap", 3: "floating" }[e.key];
+  if (v) setView(v);
+  if (e.key === "[" || e.key === "]") stepTurn(e.key === "]" ? 1 : -1);
+  else if (e.key === "Escape" && S.turn != null) selectTurn(null);
+  else if ((e.key === "Escape" || e.key === "Backspace") && S.focus.parent) { e.preventDefault(); setFocus(S.focus.parent); }
+});
+let rt;
+new ResizeObserver(() => { clearTimeout(rt); rt = setTimeout(render, 120); }).observe(stage);
+/* ---- 9. Prompt-to-code: a turn and everything it changed ---- */
+const ORDER = TURNS.map((t, i) => i).sort((a, b) => TURNS[a].ts.localeCompare(TURNS[b].ts));
+const TINFO = TURNS.map(() => ({ files: new Map(), defs: new Map(), cids: new Set(), add: 0, del: 0, kept: 0, ids: new Set() }));
+for (const n of ROOT.descendants()) {
+  if (n.data.kind !== "file" && !isDef(n)) continue;
+  for (const [cid, a, d] of n.data.ch) {
+    const ti = TINFO[CHANGES[cid][0]], m = n.data.kind === "file" ? ti.files : ti.defs;
+    const e = m.get(n) || { a: 0, d: 0 };
+    e.a += a; e.d += d;
+    m.set(n, e);
+    ti.cids.add(cid);
+    if (n.data.kind === "file") { ti.add += a; ti.del += d; }
+    n.ancestors().forEach(x => ti.ids.add(x.data.id));
+  }
+  if (n.data.kind === "file")
+    for (const [k, c] of n.data.blame) if (c >= 0) TINFO[CHANGES[c][0]].kept += k;
+}
+/* Turn strip: height = lines changed (square root of its share of the largest turn), width = time. */
+const BAR_BIG = d3.max(ORDER, t => TINFO[t].add + TINFO[t].del) || 1;
+const barH = t => 5 + 17 * Math.sqrt((TINFO[t].add + TINFO[t].del) / BAR_BIG);
+const barW = t => 0.4 + Math.sqrt(TURNS[t].secs / (TURN_AVG || 1)); /* square root, so one long turn can't crowd out the rest */
+S.turn = null;
+function applyTurn() {
+  const ids = S.turn == null ? null : TINFO[S.turn].ids;
+  stage.querySelectorAll("[data-id]").forEach(el => el.classList.toggle("dim", !!ids && !ids.has(el.dataset.id)));
+  document.querySelectorAll(".turnbar .ticks button").forEach(b => b.setAttribute("aria-pressed", String(+b.dataset.t === S.turn)));
+  const cur = document.getElementById("turn-cur");
+  cur.innerHTML = S.turn == null ? "pick a turn: everything one prompt changed" : `<b>${esc(TURNS[S.turn].title)}</b>`;
+}
+function selectTurn(t) {
+  S.turn = t;
+  applyTurn();
+  if (t != null) inspectTurn(t);
+}
+function stepTurn(dir) {
+  const i = S.turn == null ? (dir > 0 ? -1 : ORDER.length) : ORDER.indexOf(S.turn);
+  selectTurn(ORDER[Math.max(0, Math.min(ORDER.length - 1, i + dir))]);
+}
+/* Everything inspectTurn shows of turn t, as data. */
+function turnStats(t) {
+  const T = TURNS[t], ti = TINFO[t], cids = [...ti.cids].sort((a, b) => a - b), v = cids.map(c => CHANGES[c][3]);
+  const tt = T.tok || [0, 0, 0], onChanges = d3.sum(cids, c => CHANGES[c][9]), agents = new Set(cids.map(c => CHANGES[c][8]));
+  const byAD = (a, b) => b[1].a + b[1].d - a[1].a - a[1].d, seen = new Set(), notes = [];
+  for (const c of cids) {
+    const note = CHANGES[c][1], ix = note >= 0 ? note : -1 - note;
+    if (noteOf(note).text && !seen.has(ix)) { seen.add(ix); notes.push(note); }
+  }
+  return {
+    cids, untested: v.filter(x => x === 0).length, failing: v.filter(x => x === 2).length, tested: !v.includes(0) && !v.includes(2),
+    blind: cids.some(c => [...ti.defs.keys()].some(n => n.data.ch.some(x => x[0] === c && x[3]))),
+    slow: !!slowTurn(t), slowX: TURN_AVG > 0 ? T.secs / TURN_AVG : 0,
+    survival: ti.add ? Math.round(100 * Math.min(1, ti.kept / ti.add)) : 0,
+    tok: tt, onChanges, ledPct: Math.min(100, Math.round(100 * onChanges / Math.max(1, tt[0]))), /* a turn can lack its own count (tok) */
+    agents, subagents: [...agents].some(a => ACTORS[a].kind === "subagent"),
+    files: [...ti.files.entries()].sort(byAD), defs: [...ti.defs.entries()].sort(byAD), reads: readsOf(cids), notes,
+  };
+}
+function inspectTurn(t) {
+  const T = TURNS[t], ti = TINFO[t], st = turnStats(t), cids = st.cids;
+  S.shown = null;
+  setArcs({ data: { id: "" }, ancestors: () => [] });
+  const chips = [T.fix && `<span class="flag fix">fix</span>`, T.corr && `<span class="flag corr">corrected next</span>`, T.intr && `<span class="flag corr">interrupted</span>`,
+                 st.failing && `<span class="flag test">${plural(st.failing, "change")} failing after</span>`,
+                 st.slow && `<span class="flag slow">slow: ${st.slowX.toFixed(1)}× the average turn</span>`,
+                 st.untested && `<span class="flag test">${plural(st.untested, "change")} untested</span>`,
+                 st.tested && `<span class="flag" style="color:var(--add);border-color:var(--add)">tested after</span>`,
+                 st.blind && `<span class="flag blind">changed unread</span>`].filter(Boolean).join(" ");
+  let h = `<div><h2><span class="chip">turn</span>${esc(T.title)}</h2><div class="path">${when(T.ts)} · ${ORDER.indexOf(t) + 1} of ${ORDER.length} · ${esc(actorName(T.actor))}</div></div>`;
+  const tt = st.tok, agents = st.agents;
+  const cost = `<div><h3>Cost</h3><div class="big">${fmtK(tt[0])} output tokens in this turn</div><div class="more">${fmtK(tt[1])} new input · ${fmtK(tt[2])} cached input · ${st.ledPct}% led up to these changes · ` +
+    `${plural(agents.size, "agent")} wrote them${st.subagents ? " (with subagents)" : ""}</div></div>`;
+  h += `<div class="stats"><span><b>${cids.length}</b> changes</span><span><b>${ti.files.size}</b> files</span><span><b>${ti.defs.size}</b> functions</span><span class="a">+${ti.add}</span><span class="d">−${ti.del}</span><span title="From the prompt to the agent's last response"><b>${fmtDur(T.secs)}</b> (avg ${fmtDur(Math.round(TURN_AVG))})</span></div>`;
+  h += `<div class="meta" style="display:flex;gap:6px;flex-wrap:wrap">${chips}</div>`;
+  if (T.corr) h += `<div><h3>Your next prompt</h3><div class="note">${md(T.corr)}</div></div>`;
+  h += `<div><h3>Survives today</h3><div class="big">${st.survival}% of the lines it wrote are still in the code</div><div class="more">${ti.kept} of ${ti.add} lines</div></div>` + cost;
+  const files = st.files;
+  h += `<div><h3>Files it changed</h3><div class="list">` + files.map(([n, e]) =>
+    `<button type="button" data-id="${esc(n.data.id)}"><span>${esc(n.data.name)} <span class="ctx">${esc(n.parent.data.name)}</span></span><span>+${e.a} −${e.d}</span></button>`).join("") + `</div></div>`;
+  const defs = st.defs;
+  if (defs.length) h += `<div><h3>Functions it changed</h3><div class="list">` + defs.slice(0, 12).map(([n, e]) =>
+    `<button type="button" data-id="${esc(n.data.id)}"><span>${esc(n.data.name)} <span class="ctx">${esc(fileOf(n).data.name)}</span></span><span>+${e.a} −${e.d}</span></button>`).join("") +
+    (defs.length > 12 ? `</div><div class="more">… ${defs.length - 12} more</div></div>` : `</div></div>`);
+  const reads = st.reads;
+  if (reads.length) h += `<div><h3>What it read</h3>${readList(reads, null)}</div>`;
+  const notes = st.notes.map(note => noteHtml(note, CHANGES[cids.find(c => CHANGES[c][1] === note)][2]));
+  if (notes.length) h += `<div class="turn"><h3>What the agent said, in order</h3>${notes.slice(0, 8).join("")}${notes.length > 8 ? `<div class="more">… ${notes.length - 8} more</div>` : ""}</div>`;
+  insp.innerHTML = h;
+  insp.scrollTop = 0;
+  wireInspector();
+}
+function wireInspector() {
+  insp.querySelectorAll(".list button[data-id]").forEach(b => b.onclick = () => go(BY_ID.get(b.dataset.id)));
+  insp.querySelectorAll("[data-turn]").forEach(b => b.onclick = () => selectTurn(+b.dataset.turn));
+}
+(function turnBar() {
+  const ticks = document.querySelector(".turnbar .ticks");
+  ticks.innerHTML = ORDER.map(t => {
+    const h = barH(t), w = barW(t);
+    return `<button type="button" data-t="${t}" class="${[TURNS[t].fix && "fix", slowTurn(t) && "slow"].filter(Boolean).join(" ")}" style="height:${h.toFixed(1)}px;flex-grow:${w.toFixed(2)}" title="${esc(when(TURNS[t].ts) + " · " + fmtDur(TURNS[t].secs) + " · " + TURNS[t].title)}" aria-label="${esc(TURNS[t].title)}"></button>`;
+  }).join("");
+  ticks.querySelectorAll("button").forEach(b => b.onclick = () => selectTurn(S.turn === +b.dataset.t ? null : +b.dataset.t));
+  document.getElementById("turn-prev").onclick = () => stepTurn(-1);
+  document.getElementById("turn-next").onclick = () => stepTurn(1);
+  document.getElementById("turn-cur").onclick = () => S.turn != null && inspectTurn(S.turn);
+})();
+const start = BY_ID.get("HarnessTools/aigource/src") || ROOT;
+S.focus = start;
+render();
+inspect(start);
+</script>
