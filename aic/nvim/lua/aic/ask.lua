@@ -75,7 +75,7 @@ function M.context()
   local trace = require('aic.trace')
   local chat = require('aic.chat')
   local doc = require('aic.doc')
-  if buf == trace.buf then
+  if trace.is_view(buf) then
     return { where = 'trace', event = trace.event_at(line) }
   end
   if vim.bo[buf].buftype == 'quickfix' then

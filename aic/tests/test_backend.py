@@ -376,6 +376,96 @@ class WatcherResumeTest(unittest.TestCase):
         self.assertEqual(Parser("/p").feed({"type": "user", "message": {"content": ["str", 5]}}), [])
 
 
+class WatcherAgentsTest(unittest.TestCase):
+    def test_subagent_trace_and_index(self):
+        root = tempfile.mkdtemp()
+        worker.init(root, "/x/bin/aic")
+        tpath = os.path.join(root, "T.jsonl")
+        paths.write_json(os.path.join(paths.aic_dir(root), "workers", "S6.json"),
+                         {"session_id": "S6", "transcript_path": tpath})
+        paths.write_text(os.path.join(paths.aic_dir(root), "current"), "S6")
+        sdir = paths.session_dir(root, "S6")
+        agent = {"type": "tool_use", "id": "A1", "name": "Agent",
+                 "input": {"description": "review it", "prompt": "Review the diff.\nRead-only."}}
+        for r in (rec_user("go", "u1"), rec_asst([{"type": "text", "text": "delegating"}, agent], "a1")):
+            paths.append_jsonl(tpath, r)
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            w = watch.Watcher(root)
+            w.tick()
+            w.tick()
+            idx = paths.read_json(os.path.join(sdir, "agents.json"))
+            self.assertEqual(idx["t-A1"]["running"]["title"], "Agent: review it")
+            self.assertEqual(idx["t-A1"]["running"]["why"], "delegating")
+            self.assertNotIn("agent", idx["t-A1"])  # no subagent transcript yet
+
+            sub = os.path.join(root, "T", "subagents")
+            os.makedirs(sub)
+            side = [rec_user("Review the diff.\nRead-only.", "s1"),
+                    rec_asst([{"type": "tool_use", "id": "R1", "name": "Read", "input": {"file_path": root + "/a.py"}}], "s2"),
+                    rec_result("R1", {}, "s3"),
+                    rec_asst([{"type": "text", "text": "all good"}], "s4", stop="end_turn")]
+            for r in side:
+                paths.append_jsonl(os.path.join(sub, "agent-ag1.jsonl"), dict(r, isSidechain=True, agentId="ag1"))
+            w.tick()  # read before its meta file exists: traced, not linked yet
+            self.assertNotIn("agent", paths.read_json(os.path.join(sdir, "agents.json"))["t-A1"])
+            paths.write_json(os.path.join(sub, "agent-ag1.meta.json"),
+                             {"agentType": "reviewer", "description": "review it", "toolUseId": "A1"})
+            w.tick()
+            sub_tr = paths.read_jsonl(os.path.join(sdir, "agents", "ag1.jsonl"))
+            self.assertEqual([(e["kind"], e["seq"]) for e in sub_tr], [("prompt", 1), ("tool", 2), ("text", 3)])
+            self.assertEqual(sub_tr[1]["title"], "Read a.py")
+            idx = paths.read_json(os.path.join(sdir, "agents.json"))["t-A1"]
+            self.assertEqual((idx["agent"], idx["type"], idx["calls"], idx["events"], idx["state"]),
+                             ("ag1", "reviewer", 1, 3, "done"))
+            self.assertIn("running", idx)  # the Agent call itself has not returned yet
+
+            paths.append_jsonl(tpath, rec_result("A1", {}, "a2"))
+            w.tick()
+            self.assertEqual(paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))[-1]["id"], "t-A1")
+            self.assertNotIn("running", paths.read_json(os.path.join(sdir, "agents.json"))["t-A1"])
+
+            w2 = watch.Watcher(root)  # a restart resumes the subagent too: nothing written twice
+            w2.tick()
+            paths.append_jsonl(os.path.join(sub, "agent-ag1.jsonl"),
+                               dict(rec_user("one more thing", "s5"), isSidechain=True))
+            w2.tick()
+        sub_tr = paths.read_jsonl(os.path.join(sdir, "agents", "ag1.jsonl"))
+        self.assertEqual([e["seq"] for e in sub_tr], [1, 2, 3, 4])
+        self.assertEqual(paths.read_json(os.path.join(sdir, "agents.json"))["t-A1"]["state"], "running")
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            paths.write_json(os.path.join(sub, "agent-ag1.meta.json"),  # Claude Code marks it when it ends
+                             {"agentType": "reviewer", "toolUseId": "A1", "finished": True})
+            os.utime(os.path.join(sub, "agent-ag1.meta.json"), (1, 1))
+            w2.tick()
+            self.assertEqual(paths.read_json(os.path.join(sdir, "agents.json"))["t-A1"]["state"], "done")
+            with open(os.path.join(sdir, "agents", "ag1.jsonl"), "a") as f:  # a crash after the append, before the save
+                f.write(json.dumps(dict(sub_tr[-1], seq=5)) + "\n")
+            w3 = watch.Watcher(root)
+            w3.tick()  # resumes: that trace does not match its state, so it is read again
+            w3.tick()
+        self.assertEqual([e["seq"] for e in paths.read_jsonl(os.path.join(sdir, "agents", "ag1.jsonl"))], [1, 2, 3, 4])
+
+    def test_rebuild_rewrites_subagent_traces(self):
+        root = tempfile.mkdtemp()
+        worker.init(root, "/x/bin/aic")
+        tpath = os.path.join(root, "T.jsonl")
+        paths.write_json(os.path.join(paths.aic_dir(root), "workers", "S7.json"),
+                         {"session_id": "S7", "transcript_path": tpath})
+        paths.write_text(os.path.join(paths.aic_dir(root), "current"), "S7")
+        paths.append_jsonl(tpath, rec_user("go", "u1"))
+        sub = os.path.join(root, "T", "subagents")
+        os.makedirs(sub)
+        paths.append_jsonl(os.path.join(sub, "agent-ag2.jsonl"), dict(rec_user("hi", "s1"), isSidechain=True))
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            watch.Watcher(root).tick()
+            sdir = paths.session_dir(root, "S7")
+            os.unlink(os.path.join(sdir, "watch.json"))  # state lost: rebuild
+            w = watch.Watcher(root)
+            w.tick()
+            w.tick()
+        self.assertEqual(len(paths.read_jsonl(os.path.join(sdir, "agents", "ag2.jsonl"))), 1)
+
+
 class BashAttributionTest(unittest.TestCase):
     def test_bash_edit_becomes_event(self):
         root = tempfile.mkdtemp()

@@ -24,6 +24,8 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
     human.jsonl           human code-save events (appended ONLY by the editor)
     seen.json             {"seen": ["<event id>", ...]}  (written by editor)
     touched.json          per-file touched line ranges (written by `aic watch`)
+    agents.json           the worker's subagents, by the Agent call that started them (written by `aic watch`; see Subagents)
+    agents/<agent id>.jsonl  a subagent's trace events (written by `aic watch`)
     diagnostics.<doc>.json  last compile of doc <doc> (written by `aic compile --doc`)
     fixes.<doc>.json      the compiler's last proposed fixes to doc <doc> (written by `aic fix --doc`)
     chat.md               compiler REPL transcript (written by `aic ask`)
@@ -34,7 +36,7 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
     state.json            compile/ask/submit bookkeeping (backend-private; updated under state.json.lock)
     spec.md, spec.submitted.md, diagnostics.json   before docs existed: migrated once (see Docs), then unused
     usage.json            context/cost per session (see Usage; backend-written)
-    watch.json            watcher resume point: offsets, seq, parser state (backend-private)
+    watch.json            watcher resume point: offsets, seq, parser states (worker's and subagents'; backend-private)
 ```
 
 ## workers/<sid>.json
@@ -75,6 +77,33 @@ Common fields: `id` (string, stable, e.g. `"e17"`), `seq` (int), `ts` (unix floa
 | `compact` | the worker's context was compacted: `trigger` (manual/auto), `pre`, `post` tokens |
 
 Hunk: `{"start": <new-file first line, 1-based>, "count": <new line count>, "lines": ["+added", "-removed", " context"]}`.
+
+## Subagents
+
+Claude Code writes a subagent's transcript next to its parent's:
+`<transcript without .jsonl>/subagents/agent-<id>.jsonl`, and its
+`agent-<id>.meta.json` names the Agent call (`toolUseId`). `aic watch`
+parses each one into `agents/<id>.jsonl`: the trace event schema above, its
+own `seq` from 1, `turn` = the subagent's (its first prompt is the Agent
+call's prompt). Append-only; on a trace rebuild they are deleted and written
+again.
+
+`agents.json`, rewritten (atomically) whenever any of it changes, is keyed by
+the trace id of an Agent call (`"t-<tool_use_id>"`, in trace.jsonl or in a
+subagent's trace):
+
+| field | |
+|---|---|
+| `agent` | the subagent's id (absent until its meta file names this call) |
+| `type`, `description` | from the meta file |
+| `events`, `calls` | events in its trace, tool calls among them (`events` changes on every append: readers reload on this file alone) |
+| `state` | `done` (its meta file says `finished`, or its last message ended its turn with no call in flight), `running` (the Agent call has not returned, its transcript changed in the last 120 s, or it has a call in flight and changed in the last 30 min), else `stopped` |
+| `running` | while the Agent call has no result: its tool event so far (`hunks` empty, `error` false), since a trace gets it only when it returns; written after the trace, so a returned call is always in one of them |
+| `in` | with `running`: the subagent that made the call (absent: the worker) |
+
+Subagent edits are not in `touched.json`. Its Edit/Write edits refresh the
+Bash snapshot, so the worker's next Bash call is not credited with them; what
+a subagent changes through Bash still is.
 
 ## touched.json
 

@@ -93,6 +93,7 @@ Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCom
 |---|---|
 | `<CR>` | on a turn, or a node with details (why, diff hunks, the rest of a long text, a tool's full input): show/hide them (showing marks it seen). On a hunk line or a node without details: jump to its file:line; with nothing to show or open: mark it seen |
 | `gf` | jump to file:line of the node or hunk line (marks the node seen) |
+| `gs` | on an Agent call (or a line of its subagent): show that subagent in its own view, `aic://agent/<id>`, at its tail and following it live (`<C-o>` comes back). On that view's first line: back to what started it |
 | `za` `zo` `zc` … | normal folds (turns collapsed, details hidden; config `history_turns = 'open'` starts turns expanded); what you open or close survives new events |
 | `]u` / `[u` | next / previous unseen node |
 | `m` / `M` | toggle seen on the node / mark all seen |
@@ -111,6 +112,13 @@ Glyphs: `●` unseen, `○` seen, `✎` human save, `⇢` submit, `⏸`/`▶`
 hold/release, `◆` end-of-turn text, `⇣` the worker's context was compacted
 (`⇣ compacted 107k → 10k (manual)`, `AicCompact`). Only worker `tool` and
 `text` nodes count as unseen. Seen state is saved to `seen.json` (tmp file + rename).
+
+Subagents: an Agent call's details hold its prompt and then
+`↳ <type> <id> · N calls · running|done|stopped · gs`, a fold of its own with
+what the subagent did (nested subagents nest the same way). Those lines are
+not inbox items: no `●`/`○`, `]u` skips them. An Agent call that has not
+returned yet shows as `Agent: … ⋯ running` (it is in the trace only once it
+returns).
 
 **Docs** (`<root>/.aic/docs/<name>.md`, real files, shared by every worker
 session): write as many as you like; `:AicDoc [name]` shows one (default: the

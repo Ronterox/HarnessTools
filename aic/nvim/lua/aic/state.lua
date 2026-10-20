@@ -14,6 +14,8 @@ local M = {
   events = {}, -- trace events in file order
   by_id = {},
   touched = {},
+  agents = {}, -- agents.json: trace id of an Agent call -> its subagent (PROTOCOL)
+  subs = {}, -- subagent id -> { events, by_id } from agents/<id>.jsonl
   diagnostics = {}, -- doc name -> last compile (diagnostics.<doc>.json)
   seen = {}, -- set: id -> true
   hold = false,
@@ -100,6 +102,7 @@ end
 
 local function reset_cache()
   M.events, M.by_id, M.touched, M.diagnostics, M.seen = {}, {}, {}, {}, {}
+  M.agents, M.subs = {}, {}
   M.usage = nil
   M.hold, M.compiling = false, false
   stats = {}
@@ -192,32 +195,31 @@ end
 ---------------------------------------------------------------------------
 -- loading session files
 
-local function load_trace(st)
-  if not st then
-    M.events, M.by_id, trace_offset = {}, {}, 0
-    return
+-- Read the complete new lines of the trace file `path` (fs_stat `st`) into
+-- `t` = { events, by_id, offset, ino }. Starts over when the file shrank or
+-- was replaced (the watcher rebuilds a trace as a new file).
+local function read_trace(t, path, st)
+  if st.size < t.offset or (t.ino and st.ino ~= t.ino) then
+    t.events, t.by_id, t.offset = {}, {}, 0
   end
-  if st.size < trace_offset or (trace_ino and st.ino ~= trace_ino) then
-    M.events, M.by_id, trace_offset = {}, {}, 0
-  end
-  trace_ino = st.ino
-  local f = io.open(M.dir .. '/trace.jsonl', 'rb')
+  t.ino = st.ino
+  local f = io.open(path, 'rb')
   if not f then
     return
   end
-  f:seek('set', trace_offset)
+  f:seek('set', t.offset)
   local data = f:read('*a') or ''
   f:close()
   local last_nl = data:match('.*()\n')
   if not last_nl then
     return -- no complete line yet
   end
-  trace_offset = trace_offset + last_nl
+  t.offset = t.offset + last_nl
   for line in data:sub(1, last_nl):gmatch('[^\n]+') do
     local ev = util.decode(line)
     if type(ev) == 'table' and ev.id then
       ev.id = tostring(ev.id)
-      local old = M.by_id[ev.id]
+      local old = t.by_id[ev.id]
       if old then
         for k in pairs(old) do
           old[k] = nil
@@ -226,9 +228,46 @@ local function load_trace(st)
           old[k] = v
         end
       else
-        table.insert(M.events, ev)
-        M.by_id[ev.id] = ev
+        table.insert(t.events, ev)
+        t.by_id[ev.id] = ev
       end
+    end
+  end
+end
+
+local function load_trace(st)
+  if not st then
+    M.events, M.by_id, trace_offset = {}, {}, 0
+    return
+  end
+  local t = { events = M.events, by_id = M.by_id, offset = trace_offset, ino = trace_ino }
+  read_trace(t, M.dir .. '/trace.jsonl', st)
+  M.events, M.by_id, trace_offset, trace_ino = t.events, t.by_id, t.offset, t.ino
+end
+
+-- agents.json, and the trace of every subagent it names (incrementally).
+local function load_agents()
+  local a = util.read_json(M.dir .. '/agents.json')
+  M.agents = type(a) == 'table' and a or {}
+  local keep = {}
+  for _, e in pairs(M.agents) do
+    local id = type(e) == 'table' and e.agent
+    if type(id) == 'string' and id:match('^[%w_-]+$') then
+      keep[id] = true
+      local t = M.subs[id] or { events = {}, by_id = {}, offset = 0 }
+      M.subs[id] = t
+      local path = M.dir .. '/agents/' .. id .. '.jsonl'
+      local st = uv.fs_stat(path)
+      if st then
+        read_trace(t, path, st)
+      else
+        t.events, t.by_id, t.offset, t.ino = {}, {}, 0, nil
+      end
+    end
+  end
+  for id in pairs(M.subs) do
+    if not keep[id] then
+      M.subs[id] = nil
     end
   end
 end
@@ -243,7 +282,7 @@ local function load_seen()
   end
 end
 
-local files = { 'trace.jsonl', 'seen.json', 'touched.json', 'chat.md', 'hold', 'compiling', 'usage.json' }
+local files = { 'trace.jsonl', 'seen.json', 'touched.json', 'agents.json', 'chat.md', 'hold', 'compiling', 'usage.json' }
 
 -- The session files to stat: the fixed ones, every diagnostics.<doc>.json on
 -- disk, and those seen before (so a removed one is noticed).
@@ -287,7 +326,10 @@ function M.refresh(initial)
   if changed['seen.json'] ~= nil then
     load_seen()
   end
-  if changed['trace.jsonl'] ~= nil or changed['seen.json'] ~= nil then
+  if changed['agents.json'] ~= nil then
+    load_agents() -- (the watcher rewrites it whenever a subagent's trace grows)
+  end
+  if changed['trace.jsonl'] ~= nil or changed['seen.json'] ~= nil or changed['agents.json'] ~= nil then
     M.emit('trace')
   end
   if changed['touched.json'] ~= nil then
