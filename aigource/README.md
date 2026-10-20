@@ -141,8 +141,9 @@ Click a folder to focus it, a file to open its functions; the centre, a path
 segment, `Esc` or `Backspace` go up. Keys: `1` `2` `3` views, `[` `]` turns,
 `Esc` clears the turn, then goes up, then back to the stage; `Backspace` up;
 `R` rebuild now, `S` stage, `Q` quit. The heat modes are picked in the bar
-(click). Wheel scrolls the inspector (inside the code: the code;
-`Shift`+wheel sideways).
+(click). Wheel scrolls the inspector, over the inspector or over the stage
+(any view: read the hovered node's panel while still pointing at it); inside
+the inspector's code, the code, and `Shift`+wheel sideways.
 
 ## Options
 
@@ -185,7 +186,7 @@ build): `--structure floating:risk:src/model.c/model_new --structure-turn -1`.
 
 Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
 `H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `Q` quit.
-In the structure screen: `1` `2` `3` views, `[` `]` turns, `Esc`/`Backspace` up, `R` rebuild.
+In the structure screen: `1` `2` `3` views, `[` `]` turns, `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
 
 ## Where the data comes from
 
