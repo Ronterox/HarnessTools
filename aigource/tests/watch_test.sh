@@ -81,7 +81,7 @@ got=$(python3 - "$out" <<'PY'
 import json, sys
 for l in open(sys.argv[1]):
     e = json.loads(l)
-    if e["kind"] in ("turn", "bash", "failed"): continue
+    if e["kind"] in ("turn", "bash", "failed") or "path" not in e: continue  # analysis-only kinds have none
     print(e["actor"], e["kind"], e["path"].replace("\n", "\\n"), "+%d-%d" % (e.get("add", 0), e.get("del", 0)))
 PY
 )

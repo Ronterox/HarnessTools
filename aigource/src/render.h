@@ -14,6 +14,8 @@ typedef struct {
     const char *turn;      /* test hook: open this actor's turn window (id prefix) */
     const char *step;      /* test hook: then open its step N's detail (negative: from the end) */
     const char *file;      /* test hook: open this file's last change, as a click on it does */
+    const char *structure; /* test hook: open the structure screen, VIEW[:MODE[:PATH]] */
+    int structure_turn;    /* test hook: and select its turn N in time order (1-based, <0 from the end) */
 } VizOpts;
 
 int viz_run(const VizOpts *o, EvQueue *q);

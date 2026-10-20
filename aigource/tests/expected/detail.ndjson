@@ -1,12 +1,13 @@
-{"ts":1791972041.000,"kind":"turn","actor":"d1","name":"claude·d1","turn":1,"text":"Show me everything"}
+{"ts":1791972041.000,"kind":"turn","actor":"d1","name":"claude·d1","turn":1,"text":"Show me everything","prompt":"human"}
 {"ts":1791972043.000,"kind":"edit","actor":"d1","name":"claude·d1","path":"src/a.py","add":1,"del":1,"turn":1}
 {"detail":"Edit","state":0,"lines":[["dim",0,"/proj/src/a.py"],["hunk",0,"@@ -4,3 +4,3 @@"],["text",4,"one"],["del",5,"two"],["add",5,"2"],["text",6,"three"]],"notes":["doing it"]}
 {"ts":1791972045.000,"kind":"create","actor":"d1","name":"claude·d1","path":"src/new.py","turn":1}
 {"detail":"Write","state":0,"lines":[["dim",0,"/proj/src/new.py"],["add",1,"print(1)"],["add",2,"    indented"]],"notes":["doing it"]}
-{"ts":1791972047.000,"kind":"read","actor":"d1","name":"claude·d1","path":"src/a.py","lines":40,"turn":1}
+{"ts":1791972047.000,"kind":"read","actor":"d1","name":"claude·d1","path":"src/a.py","lines":40,"turn":1,"range":[10,0]}
 {"detail":"Read","state":0,"lines":[["dim",0,"/proj/src/a.py"],["text",10,"ten"],["text",11,"eleven"]],"notes":["doing it"]}
 {"ts":1791972048.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"make gen"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ make gen"],["head",0,"make test"],["dim",0,"# build"],["text",0,""],["text",0,"built"],["text",0,"ok"],["err",0,"warning: x"]],"notes":["doing it"]}
+{"ts":1791972049.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"make gen\nmake test","err":false}
 {"ts":1791972049.000,"kind":"create","actor":"d1","name":"claude·d1","path":"gen.c","add":1,"del":0,"lines":1,"turn":1}
 {"detail":"Bash","state":0,"lines":[["dim",0,"changes to gen.c, made by:"],["hunk",0,"@@ -1,0 +1,1 @@"],["add",1,"int x;"],["text",0,""],["head",0,"$ make gen"],["head",0,"make test"],["dim",0,"# build"],["text",0,""],["text",0,"built"],["text",0,"ok"],["err",0,"warning: x"]],"notes":["doing it"]}
 {"ts":1791972051.000,"kind":"search","actor":"d1","name":"claude·d1","path":"src","turn":1,"text":"def"}
@@ -33,6 +34,7 @@
 {"detail":"WebFetch","state":0,"lines":[["text",0,"url: http://more"],["text",0,""],["text",0,"more"]],"notes":[]}
 {"ts":1791972073.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h"],["head",0,"echo no > nope"],["head",0,"EOF"],["head",0,"false"],["text",0,""],["err",0,"Error: Exit code 1"]],"notes":["doing it"]}
+{"ts":1791972074.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h\necho no > nope\nEOF\nfalse","err":true}
 {"ts":1791972074.000,"kind":"failed","actor":"d1","name":"claude·d1","turn":1,"text":"Exit code 1"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h"],["head",0,"echo no > nope"],["head",0,"EOF"],["head",0,"false"],["text",0,""],["err",0,"Error: Exit code 1"]],"notes":["doing it"]}
 {"ts":1791972074.000,"kind":"touch","actor":"d1","name":"claude·d1","path":"src/a.py","turn":1,"via":"guess"}
@@ -47,15 +49,19 @@
 {"detail":"Bash","state":0,"lines":[["err",0,"the command failed, so Claude Code didn't record its changes to src/gen.h"],["text",0,""],["head",0,"$ cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h"],["head",0,"echo no > nope"],["head",0,"EOF"],["head",0,"false"],["text",0,""],["err",0,"Error: Exit code 1"]],"notes":["doing it"]}
 {"ts":1791972075.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"make test"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ make test"],["text",0,""],["err",0,"Error: Exit code 2"],["err",0,"FAIL"]],"notes":["doing it"]}
+{"ts":1791972076.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"make test","err":true}
 {"ts":1791972076.000,"kind":"failed","actor":"d1","name":"claude·d1","turn":1,"text":"Exit code 2"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ make test"],["text",0,""],["err",0,"Error: Exit code 2"],["err",0,"FAIL"]],"notes":["doing it"]}
 {"ts":1791972077.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"cd src && sed -i 1d c.py && false"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ cd src && sed -i 1d c.py && false"],["text",0,""],["err",0,"Exit code 1"]],"notes":["doing it"]}
+{"ts":1791972078.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"cd src && sed -i 1d c.py && false","err":true}
 {"ts":1791972078.000,"kind":"failed","actor":"d1","name":"claude·d1","turn":1,"text":"Exit code 1"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ cd src && sed -i 1d c.py && false"],["text",0,""],["err",0,"Exit code 1"]],"notes":["doing it"]}
 {"ts":1791972078.000,"kind":"touch","actor":"d1","name":"claude·d1","path":"src/c.py","turn":1,"via":"guess"}
 {"detail":"Bash","state":0,"lines":[["err",0,"the command failed, so Claude Code didn't record its changes to src/c.py"],["text",0,""],["head",0,"$ cd src && sed -i 1d c.py && false"],["text",0,""],["err",0,"Exit code 1"]],"notes":["doing it"]}
 {"ts":1791972079.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"rm keep.py"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ rm keep.py"],["text",0,""],["err",0,"The user doesn't want to proceed with this tool use."]],"notes":["doing it"]}
+{"ts":1791972080.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"rm keep.py","err":true}
 {"ts":1791972081.000,"kind":"bash","actor":"d1","name":"claude·d1","turn":1,"text":"rm keep2.py"}
 {"detail":"Bash","state":0,"lines":[["head",0,"$ rm keep2.py"],["text",0,""],["err",0,"PreToolUse:Bash hook error: blocked"]],"notes":["doing it"]}
+{"ts":1791972082.000,"kind":"bash_end","actor":"d1","name":"claude·d1","turn":1,"text":"rm keep2.py","err":true}

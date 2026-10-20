@@ -4,8 +4,10 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "analysis.h"
 #include "event.h"
 #include "ingest.h"
+#include "metrics.h"
 #include "render.h"
 #include "transcript.h"
 #include "util.h"
@@ -26,6 +28,11 @@ static void usage(void) {
           "  --follow SECS      with --dump: keep printing new events for SECS seconds\n"
           "  --detail           with --dump: after each step, what the detail window shows\n"
           "                     and the agent's comments on it\n"
+          "  --structure-dump   print the structure analysis (tree, turns, changes) as JSON\n"
+          "                     and exit; counts go to stderr\n"
+          "  --metrics FILE     with --structure-dump: also write what the structure view\n"
+          "                     derives from it (per node and turn) to FILE as JSON;\n"
+          "                     build times go to stderr\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
@@ -33,9 +40,16 @@ static void usage(void) {
           "  --turn ID          open the turn window of the actor whose id starts with ID\n"
           "  --step N           with --turn: open its step N in full (negative: from the end)\n"
           "  --file PATH        open the last change of this file, as a click on it does\n"
+          "  --structure VIEW[:MODE[:PATH]]\n"
+          "                     open the structure screen: icicle, treemap or floating;\n"
+          "                     a heat mode (turns, lines, risk, rework, fixes, context,\n"
+          "                     cost, time, age, owner); a folder to focus, or a file or\n"
+          "                     function to inspect (path below the root)\n"
+          "  --structure-turn N select its Nth turn in time order (negative: from the end)\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
-          "      F fullscreen, Q quit, Esc close window. Click or drag the timeline\n"
-          "      to jump; click an actor to see its current turn.\n",
+          "      F fullscreen, Q quit, Esc close window, S structure screen. Click or\n"
+          "      drag the timeline to jump; click an actor to see its current turn.\n"
+          "      Structure screen: 1 2 3 views, [ ] turns, Esc/Backspace up, R rebuild.\n",
           stderr);
 }
 
@@ -62,6 +76,44 @@ static void print_detail(const Event *e) {
     detail_free(d);
 }
 
+/* The structure analysis of the loaded history, as JSON. */
+static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *metrics) {
+    FILE *mf = metrics ? fopen(metrics, "w") : NULL; /* before the long build: fail fast */
+    if (metrics && !mf) {
+        perror(metrics);
+        ingest_free(in);
+        return 1;
+    }
+    ingest_poll(in);
+    Event *evs;
+    size_t n = evq_drain(q, &evs);
+    Analysis *a = an_new(root);
+    an_add(a, evs, n);
+    for (size_t i = 0; i < n; i++) ev_free(&evs[i]);
+    free(evs);
+    double t0 = now_wall();
+    AnSnapshot *s = an_build(a);
+    double t1 = now_wall();
+    an_snapshot_json(stdout, s);
+    an_snapshot_stats(stderr, s);
+    int rc = 0;
+    if (metrics) {
+        StMetrics *m = st_build(s);
+        double t2 = now_wall();
+        st_json(mf, m);
+        if (fclose(mf)) {
+            perror(metrics);
+            rc = 1;
+        }
+        fprintf(stderr, "an_build %.1f ms, st_build %.1f ms\n", (t1 - t0) * 1e3, (t2 - t1) * 1e3);
+        st_free(m);
+    }
+    an_snapshot_free(s);
+    an_free(a);
+    ingest_free(in);
+    return rc;
+}
+
 /* History as sorted NDJSON; with follow > 0, then new events as they come. */
 static int dump(Ingest *in, EvQueue *q, double follow, int details) {
     double until = now_wall() + follow;
@@ -72,7 +124,7 @@ static int dump(Ingest *in, EvQueue *q, double follow, int details) {
         if (n) qsort(evs, n, sizeof *evs, ev_cmp);
         for (size_t i = 0; i < n; i++) {
             ev_print_json(stdout, &evs[i]);
-            if (details && evs[i].src) print_detail(&evs[i]);
+            if (details && evs[i].src && ev_staged(evs[i].kind)) print_detail(&evs[i]);
             ev_free(&evs[i]);
         }
         free(evs);
@@ -84,9 +136,9 @@ static int dump(Ingest *in, EvQueue *q, double follow, int details) {
 
 int main(int argc, char **argv) {
     char root[PATH_MAX];
-    const char *root_arg = ".";
+    const char *root_arg = ".", *metrics = NULL;
     double since_h = 2;
-    int all = 0, want_dump = 0, watch = 0, details = 0;
+    int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0;
     double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
                   .mouse_x = -1, .mouse_y = -1};
@@ -108,16 +160,24 @@ int main(int argc, char **argv) {
         else if (TAKES("--turn", "--turn")) vo.turn = v;
         else if (TAKES("--step", "--step")) vo.step = v;
         else if (TAKES("--file", "--file")) vo.file = v;
+        else if (TAKES("--structure", "--structure")) vo.structure = v;
+        else if (TAKES("--structure-turn", "--structure-turn")) vo.structure_turn = atoi(v);
         else if (TAKES("--follow", "--follow")) follow = atof(v);
+        else if (TAKES("--metrics", "--metrics")) metrics = v;
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
         else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;
         else if (!strcmp(a, "--dump")) want_dump = 1;
         else if (!strcmp(a, "--detail")) details = 1;
+        else if (!strcmp(a, "--structure-dump")) want_structure = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else if (*a == '-') { fprintf(stderr, "aigource: unknown option %s\n", a); usage(); return 2; }
         else files[nfiles++] = a;
 #undef TAKES
+    }
+    if (metrics && !want_structure) {
+        fputs("aigource: --metrics needs --structure-dump\n", stderr);
+        return 2;
     }
     if (!realpath(root_arg, root)) {
         /* Fixtures name a root that need not exist; keep it verbatim when absolute. */
@@ -131,6 +191,12 @@ int main(int argc, char **argv) {
                      .files = files, .nfiles = nfiles, .watch = watch};
     Ingest *in = ingest_new(&io, &q);
     if (want_dump) return dump(in, &q, follow, details);
+    if (want_structure) {
+        int rc = structure_dump(in, &q, root, metrics);
+        free(files);
+        free(q.items);
+        return rc;
+    }
 
     vo.root = root;
     ingest_poll(in); /* load history before the first frame */

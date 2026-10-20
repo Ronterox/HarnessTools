@@ -48,6 +48,11 @@ struct Transcript {
         int notes, turn;
     } failed[16];
     int failed_head;
+    char *usage_id;  /* the response whose parts are coming in: its message id, */
+    int usage_out;   /* the largest output emitted for it */
+    double usage_ts; /* and when it was first seen */
+    char *title;     /* the last AI title emitted */
+    double last_ts;  /* of the latest timestamped record */
 };
 
 int tr_failed_call(const Transcript *t, double ts, double slack, Event *e) {
@@ -130,6 +135,8 @@ void tr_free(Transcript *t) {
     free(t->actor_name);
     free(t->last_prompt_parent);
     free(t->cwd);
+    free(t->usage_id);
+    free(t->title);
     free(t);
 }
 
@@ -177,10 +184,8 @@ static void normalize(char *p) {
     *out = 0;
 }
 
-/* Tool path -> repo-relative ("" = root); NULL when outside the repo. Relative
- * paths resolve against the session's cwd. */
-static char *rel_path(Transcript *t, const char *p) {
-    if (!p || !*p) return NULL;
+/* A tool path made absolute: relative ones resolve against the session's cwd. */
+static char *abs_path(Transcript *t, const char *p) {
     const char *base = *p == '/' ? "" : (t->cwd ? t->cwd : t->root);
     size_t bn = strlen(base), pn = strlen(p);
     char *abs = xmalloc(bn + pn + 2);
@@ -188,6 +193,14 @@ static char *rel_path(Transcript *t, const char *p) {
     abs[bn] = '/';
     memcpy(abs + bn + 1, p, pn + 1);
     normalize(abs);
+    return abs;
+}
+
+/* Tool path -> repo-relative ("" = root); NULL when outside the repo. Relative
+ * paths resolve against the session's cwd. */
+static char *rel_path(Transcript *t, const char *p) {
+    if (!p || !*p) return NULL;
+    char *abs = abs_path(t, p);
     char *rel = NULL;
     if (t->rootlen == 1 && t->root[0] == '/') rel = xstrdup(abs + 1);
     else if (!strncmp(abs, t->root, t->rootlen) && (abs[t->rootlen] == 0 || abs[t->rootlen] == '/'))
@@ -196,57 +209,79 @@ static char *rel_path(Transcript *t, const char *p) {
     return rel;
 }
 
+static Event mk(Transcript *t, EvKind kind, double ts, char *path, char *text, int add, int del, int lines) {
+    return (Event){.ts = ts, .kind = kind, .actor = xstrdup(t->actor),
+                   .actor_name = xstrdup(t->actor_name), .path = path, .text = text,
+                   .add = add, .del = del, .lines = lines, .turn = t->turn, .t0 = t->t0,
+                   .src = t->ev_id ? t->src : NULL, .src_off = t->ev_off,
+                   .tool_id = t->ev_id ? xstrdup(t->ev_id) : NULL,
+                   .note_off = t->ev_id ? t->ev_note_off : 0, .notes = t->ev_id ? t->ev_notes : 0,
+                   .via = t->ev_via};
+}
+
 static void emit(Transcript *t, EvKind kind, double ts, char *path, char *text,
                  int add, int del, int lines) {
-    Event e = {.ts = ts, .kind = kind, .actor = xstrdup(t->actor),
-               .actor_name = xstrdup(t->actor_name), .path = path, .text = text,
-               .add = add, .del = del, .lines = lines, .turn = t->turn, .t0 = t->t0,
-               .src = t->ev_id ? t->src : NULL, .src_off = t->ev_off,
-               .tool_id = t->ev_id ? xstrdup(t->ev_id) : NULL,
-               .note_off = t->ev_id ? t->ev_note_off : 0, .notes = t->ev_id ? t->ev_notes : 0,
-               .via = t->ev_via};
+    Event e = mk(t, kind, ts, path, text, add, del, lines);
     t->emit(t->ud, &e);
 }
 
 /* ---- prompts ------------------------------------------------------------ */
 
-/* Text of a human prompt record, or NULL when the record isn't one. */
-static char *prompt_text(yyjson_val *rec, yyjson_val *content) {
+/* A user record's text: the string, or its first text block. */
+static const char *user_text(yyjson_val *content) {
+    if (yyjson_is_str(content)) return yyjson_get_str(content);
+    size_t i, n;
+    yyjson_val *c;
+    yyjson_arr_foreach(content, i, n, c) {
+        const char *ct = jstr(c, "type");
+        if (ct && !strcmp(ct, "text")) return jstr(c, "text");
+    }
+    return NULL;
+}
+
+/* The first non-empty line, cut at TR_PROMPT_MAX characters (no ellipsis: it's
+ * matched against, e.g. "fix" keywords). */
+static char *prompt_line(const char *s) {
+    char *line = first_line(s, (size_t)-1);
+    size_t i = 0;
+    for (int n = 0; line[i] && n < TR_PROMPT_MAX; n++)
+        do i++; while (((unsigned char)line[i] & 0xC0) == 0x80);
+    line[i] = 0;
+    return line;
+}
+
+/* Text of a prompt record and its PROMPT_* kind, or NULL when the record isn't one. */
+static char *prompt_text(yyjson_val *rec, yyjson_val *content, int *kind) {
     if (yyjson_get_bool(yyjson_obj_get(rec, "isMeta")) ||
         yyjson_get_bool(yyjson_obj_get(rec, "isCompactSummary")))
         return NULL;
-    const char *kind = jstr(yyjson_obj_get(rec, "origin"), "kind");
-    if (kind && strcmp(kind, "human")) { /* harness-generated turn, e.g. a task finished */
+    const char *origin = jstr(yyjson_obj_get(rec, "origin"), "kind");
+    if (origin && strcmp(origin, "human")) { /* harness-generated turn, e.g. a task finished */
         char buf[96];
-        snprintf(buf, sizeof buf, "(%s)", kind);
+        snprintf(buf, sizeof buf, "(%s)", origin);
+        *kind = PROMPT_HARNESS;
         return xstrdup(buf);
     }
-    const char *s = NULL;
-    if (yyjson_is_str(content)) s = yyjson_get_str(content);
-    else if (yyjson_is_arr(content)) {
-        size_t i, n;
-        yyjson_val *c;
-        yyjson_arr_foreach(content, i, n, c) {
-            const char *ct = jstr(c, "type");
-            if (ct && !strcmp(ct, "text")) { s = jstr(c, "text"); break; }
-        }
-    }
+    const char *s = user_text(content);
     if (!s) return NULL;
     while (*s == ' ' || *s == '\n') s++;
     if (!strncmp(s, "<local-command", 14) || !strncmp(s, "<command-message>", 17) ||
-        !strncmp(s, "[Request interrupted", 20) || !*s)
+        !strncmp(s, "[Request interrupted", 20) || !strncmp(s, "Caveat:", 7) || !*s)
         return NULL;
-    const char *cmd = strstr(s, "<command-name>");
+    const char *cmd = *s == '<' ? strstr(s, "<command-name>") : NULL;
     if (cmd) {
         cmd += 14;
         const char *end = strstr(cmd, "</command-name>");
+        *kind = PROMPT_COMMAND;
         return end ? xstrndup(cmd, (size_t)(end - cmd)) : NULL;
     }
+    *kind = PROMPT_HUMAN;
     if (!strncmp(s, "<pasted_content", 15)) {
         const char *gt = strchr(s, '>');
         if (gt) s = gt + 1;
+        *kind = PROMPT_PASTED;
     }
-    char *line = first_line(s, MAX_TEXT);
+    char *line = prompt_line(s);
     if (!*line) { free(line); return NULL; }
     return line;
 }
@@ -411,6 +446,11 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
      * since, and a probe before a file was created reads it early. */
     bool gone = g->reads && (stat(abs, &st) || !S_ISREG(st.st_mode));
     char *rel = is_dir || gone ? NULL : rel_path(t, abs); /* a directory: a tree, not a file */
+    if (!rel && g->reads && !is_dir && !gone) { /* a file outside the repo: its absolute path */
+        normalize(abs);
+        rel = abs;
+        abs = NULL;
+    }
     free(abs);
     if (!rel || !*rel) { free(rel); return; }
     int k = strmap_get(&g->seen, rel);
@@ -488,6 +528,9 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     t->ev_notes = p.notes;
 
     if (!strcmp(name, "Bash")) {
+        Event end = mk(t, EV_BASH_END, ts, NULL, xstrdup(p.cmd ? p.cmd : ""), 0, 0, -1);
+        end.err = err;
+        t->emit(t->ud, &end);
         if (!err && p.cmd) { /* what it read (cat, sed -n, ...), before what it changed */
             GuessCtx g = {.t = t, .cwd = p.cwd, .ts = ts, .reads = true};
             cmd_guess(p.cmd, on_guess, &g);
@@ -501,6 +544,7 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
         plain_step(t, &p, ts, " failed");
     } else {
         char *rel = rel_path(t, p.path);
+        if (!rel && p.path && *p.path && !strcmp(name, "Read")) rel = abs_path(t, p.path); /* outside the repo */
         if (!strcmp(name, "Grep") || !strcmp(name, "Glob")) {
             if (!p.path) rel = xstrdup("");
             if (rel) emit(t, EV_SEARCH, ts, rel, p.pattern ? first_line(p.pattern, MAX_TEXT) : NULL,
@@ -512,7 +556,16 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
         } else if (!strcmp(name, "Read")) {
             yyjson_val *file = yyjson_obj_get(res, "file");
             yyjson_val *tl = yyjson_obj_get(file, "totalLines");
-            emit(t, EV_READ, ts, rel, NULL, 0, 0, yyjson_is_int(tl) ? (int)yyjson_get_int(tl) : -1);
+            Event e = mk(t, EV_READ, ts, rel, NULL, 0, 0, yyjson_is_int(tl) ? (int)yyjson_get_int(tl) : -1);
+            const char *type = jstr(res, "type");
+            if (res && (!type || strcmp(type, "text"))) e.range.first = -1; /* an image: no lines read */
+            else if (yyjson_is_obj(file)) { /* no numLines: to the end */
+                int first = (int)yyjson_get_int(yyjson_obj_get(file, "startLine"));
+                int nl = (int)yyjson_get_int(yyjson_obj_get(file, "numLines"));
+                e.range.first = first > 0 ? first : 1;
+                e.range.last = nl > 0 ? e.range.first + nl - 1 : 0;
+            }
+            t->emit(t->ud, &e);
         } else if (!strcmp(name, "Write")) {
             const char *type = jstr(res, "type");
             int lines = str_lines(yyjson_obj_get(res, "content"));
@@ -545,6 +598,40 @@ static void prune_pending(Transcript *t) {
             i++;
         }
     }
+}
+
+/* ---- usage, titles ------------------------------------------------------ */
+
+/* A response's tokens. Its parts each repeat them, output growing: emitted when
+ * first seen and whenever the output grows, at the first part's time. */
+static void usage(Transcript *t, yyjson_val *msg, double ts) {
+    yyjson_val *u = yyjson_obj_get(msg, "usage");
+    const char *id = jstr(msg, "id");
+    if (!yyjson_is_obj(u) || !id) return;
+    int out = yyjson_get_int(yyjson_obj_get(u, "output_tokens"));
+    if (t->usage_id && !strcmp(t->usage_id, id)) {
+        if (out <= t->usage_out) return;
+    } else {
+        free(t->usage_id);
+        t->usage_id = xstrdup(id);
+        t->usage_ts = ts;
+    }
+    t->usage_out = out;
+    Event e = mk(t, EV_USAGE, t->usage_ts, NULL, NULL, 0, 0, -1);
+    e.tool_id = xstrdup(id);
+    e.tok.out = out;
+    e.tok.in = yyjson_get_int(yyjson_obj_get(u, "input_tokens")) +
+               yyjson_get_int(yyjson_obj_get(u, "cache_creation_input_tokens"));
+    e.tok.cached = yyjson_get_int(yyjson_obj_get(u, "cache_read_input_tokens"));
+    t->emit(t->ud, &e);
+}
+
+/* ai-title records come untimed and are rewritten often: emitted when changed. */
+static void ai_title(Transcript *t, const char *title) {
+    if (!title || (t->title && !strcmp(t->title, title))) return;
+    free(t->title);
+    t->title = xstrdup(title);
+    emit(t, EV_TITLE, t->last_ts, NULL, xstrdup(title), 0, 0, -1);
 }
 
 /* ---- entry -------------------------------------------------------------- */
@@ -603,6 +690,23 @@ static bool is_note(const char *s) {
     return *s;
 }
 
+/* A record after which earlier text is no comment on later calls: a tool
+ * result, or a typed or pasted prompt. Task notifications, slash commands and
+ * interrupts aren't: the agent's text before them still leads to its next call. */
+static bool ends_notes(yyjson_val *rec) {
+    const char *type = jstr(rec, "type");
+    if (!type || strcmp(type, "user")) return false;
+    yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
+    size_t i, n;
+    yyjson_val *c;
+    yyjson_arr_foreach(content, i, n, c) if (jstr(c, "type") && !strcmp(jstr(c, "type"), "tool_result")) return true;
+    int kind = -1;
+    char *text = prompt_text(rec, content, &kind);
+    bool typed = text && (kind == PROMPT_HUMAN || kind == PROMPT_PASTED);
+    free(text);
+    return typed;
+}
+
 void tr_feed(Transcript *t, const char *line, size_t len, long off) {
     t->line_off = off;
     yyjson_doc *doc = parse_line(line, len);
@@ -618,10 +722,20 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
     double ts = parse_iso8601(jstr(rec, "timestamp"));
     yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
     /* A result or a prompt: what came before is about earlier calls (tr_notes
-     * stops at any user record too, timestamp or not). */
-    if (type && !strcmp(type, "user")) t->notes = 0;
+     * stops there too, timestamp or not). */
+    if (ends_notes(rec)) t->notes = 0;
+    if (ts) t->last_ts = ts;
+    if (type && !strcmp(type, "ai-title")) ai_title(t, jstr(rec, "aiTitle"));
     if (!type || !ts) goto done;
 
+    const char *sub = jstr(rec, "subtype");
+    if ((!strcmp(type, "system") && sub && !strcmp(sub, "compact_boundary")) ||
+        yyjson_get_bool(yyjson_obj_get(rec, "isCompactSummary"))) {
+        emit(t, EV_COMPACT, ts, NULL, NULL, 0, 0, -1);
+        t->notes = 0;
+        goto done;
+    }
+    if (!strcmp(type, "assistant")) usage(t, yyjson_obj_get(rec, "message"), ts);
     if (!strcmp(type, "assistant") && yyjson_is_arr(content)) {
         size_t i, n;
         yyjson_val *c;
@@ -649,8 +763,12 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
             }
         }
         int had_result = nresults > 0;
-        if (!had_result) {
-            char *text = prompt_text(rec, content);
+        const char *said = had_result ? NULL : user_text(content);
+        if (said && !strncmp(said, "[Request interrupted", 20)) {
+            emit(t, EV_INTERRUPT, ts, NULL, first_line(said, MAX_TEXT), 0, 0, -1);
+        } else if (!had_result) {
+            int kind = 0;
+            char *text = prompt_text(rec, content, &kind);
             if (text) {
                 /* Same parent as the previous prompt: the human re-sent it, same turn. */
                 const char *parent = jstr(rec, "parentUuid");
@@ -662,7 +780,9 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
                     t->turn++;
                     prune_pending(t);
                 }
-                emit(t, EV_TURN, ts, NULL, text, 0, 0, -1);
+                Event e = mk(t, EV_TURN, ts, NULL, text, 0, 0, -1);
+                e.prompt = kind;
+                t->emit(t->ud, &e);
             }
         }
     }
@@ -901,31 +1021,34 @@ static yyjson_val *find_block(yyjson_val *rec, const char *type, const char *key
     return NULL;
 }
 
-Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
-    Detail *d = xcalloc(1, sizeof *d);
-    d->state = -1;
+/* A tool call re-read from its transcript: the tool_use, and its result block and
+ * the record's toolUseResult (NULL when not there yet). */
+typedef struct {
+    yyjson_doc *use_doc, *res_doc;
+    yyjson_val *use, *block, *res;
+    bool gave_up; /* no result within SCAN_MAX */
+} Call;
+
+/* The call with tool_use `id` on the line at byte `off` of `src`: 0 found, -1 no
+ * such file or line, -2 the line holds no such call. */
+static int call_read(const char *src, long off, const char *id, Call *c) {
+    *c = (Call){0};
     FILE *f = src && id ? fopen(src, "r") : NULL;
     if (!f || fseeko(f, off, SEEK_SET)) {
-        d->tool = xstrdup("?");
-        dl_add(d, DL_DIM, 0, "no record of this step", 22);
         if (f) fclose(f);
-        return d;
+        return -1;
     }
     size_t len;
     char *line = read_line(f, &len);
-    yyjson_doc *use_doc = line ? parse_line(line, len) : NULL;
+    c->use_doc = line ? parse_line(line, len) : NULL;
     free(line);
-    yyjson_val *use = use_doc ? find_block(yyjson_doc_get_root(use_doc), "tool_use", "id", id) : NULL;
-    if (!use) {
-        d->tool = xstrdup("?");
-        dl_add(d, DL_DIM, 0, "the transcript changed: record not found", 40);
-        yyjson_doc_free(use_doc);
+    c->use = c->use_doc ? find_block(yyjson_doc_get_root(c->use_doc), "tool_use", "id", id) : NULL;
+    if (!c->use) {
+        yyjson_doc_free(c->use_doc);
+        c->use_doc = NULL;
         fclose(f);
-        return d;
+        return -2;
     }
-    const char *name = jstr(use, "name");
-    d->tool = tool_label(name ? name : "?");
-
     /* Its result comes later in the same file: the first tool_result naming the id. */
     yyjson_doc *res_doc = NULL;
     yyjson_val *block = NULL, *res = NULL;
@@ -935,13 +1058,15 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
         if (strstr(line, id) && strstr(line, "\"tool_result\"")) {
             res_doc = parse_line(line, len);
             yyjson_val *rec = res_doc ? yyjson_doc_get_root(res_doc) : NULL;
-            block = rec ? find_block(rec, "tool_result", "tool_use_id", id) : NULL;
+            /* Only the user record: others (api-request-blob) copy the block without toolUseResult. */
+            const char *type = jstr(rec, "type");
+            block = type && !strcmp(type, "user") ? find_block(rec, "tool_result", "tool_use_id", id) : NULL;
             if (block) {
                 /* toolUseResult belongs to the record: only trust it for a lone result. */
                 yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
                 size_t i, n, results = 0;
-                yyjson_val *c;
-                yyjson_arr_foreach(content, i, n, c) results += jstr(c, "type") && !strcmp(jstr(c, "type"), "tool_result");
+                yyjson_val *b;
+                yyjson_arr_foreach(content, i, n, b) results += jstr(b, "type") && !strcmp(jstr(b, "type"), "tool_result");
                 res = results == 1 ? yyjson_obj_get(rec, "toolUseResult") : NULL;
             } else {
                 yyjson_doc_free(res_doc);
@@ -951,15 +1076,120 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
         free(line);
     }
     fclose(f);
-    detail_body(d, name ? name : "?", yyjson_obj_get(use, "input"), block, res, path);
-    d->state = block ? 0 : 1;
-    if (!block && scanned >= SCAN_MAX) { /* don't keep looking */
+    c->res_doc = res_doc;
+    c->block = block;
+    c->res = res;
+    c->gave_up = !block && scanned >= SCAN_MAX;
+    return 0;
+}
+
+static void call_free(Call *c) {
+    yyjson_doc_free(c->use_doc);
+    yyjson_doc_free(c->res_doc);
+}
+
+Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
+    Detail *d = xcalloc(1, sizeof *d);
+    d->state = -1;
+    Call c;
+    int rc = call_read(src, off, id, &c);
+    if (rc) {
+        d->tool = xstrdup("?");
+        if (rc == -1) dl_add(d, DL_DIM, 0, "no record of this step", 22);
+        else dl_add(d, DL_DIM, 0, "the transcript changed: record not found", 40);
+        return d;
+    }
+    const char *name = jstr(c.use, "name");
+    d->tool = tool_label(name ? name : "?");
+    detail_body(d, name ? name : "?", yyjson_obj_get(c.use, "input"), c.block, c.res, path);
+    d->state = c.block ? 0 : 1;
+    if (c.gave_up) { /* don't keep looking */
         d->state = -1;
         dl_add(d, DL_DIM, 0, "(no result within 512 MB of the call)", 37);
     }
-    yyjson_doc_free(use_doc);
-    yyjson_doc_free(res_doc);
+    call_free(&c);
     return d;
+}
+
+static void change_hunks(Change *ch, yyjson_val *hunks) {
+    size_t i, n;
+    yyjson_val *h;
+    ch->hunks = xcalloc(yyjson_arr_size(hunks) + 1, sizeof *ch->hunks);
+    yyjson_arr_foreach(hunks, i, n, h) {
+        Hunk *k = &ch->hunks[ch->nhunks++];
+        k->old_start = yyjson_get_int(yyjson_obj_get(h, "oldStart"));
+        k->old_lines = yyjson_get_int(yyjson_obj_get(h, "oldLines"));
+        k->new_start = yyjson_get_int(yyjson_obj_get(h, "newStart"));
+        k->new_lines = yyjson_get_int(yyjson_obj_get(h, "newLines"));
+        yyjson_val *lines = yyjson_obj_get(h, "lines");
+        k->lines = xcalloc(yyjson_arr_size(lines) + 1, sizeof *k->lines);
+        size_t j, m;
+        yyjson_val *ln;
+        yyjson_arr_foreach(lines, j, m, ln)
+            if (yyjson_is_str(ln)) k->lines[k->n++] = xstrndup(yyjson_get_str(ln), yyjson_get_len(ln));
+    }
+}
+
+static char *jdup(yyjson_val *v) { return yyjson_is_str(v) ? xstrndup(yyjson_get_str(v), yyjson_get_len(v)) : NULL; }
+
+Change *tr_change(const char *src, long off, const char *id, const char *root, const char *path) {
+    Change *ch = xcalloc(1, sizeof *ch);
+    Call c;
+    if (call_read(src, off, id, &c)) {
+        ch->state = -1;
+        return ch;
+    }
+    ch->state = c.block ? 0 : c.gave_up ? -1 : 1;
+    const char *name = jstr(c.use, "name");
+    ch->tool = name ? xstrdup(name) : NULL;
+    if (name && !strcmp(name, "Bash")) {
+        ch->cmd = 1;
+        size_t i, n;
+        yyjson_val *f;
+        char *want = NULL;
+        if (root && path) { /* the file's absolute path, as normalize() writes it */
+            want = xmalloc(strlen(root) + strlen(path) + 3);
+            sprintf(want, "/%s/%s", root, path);
+            normalize(want);
+        }
+        yyjson_arr_foreach(yyjson_obj_get(yyjson_obj_get(c.res, "bashEditDiff"), "files"), i, n, f) {
+            const char *fp = jstr(f, "filePath");
+            if (!want || !fp || *fp != '/') continue;
+            char *abs = xstrdup(fp);
+            normalize(abs);
+            bool hit = !strcmp(abs, want);
+            free(abs);
+            if (hit) {
+                change_hunks(ch, yyjson_obj_get(f, "hunks"));
+                break;
+            }
+        }
+        free(want);
+    } else if (c.res) {
+        ch->original = jdup(yyjson_obj_get(c.res, "originalFile"));
+        const char *type = jstr(c.res, "type");
+        if (type && !strcmp(type, "create")) {
+            yyjson_val *content = yyjson_obj_get(c.res, "content");
+            ch->created = jdup(yyjson_is_str(content) ? content : yyjson_obj_get(yyjson_obj_get(c.use, "input"), "content"));
+        }
+        ch->patched = yyjson_is_arr(yyjson_obj_get(c.res, "structuredPatch"));
+        change_hunks(ch, yyjson_obj_get(c.res, "structuredPatch"));
+    }
+    call_free(&c);
+    return ch;
+}
+
+void change_free(Change *ch) {
+    if (!ch) return;
+    for (int i = 0; i < ch->nhunks; i++) {
+        for (int j = 0; j < ch->hunks[i].n; j++) free(ch->hunks[i].lines[j]);
+        free(ch->hunks[i].lines);
+    }
+    free(ch->hunks);
+    free(ch->tool);
+    free(ch->original);
+    free(ch->created);
+    free(ch);
 }
 
 #define NOTES_SCAN (64L << 20) /* bytes read looking for a call's comments */
@@ -981,7 +1211,7 @@ Notes tr_notes(const char *src, long off, int n, const char *id) {
         free(line);
         yyjson_val *rec = doc ? yyjson_doc_get_root(doc) : NULL;
         const char *type = jstr(rec, "type");
-        if (type && !strcmp(type, "user")) done = true; /* past the call: the transcript changed */
+        if (ends_notes(rec)) done = true; /* past the call: the transcript changed */
         yyjson_val *content = type && !strcmp(type, "assistant")
                                   ? yyjson_obj_get(yyjson_obj_get(rec, "message"), "content") : NULL;
         size_t i, m;

@@ -7,6 +7,7 @@
 
 static const char *KIND_NAMES[EV_KIND_COUNT] = {
     "turn", "read", "search", "create", "edit", "delete", "touch", "bash", "tool", "failed",
+    "usage", "compact", "interrupt", "title", "bash_end", "turn_copy",
 };
 
 const char *ev_kind_name(EvKind k) { return k < EV_KIND_COUNT ? KIND_NAMES[k] : "?"; }
@@ -17,6 +18,10 @@ void ev_free(Event *e) {
     free(e->path);
     free(e->text);
     free(e->tool_id);
+    if (e->kind == EV_TITLE) {
+        free(e->who.type);
+        free(e->who.session);
+    }
     memset(e, 0, sizeof *e);
 }
 
@@ -36,6 +41,24 @@ void ev_print_json(FILE *f, const Event *e) {
     fprintf(f, ",\"turn\":%d", e->turn);
     if (e->text) { fputs(",\"text\":", f); json_str(f, e->text); }
     if (e->via) fprintf(f, ",\"via\":\"%s\"", e->via == VIA_GUESS ? "guess" : e->via == VIA_CMD ? "cmd" : "watch");
+    if (e->kind == EV_READ && (e->range.first || e->range.last))
+        fprintf(f, ",\"range\":[%d,%d]", e->range.first, e->range.last);
+    if (e->kind == EV_USAGE) {
+        fputs(",\"id\":", f);
+        json_str(f, e->tool_id);
+        fprintf(f, ",\"tok\":[%d,%d,%d]", e->tok.out, e->tok.in, e->tok.cached);
+    }
+    if (e->kind == EV_TURN || e->kind == EV_TURN_COPY) {
+        static const char *prompts[] = {"human", "pasted", "command", "harness"};
+        fprintf(f, ",\"prompt\":\"%s\"", e->prompt >= 0 && e->prompt < 4 ? prompts[e->prompt] : "?");
+    }
+    if (e->kind == EV_BASH_END) fprintf(f, ",\"err\":%s", e->err ? "true" : "false");
+    if (e->kind == EV_TITLE && e->who.type) {
+        fputs(",\"type\":", f);
+        json_str(f, e->who.type);
+        fputs(",\"session\":", f);
+        json_str(f, e->who.session);
+    }
     fputs("}\n", f);
 }
 

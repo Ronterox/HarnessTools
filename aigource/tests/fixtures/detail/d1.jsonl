@@ -17,26 +17,26 @@
 {"type": "user", "timestamp": "2026-10-14T10:00:57.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "d8", "is_error": false, "content": "x"}]}, "toolUseResult": {"filePath": "/proj/src/a.py"}}
 {"type": "assistant", "timestamp": "2026-10-14T10:00:58.000Z", "message": {"content": [{"type": "tool_use", "id": "d9", "name": "WebSearch", "input": {"query": "raylib"}}, {"type": "tool_use", "id": "d10", "name": "Bash", "input": {"command": "sleep 99"}}]}}
 {"type": "user", "timestamp": "2026-10-14T10:00:59.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "d9", "content": "3 results"}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:60.000Z", "message": {"content": [{"type": "tool_use", "id": "x1", "name": "WebFetch", "input": {"url": "http://one"}}, {"type": "tool_use", "id": "x10", "name": "WebFetch", "input": {"url": "http://ten"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:61.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x10", "content": "ten"}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:62.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": "one"}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:63.000Z", "message": {"content": [{"type": "text", "text": "Checking two things.\n\nFirst the **config**."}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:64.000Z", "message": {"content": [{"type": "thinking", "thinking": ""}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:65.000Z", "message": {"content": [{"type": "tool_use", "id": "n1", "name": "WebFetch", "input": {"url": "http://cfg"}}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:66.000Z", "message": {"content": [{"type": "text", "text": "  \n"}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:67.000Z", "message": {"content": [{"type": "text", "text": "Then the docs."}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:68.000Z", "message": {"content": [{"type": "tool_use", "id": "n2", "name": "WebFetch", "input": {"url": "http://docs"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:69.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n1", "content": "cfg"}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:70.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n2", "content": "docs"}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:71.000Z", "message": {"content": [{"type": "tool_use", "id": "n3", "name": "WebFetch", "input": {"url": "http://more"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:72.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n3", "content": "more"}]}}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:73.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f1", "name": "Bash", "input": {"command": "cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h\necho no > nope\nEOF\nfalse"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:74.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f1", "is_error": true, "content": "Error: Exit code 1"}]}, "toolUseResult": "Error: Exit code 1"}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:75.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f2", "name": "Bash", "input": {"command": "make test"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:76.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f2", "is_error": true, "content": "Error: Exit code 2\nFAIL"}]}, "toolUseResult": "Error: Exit code 2"}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:77.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f3", "name": "Bash", "input": {"command": "cd src && sed -i 1d c.py && false"}}]}, "cwd": "/proj"}
-{"type": "user", "timestamp": "2026-10-14T10:00:78.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f3", "is_error": true, "content": "Exit code 1"}]}, "toolUseResult": "Error: Exit code 1", "cwd": "/proj/src"}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:79.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f4", "name": "Bash", "input": {"command": "rm keep.py"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:80.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f4", "is_error": true, "content": "The user doesn't want to proceed with this tool use."}]}, "toolUseResult": "User rejected tool use"}
-{"type": "assistant", "timestamp": "2026-10-14T10:00:81.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f5", "name": "Bash", "input": {"command": "rm keep2.py"}}]}}
-{"type": "user", "timestamp": "2026-10-14T10:00:82.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f5", "is_error": true, "content": "PreToolUse:Bash hook error: blocked"}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:00.000Z", "message": {"content": [{"type": "tool_use", "id": "x1", "name": "WebFetch", "input": {"url": "http://one"}}, {"type": "tool_use", "id": "x10", "name": "WebFetch", "input": {"url": "http://ten"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:01.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x10", "content": "ten"}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:02.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "x1", "content": "one"}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:03.000Z", "message": {"content": [{"type": "text", "text": "Checking two things.\n\nFirst the **config**."}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:04.000Z", "message": {"content": [{"type": "thinking", "thinking": ""}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:05.000Z", "message": {"content": [{"type": "tool_use", "id": "n1", "name": "WebFetch", "input": {"url": "http://cfg"}}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:06.000Z", "message": {"content": [{"type": "text", "text": "  \n"}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:07.000Z", "message": {"content": [{"type": "text", "text": "Then the docs."}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:08.000Z", "message": {"content": [{"type": "tool_use", "id": "n2", "name": "WebFetch", "input": {"url": "http://docs"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:09.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n1", "content": "cfg"}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:10.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n2", "content": "docs"}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:11.000Z", "message": {"content": [{"type": "tool_use", "id": "n3", "name": "WebFetch", "input": {"url": "http://more"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:12.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "n3", "content": "more"}]}}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:13.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f1", "name": "Bash", "input": {"command": "cd /proj/src && sed -i '1,2d' a.py b.py && mv old.py new.py 2>/dev/null && cat <<EOF > gen.h\necho no > nope\nEOF\nfalse"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:14.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f1", "is_error": true, "content": "Error: Exit code 1"}]}, "toolUseResult": "Error: Exit code 1"}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:15.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f2", "name": "Bash", "input": {"command": "make test"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:16.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f2", "is_error": true, "content": "Error: Exit code 2\nFAIL"}]}, "toolUseResult": "Error: Exit code 2"}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:17.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f3", "name": "Bash", "input": {"command": "cd src && sed -i 1d c.py && false"}}]}, "cwd": "/proj"}
+{"type": "user", "timestamp": "2026-10-14T10:01:18.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f3", "is_error": true, "content": "Exit code 1"}]}, "toolUseResult": "Error: Exit code 1", "cwd": "/proj/src"}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:19.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f4", "name": "Bash", "input": {"command": "rm keep.py"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:20.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f4", "is_error": true, "content": "The user doesn't want to proceed with this tool use."}]}, "toolUseResult": "User rejected tool use"}
+{"type": "assistant", "timestamp": "2026-10-14T10:01:21.000Z", "message": {"content": [{"type": "text", "text": "doing it"}, {"type": "tool_use", "id": "f5", "name": "Bash", "input": {"command": "rm keep2.py"}}]}}
+{"type": "user", "timestamp": "2026-10-14T10:01:22.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "f5", "is_error": true, "content": "PreToolUse:Bash hook error: blocked"}]}}

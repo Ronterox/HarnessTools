@@ -63,11 +63,13 @@ static bool fallback_ignored(const char *name) {
     return false;
 }
 
-/* Runs argv with pipes on its stdin (*to, may be NULL) and stdout (*from). */
+/* Runs argv with pipes on its stdin (*to, may be NULL) and stdout (*from).
+ * Close-on-exec: another thread's child must not hold them open (git would
+ * never see stdin's EOF, a read would never end). */
 static pid_t spawn(char *const argv[], FILE **to, FILE **from) {
     int in[2], out[2];
-    if (pipe(in)) return -1;
-    if (pipe(out)) { close(in[0]); close(in[1]); return -1; }
+    if (pipe2(in, O_CLOEXEC)) return -1;
+    if (pipe2(out, O_CLOEXEC)) { close(in[0]); close(in[1]); return -1; }
     pid_t pid = fork();
     if (pid < 0) {
         close(in[0]); close(in[1]); close(out[0]); close(out[1]);

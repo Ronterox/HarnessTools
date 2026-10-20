@@ -60,6 +60,12 @@ struct Ingest {
     struct { Event e; double until; } *held;
     int nheld, capheld;
     int meta_waiting; /* a subagent transcript exists but isn't tracked yet */
+    /* Resumed sessions copy earlier records into their new file: events seen
+     * once already (dedupe keys), and per response the largest output so far. */
+    StrMap seen;
+    StrMap usage_ix;
+    struct { int out; double ts; } *usage;
+    int nusage, capusage;
     pthread_t th;
     int started;
     atomic_int stop;
@@ -70,10 +76,52 @@ static void push(Ingest *in, Event *e) {
     evq_push(in->q, *e);
 }
 
+/* A copy of an event already seen: a resumed session's file repeats earlier
+ * records. The first copy seen wins (files are read in sorted path order).
+ * Unique: a call's events by (kind, tool_use id, file, line range), turns by
+ * (prompt time, text; a copy stays, as TURN_COPY), interrupts by time. A
+ * response's usage counts once, the copy with the most output, at the first
+ * copy's time. Compactions repeat: each starts the context of the actor whose
+ * file has it. */
+static int duplicate(Ingest *in, Event *e) {
+    char key[1024]; /* longer keys (paths near PATH_MAX) are cut: not seen in practice */
+    if (e->kind == EV_USAGE) {
+        int k = strmap_get(&in->usage_ix, e->tool_id);
+        if (k >= 0) {
+            if (e->tok.out <= in->usage[k].out) return 1;
+            in->usage[k].out = e->tok.out;
+            e->ts = in->usage[k].ts;
+            return 0;
+        }
+        if (in->nusage == in->capusage) {
+            in->capusage = in->capusage ? in->capusage * 2 : 256;
+            in->usage = xrealloc(in->usage, (size_t)in->capusage * sizeof *in->usage);
+        }
+        in->usage[in->nusage].out = e->tok.out;
+        in->usage[in->nusage].ts = e->ts;
+        strmap_put(&in->usage_ix, e->tool_id, in->nusage++);
+        return 0;
+    }
+    if (e->tool_id)
+        snprintf(key, sizeof key, "c\x1f%d\x1f%s\x1f%s\x1f%d\x1f%d", e->kind, e->tool_id, e->path ? e->path : "",
+                 e->kind == EV_READ ? e->range.first : 0, e->kind == EV_READ ? e->range.last : 0);
+    else if (e->kind == EV_TURN) snprintf(key, sizeof key, "t\x1f%.3f\x1f%s", e->ts, e->text ? e->text : "");
+    else if (e->kind == EV_INTERRUPT) snprintf(key, sizeof key, "i\x1f%.3f", e->ts);
+    else return 0;
+    if (strmap_get(&in->seen, key) >= 0) {
+        if (e->kind != EV_TURN) return 1;
+        e->kind = EV_TURN_COPY; /* the resumed session's work before its first new prompt is in it */
+        return 0;
+    }
+    strmap_put(&in->seen, key, 1);
+    return 0;
+}
+
 /* Transcript events; file ones are remembered so the watcher can tell the
  * agent's own writes from other changes. */
 static void on_event(void *ud, Event *e) {
     Ingest *in = ud;
+    if (duplicate(in, e)) { ev_free(e); return; }
     if (e->via == VIA_GUESS) { /* not a record: the watcher must still see the change */
         double now = now_wall();
         if (!in->watch || e->ts < now - BACKLOG) { push(in, e); return; }
@@ -110,8 +158,10 @@ static int ends_with(const char *s, const char *suf) {
     return n >= m && !strcmp(s + n - m, suf);
 }
 
-/* Actor id/name from a transcript path: main session or subagents/agent-<id>.jsonl. */
-static void actor_for(const char *path, char **id, char **name) {
+/* Actor id/name from a transcript path: main session or subagents/agent-<id>.jsonl.
+ * A subagent also gets *title: an EV_TITLE with its type, task and session (a
+ * main session leaves it zeroed). */
+static void actor_for(const char *path, char **id, char **name, Event *title) {
     const char *base = strrchr(path, '/');
     base = base ? base + 1 : path;
     size_t n = strlen(base) - (ends_with(base, ".jsonl") ? 6 : 0);
@@ -123,15 +173,25 @@ static void actor_for(const char *path, char **id, char **name) {
         char type[96] = "agent";
         yyjson_doc *doc = yyjson_read_file(meta, 0, NULL, NULL);
         const char *t = doc ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "agentType")) : NULL;
+        const char *task = doc ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "description")) : NULL;
         if (t) {
             const char *colon = strrchr(t, ':'); /* "plugin:executor" -> "executor" */
             snprintf(type, sizeof type, "%s", colon ? colon + 1 : t);
         }
-        yyjson_doc_free(doc);
-        free(meta);
         char buf[160];
         snprintf(buf, sizeof buf, "%s\xC2\xB7%.6s", type, *id); /* "executor·a075f1" */
         *name = xstrdup(buf);
+        /* <session>/subagents/agent-<id>.jsonl */
+        const char *sub = strstr(path, "/subagents/"), *sid;
+        for (const char *p; (p = strstr(sub + 1, "/subagents/"));) sub = p;
+        sid = sub;
+        while (sid > path && sid[-1] != '/') sid--;
+        *title = (Event){.kind = EV_TITLE, .actor = xstrdup(*id), .actor_name = xstrdup(*name),
+                         .text = xstrdup(task ? task : ""), .lines = -1};
+        title->who.type = xstrdup(type);
+        title->who.session = xstrndup(sid, (size_t)(sub - sid));
+        yyjson_doc_free(doc);
+        free(meta);
     } else {
         *id = xstrndup(base, n);
         char buf[64];
@@ -147,7 +207,9 @@ static void track(Ingest *in, const char *path) {
         in->tails = xrealloc(in->tails, in->captails * sizeof *in->tails);
     }
     char *id, *name;
-    actor_for(path, &id, &name);
+    Event title = {0};
+    actor_for(path, &id, &name, &title);
+    if (title.actor) on_event(in, &title);
     Tail *t = &in->tails[in->ntails];
     memset(t, 0, sizeof *t);
     t->path = xstrdup(path);
@@ -235,14 +297,34 @@ static void find_projdirs(Ingest *in) {
     free(base);
 }
 
+static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
+
+/* The .jsonl files in dir, sorted: which copy of a resumed session's records
+ * is seen first (and kept) must not depend on the directory's order. */
+static int list_jsonl(const char *dir, char ***out) {
+    DIR *d = opendir(dir);
+    struct dirent *de;
+    char **names = NULL;
+    int n = 0;
+    while (d && (de = readdir(d))) {
+        if (!ends_with(de->d_name, ".jsonl")) continue;
+        names = xrealloc(names, (size_t)(n + 1) * sizeof *names);
+        names[n++] = xstrdup(de->d_name);
+    }
+    if (d) closedir(d);
+    if (n) qsort(names, (size_t)n, sizeof *names, cmp_str);
+    *out = names;
+    return n;
+}
+
 static void scan_subagents(Ingest *in, const char *projdir, const char *sid) {
     char *sub = xmalloc(strlen(projdir) + strlen(sid) + 16);
     sprintf(sub, "%s/%s/subagents", projdir, sid);
-    DIR *d = opendir(sub);
-    struct dirent *de;
-    while (d && (de = readdir(d))) {
-        if (!ends_with(de->d_name, ".jsonl")) continue;
-        char *f = path_join(sub, de->d_name);
+    char **names;
+    int nn = list_jsonl(sub, &names);
+    for (int k = 0; k < nn; k++) {
+        char *f = path_join(sub, names[k]);
+        free(names[k]);
         if (strmap_get(&in->tracked, f) < 0) {
             /* Name comes from the .meta.json; give it a moment to appear. */
             char *meta = xmalloc(strlen(f) + 16);
@@ -257,7 +339,7 @@ static void scan_subagents(Ingest *in, const char *projdir, const char *sid) {
         }
         free(f);
     }
-    if (d) closedir(d);
+    free(names);
     free(sub);
 }
 
@@ -266,23 +348,24 @@ static void rescan(Ingest *in) {
     char *newest = NULL;
     double newest_mt = 0;
     for (int p = 0; p < in->nproj; p++) {
-        DIR *d = opendir(in->projdirs[p]);
-        struct dirent *de;
-        while (d && (de = readdir(d))) {
-            if (!ends_with(de->d_name, ".jsonl")) continue;
-            char *f = path_join(in->projdirs[p], de->d_name);
+        char **names;
+        int nn = list_jsonl(in->projdirs[p], &names);
+        for (int k = 0; k < nn; k++) {
+            const char *name = names[k];
+            char *f = path_join(in->projdirs[p], name);
             struct stat st;
             double mt = stat(f, &st) ? 0 : st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
             if (mt > newest_mt) { free(newest); newest = xstrdup(f); newest_mt = mt; }
             if (strmap_get(&in->tracked, f) >= 0 || mt >= in->since) {
                 track(in, f);
-                char *sid = xstrndup(de->d_name, strlen(de->d_name) - 6);
+                char *sid = xstrndup(name, strlen(name) - 6);
                 scan_subagents(in, in->projdirs[p], sid);
                 free(sid);
             }
             free(f);
+            free(names[k]);
         }
-        if (d) closedir(d);
+        free(names);
     }
     /* Nothing active: show the most recent session rather than an empty screen. */
     if (!in->ntails && newest) {
@@ -487,4 +570,25 @@ void ingest_stop(Ingest *in) {
     if (!in->started) return;
     atomic_store(&in->stop, 1);
     pthread_join(in->th, NULL);
+}
+
+/* Without --watch (no free for the watcher): what a one-shot run made. */
+void ingest_free(Ingest *in) {
+    if (!in) return;
+    ingest_stop(in);
+    for (int i = 0; i < in->ntails; i++) {
+        Tail *t = &in->tails[i];
+        tr_free(t->tr);
+        free(t->path), free(t->actor), free(t->actor_name), free(t->buf);
+    }
+    free(in->tails);
+    for (int i = 0; i < in->nproj; i++) free(in->projdirs[i]);
+    free(in->projdirs);
+    strmap_free(&in->tracked), strmap_free(&in->rejected), strmap_free(&in->seen), strmap_free(&in->usage_ix);
+    for (int i = 0; i < RECENT; i++) free(in->recent[i].path);
+    for (int i = 0; i < in->nheld; i++) ev_free(&in->held[i].e);
+    free(in->held);
+    free(in->usage);
+    free(in->root);
+    free(in);
 }

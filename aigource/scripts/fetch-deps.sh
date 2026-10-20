@@ -25,3 +25,7 @@ tar xzf vendor/raylib.tar.gz -C vendor
 tar xzf vendor/yyjson.tar.gz -C vendor
 tar xzf vendor/tree-sitter.tar.gz -C vendor
 touch vendor/raylib-5.5_linux_amd64/lib/libraylib.a vendor/yyjson-0.10.0/src/yyjson.c vendor/tree-sitter-0.25.10/lib/src/lib.c
+# Tests only (tests/metrics_parity.js runs the draft page's JavaScript): the parity check skips without it.
+( fetch https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js \
+        d3-7.9.0.min.js f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539 ) ||
+    echo "d3 not fetched: the metrics parity tests will skip" >&2
