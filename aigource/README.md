@@ -169,6 +169,8 @@ the inspector's code, the code, and `Shift`+wheel sideways.
 --metrics FILE     with --structure-dump: also write what the structure view
                    derives from it (per node and turn) to FILE as JSON;
                    build times go to stderr
+--rebuild N        with --structure-dump: build N more times on the same
+                   analysis (its caches warm), as live rebuilds do
 --shot FILE        render, save a PNG after --frames frames, exit
 --frames N         frames before --shot (default 600)
 --seek F           start paused at fraction F (0..1) of the timeline

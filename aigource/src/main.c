@@ -33,6 +33,9 @@ static void usage(void) {
           "  --metrics FILE     with --structure-dump: also write what the structure view\n"
           "                     derives from it (per node and turn) to FILE as JSON;\n"
           "                     build times go to stderr\n"
+          "  --rebuild N        with --structure-dump: build N more times on the same\n"
+          "                     analysis (its caches warm), adding any new events first,\n"
+          "                     as live rebuilds do; prints the last, each time to stderr\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
@@ -77,7 +80,7 @@ static void print_detail(const Event *e) {
 }
 
 /* The structure analysis of the loaded history, as JSON. */
-static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *metrics) {
+static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *metrics, int rebuild) {
     FILE *mf = metrics ? fopen(metrics, "w") : NULL; /* before the long build: fail fast */
     if (metrics && !mf) {
         perror(metrics);
@@ -91,9 +94,23 @@ static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *
     an_add(a, evs, n);
     for (size_t i = 0; i < n; i++) ev_free(&evs[i]);
     free(evs);
-    double t0 = now_wall();
-    AnSnapshot *s = an_build(a);
-    double t1 = now_wall();
+    double t0 = 0, t1 = 0;
+    AnSnapshot *s = NULL;
+    for (int i = 0; i <= rebuild; i++) { /* --rebuild: again on the same analysis, new events first */
+        if (i) {
+            ingest_poll(in);
+            size_t k = evq_drain(q, &evs);
+            an_add(a, evs, k);
+            for (size_t j = 0; j < k; j++) ev_free(&evs[j]);
+            free(evs);
+            n += k;
+            an_snapshot_free(s);
+        }
+        t0 = now_wall();
+        s = an_build(a);
+        t1 = now_wall();
+        if (rebuild) fprintf(stderr, "build %d: %.1f ms, %zu events\n", i + 1, (t1 - t0) * 1e3, n);
+    }
     an_snapshot_json(stdout, s);
     an_snapshot_stats(stderr, s);
     int rc = 0;
@@ -138,7 +155,7 @@ int main(int argc, char **argv) {
     char root[PATH_MAX];
     const char *root_arg = ".", *metrics = NULL;
     double since_h = 2;
-    int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0;
+    int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0, rebuild = 0;
     double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
                   .mouse_x = -1, .mouse_y = -1};
@@ -164,6 +181,7 @@ int main(int argc, char **argv) {
         else if (TAKES("--structure-turn", "--structure-turn")) vo.structure_turn = atoi(v);
         else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (TAKES("--metrics", "--metrics")) metrics = v;
+        else if (TAKES("--rebuild", "--rebuild")) rebuild = atoi(v);
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
         else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;
@@ -175,8 +193,12 @@ int main(int argc, char **argv) {
         else files[nfiles++] = a;
 #undef TAKES
     }
-    if (metrics && !want_structure) {
-        fputs("aigource: --metrics needs --structure-dump\n", stderr);
+    if ((metrics || rebuild) && !want_structure) {
+        fputs("aigource: --metrics and --rebuild need --structure-dump\n", stderr);
+        return 2;
+    }
+    if (rebuild < 0) {
+        fputs("aigource: --rebuild needs a count of 0 or more\n", stderr);
         return 2;
     }
     if (!realpath(root_arg, root)) {
@@ -192,7 +214,7 @@ int main(int argc, char **argv) {
     Ingest *in = ingest_new(&io, &q);
     if (want_dump) return dump(in, &q, follow, details);
     if (want_structure) {
-        int rc = structure_dump(in, &q, root, metrics);
+        int rc = structure_dump(in, &q, root, metrics, rebuild);
         free(files);
         free(q.items);
         return rc;

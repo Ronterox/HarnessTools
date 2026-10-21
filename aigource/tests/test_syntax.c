@@ -48,6 +48,69 @@ static void defs(const char *path, const char *text, const char *want) {
     syn_defs_free(d, n);
 }
 
+static int same_defs(const SynDef *x, int nx, const SynDef *y, int ny) {
+    int same = nx == ny;
+    for (int i = 0; same && i < nx; i++)
+        same = !strcmp(x[i].name, y[i].name) && x[i].cls == y[i].cls && x[i].a == y[i].a && x[i].b == y[i].b &&
+               x[i].parent == y[i].parent && x[i].cx == y[i].cx && x[i].depth == y[i].depth;
+    return same;
+}
+
+/* A real file in n versions, each the file with one random line edit (a line
+ * dropped, doubled, swapped with the next, or an unbalanced one put in): each
+ * version's defs parsed from the version before are a fresh parse's. The
+ * structure analysis caches defs by text alone (analysis.c, defs_of), so which
+ * version was parsed before must not matter. */
+static void edit_chain(const char *path, const char *junk, int n) {
+    FILE *f = fopen(path, "rb");
+    if (!f || !syn_lang_for(path)) {
+        if (f) fclose(f);
+        printf("skip syntax edit chain %s\n", path);
+        return;
+    }
+    char *text = NULL, **line = NULL, *l = NULL;
+    size_t cap = 0;
+    int nl = 0;
+    while (getline(&l, &cap, f) > 0) {
+        line = realloc(line, (size_t)(nl + 1) * sizeof *line);
+        line[nl++] = strdup(l);
+    }
+    free(l);
+    fclose(f);
+    size_t full = strlen(junk); /* room for the longest line added */
+    for (int i = 0; i < nl; i++) full += 2 * strlen(line[i]);
+    text = malloc(full + 1);
+    SynParse *pp = syn_parse_new();
+    unsigned seed = 12345;
+    int bad = 0;
+    for (int v = 0; v < n && nl > 2; v++) {
+        seed = seed * 1103515245u + 12345u;
+        int at = (int)((seed >> 8) % (unsigned)(nl - 1)), op = (int)((seed >> 4) % 4);
+        size_t len = 0;
+        for (int i = 0; i < nl; i++) {
+            const char *a = line[i], *b = NULL; /* line i as this version has it, and one after it */
+            if (i == at && op == 0) a = "";
+            else if (i == at && op == 1) b = line[i];
+            else if (i == at && op == 2) a = line[i + 1];
+            else if (i == at + 1 && op == 2) a = line[at];
+            else if (i == at && op == 3) b = junk;
+            len += strlen(strcpy(text + len, a));
+            if (b) len += strlen(strcpy(text + len, b));
+        }
+        SynDef *x, *y;
+        int nx = syn_defs(path, text, (uint32_t)len, &x, pp), ny = syn_defs(path, text, (uint32_t)len, &y, NULL);
+        bad += !same_defs(x, nx, y, ny);
+        syn_defs_free(x, nx);
+        syn_defs_free(y, ny);
+    }
+    checks++;
+    if (bad) { printf("FAIL syntax edit chain %s: %d of %d versions reparsed differ\n", path, bad, n); fails++; }
+    syn_parse_free(pp);
+    for (int i = 0; i < nl; i++) free(line[i]);
+    free(line);
+    free(text);
+}
+
 int main(void) {
     const char *c = "/* note */\nstatic int main(void) {\n    const char *s = \"hi\\n\";\n    return 42 + MAX_N;\n}\n";
     const char *cw[] = {"/* note", "static", "int", "main", "\"hi", "\\n", "return", "42", "MAX_N"};
@@ -114,16 +177,14 @@ int main(void) {
             syn_defs_free(x, nx);
             continue;
         }
-        int same = nx == ny;
-        for (int i = 0; same && i < nx; i++)
-            same = !strcmp(x[i].name, y[i].name) && x[i].a == y[i].a && x[i].b == y[i].b && x[i].cx == y[i].cx &&
-                   x[i].parent == y[i].parent;
         checks++;
-        if (!same) { printf("FAIL syntax defs: version %d reparsed differs\n", v); fails++; }
+        if (!same_defs(x, nx, y, ny)) { printf("FAIL syntax defs: version %d reparsed differs\n", v); fails++; }
         syn_defs_free(x, nx);
         syn_defs_free(y, ny);
     }
     syn_parse_free(pp);
+    edit_chain("src/analysis.c", "    if (x) {\n", 25);
+    edit_chain("draft/build_data.py", "        if x:\n", 25);
     if (!fails) printf("ok   syntax (%d checks)\n", checks);
     return fails != 0;
 }

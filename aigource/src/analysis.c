@@ -31,6 +31,9 @@
  * file's functions), then per file on worker threads for everything that does
  * (functions touched, changed unread, rework and trend per function), each
  * file's versions parsed incrementally (syn_defs with its SynParse).
+ * Builds hand what they computed to the next (git's answers, records read,
+ * functions found): caches on the Analysis, keyed by what each value was
+ * computed from (docs/STRUCTURE.md, "Rebuilds and caching").
  */
 #include "analysis.h"
 
@@ -65,7 +68,6 @@ extern char **environ;
 #define FILE_MAX (8 << 20) /* bigger files are left out of the tree */
 #define COMMENT_MAX 900    /* characters of a comment */
 #define TOP_READS 8
-#define DEFS_CACHE 6       /* def lists kept per file, by text */
 #define WORKERS 8          /* threads finding functions, file by file */
 
 #define PUSH(a, n, cap, v)                                                   \
@@ -91,6 +93,78 @@ typedef struct {
     char *type, *session; /* TITLE of a subagent */
 } AnEv;
 
+/* ---- caches across builds ----------------------------------------------- */
+
+/* What one build hands the next: values under keys that name everything they
+ * were computed from, so an entry is never stale, only unused. Each entry
+ * remembers the last build that used it; after a build the others go
+ * (cache_sweep), so a cache holds about one build's working set. */
+typedef struct {
+    StrMap ix;      /* key -> slot */
+    void **val;     /* owned; freed with drop */
+    unsigned *used; /* the build that last used it */
+    int n, cap;
+    void (*drop)(void *);
+} Cache;
+
+/* key's slot, marked used by build; -1 when absent. */
+static int cache_find(Cache *c, const char *key, unsigned build) {
+    int k = strmap_get(&c->ix, key);
+    if (k >= 0) c->used[k] = build;
+    return k;
+}
+
+/* v under key, used by build. One already there wins: v is dropped. */
+static void *cache_put(Cache *c, const char *key, void *v, unsigned build) {
+    int k = strmap_get(&c->ix, key);
+    if (k >= 0) {
+        c->drop(v);
+        c->used[k] = build;
+        return c->val[k];
+    }
+    if (c->n == c->cap) {
+        c->cap = c->cap ? c->cap * 2 : 64;
+        c->val = xrealloc(c->val, (size_t)c->cap * sizeof *c->val);
+        c->used = xrealloc(c->used, (size_t)c->cap * sizeof *c->used);
+    }
+    c->val[c->n] = v;
+    c->used[c->n] = build;
+    strmap_put(&c->ix, key, c->n++);
+    return v;
+}
+
+/* Drops what build didn't use. */
+static void cache_sweep(Cache *c, unsigned build) {
+    int kept = 0;
+    while (kept < c->n && c->used[kept] == build) kept++;
+    if (kept == c->n) return; /* all used */
+    int *to = xmalloc((size_t)(c->n + 1) * sizeof *to), n = 0;
+    for (int k = 0; k < c->n; k++) {
+        if (c->used[k] != build) {
+            c->drop(c->val[k]);
+            to[k] = -1;
+            continue;
+        }
+        c->val[n] = c->val[k];
+        c->used[n] = build;
+        to[k] = n++;
+    }
+    StrMap ix = {0};
+    for (size_t i = 0; i < c->ix.cap; i++)
+        if (c->ix.keys[i] && to[c->ix.vals[i]] >= 0) strmap_put(&ix, c->ix.keys[i], to[c->ix.vals[i]]);
+    strmap_free(&c->ix);
+    c->ix = ix;
+    c->n = n;
+    free(to);
+}
+
+static void cache_free(Cache *c) {
+    for (int k = 0; k < c->n; k++) c->drop(c->val[k]);
+    strmap_free(&c->ix);
+    free(c->val);
+    free(c->used);
+}
+
 struct Analysis {
     char *root;
     pthread_mutex_t mu;
@@ -102,7 +176,26 @@ struct Analysis {
     regex_t search;
     bool no_defs; /* AIG_NO_DEFS: no functions (tests that mustn't depend on installed grammars) */
     atomic_int cancel; /* an_cancel: the running build gives up */
+    /* Caches across builds. defs is shared by the build's worker threads, under
+     * cmu; the others are used by the build's own thread only. */
+    pthread_mutex_t cmu;
+    unsigned builds; /* builds started: the running one marks what it uses */
+    Cache defs;      /* language, text hash and length -> Defs */
+    Cache shows;     /* commit and path -> Text: git show, when it succeeded */
+    Cache logs;      /* HEAD commit and path -> GitLog: the file's commits */
+    Cache changes;   /* transcript, offset, tool id and path -> Record, when complete */
+    Cache notes;     /* transcript, offset, count and tool id -> Notes, when all were there */
+    Cache cmds;      /* pattern, start and command -> cmd_runs' bits (not a pointer) */
+    bool debug;      /* AIG_DEBUG: each build's phases on stderr */
+    /* What the running build spent in git and in tree-sitter (summed over threads) */
+    struct { int git, parsed; double git_s, parse_s; } clk;
 };
+
+static double mono(void) {
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return (double)t.tv_sec + t.tv_nsec / 1e9;
+}
 
 /* ---- texts ------------------------------------------------------------- */
 
@@ -119,6 +212,7 @@ typedef struct {
     Line *l;
     int n;
     int refs;
+    uint64_t h; /* hash64 of s, 0: not yet (defs_of) */
 } Text;
 
 static Text *text_own(char *s, size_t len) { /* takes s */
@@ -152,6 +246,8 @@ static void text_free(Text *t) { /* drops a reference */
     free(t->l);
     free(t);
 }
+
+static void text_drop(void *t) { text_free(t); }
 
 /* Lines the way an editor counts them: a final newline ends the last line. */
 static int nlines(const Text *t) { return t->len && t->s[t->len - 1] == '\n' ? t->n - 1 : t->n; }
@@ -473,13 +569,14 @@ bool an_relocate(const char *text, const Hunk *h, int nh, int *starts) {
 /* git's stdout and exit status (*status), NULL when it couldn't run or was
  * killed. No shell: paths are plain argv, and literal (no pathspec magic). The
  * pipe is close-on-exec, so other threads' children never hold it open. */
-static char *git(const char *root, const char *const *args, size_t *len, int *status) {
+static char *git(Analysis *an, const char *const *args, size_t *len, int *status) {
+    double c0 = mono();
     int na = 0;
     while (args[na]) na++;
     const char **argv = xmalloc((size_t)(na + 8) * sizeof *argv);
     int n = 0;
     argv[n++] = "git", argv[n++] = "--literal-pathspecs", argv[n++] = "-c", argv[n++] = "core.fsmonitor=";
-    argv[n++] = "-C", argv[n++] = root;
+    argv[n++] = "-C", argv[n++] = an->root;
     for (int i = 0; i < na; i++) argv[n++] = args[i];
     argv[n] = NULL;
     int ne = 0;
@@ -543,18 +640,36 @@ static char *git(const char *root, const char *const *args, size_t *len, int *st
 done:
     free(argv);
     free(env);
+    an->clk.git++;
+    an->clk.git_s += mono() - c0;
     return out;
 }
 
 /* git's stdout when it exits 0, else NULL. */
-static char *git_ok(const char *root, const char *const *args, size_t *len) {
+static char *git_ok(Analysis *an, const char *const *args, size_t *len) {
     int st = -1;
-    char *out = git(root, args, len, &st);
+    char *out = git(an, args, len, &st);
     if (out && st) {
         free(out);
         out = NULL;
     }
     return out;
+}
+
+/* A file's commits, newest first, as `git log --format="%H %ct"` lists them. */
+typedef struct {
+    char **commit;
+    long long *ct;
+    int n;
+} GitLog;
+
+static const GitLog no_log; /* no repo, no HEAD, or git failed */
+
+static void log_drop(void *p) {
+    GitLog *l = p;
+    if (!l) return;
+    for (int i = 0; i < l->n; i++) free(l->commit[i]);
+    free(l->commit), free(l->ct), free(l);
 }
 
 static bool ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
@@ -569,13 +684,43 @@ static int intern(Analysis *a, const char *s) {
     return a->nname - 1;
 }
 
+static void defs_drop(void *d);
+/* A change's record, its texts shared by reference: c->original and c->created
+ * point into them. */
+typedef struct {
+    Change *c;
+    Text *original, *created;
+} Record;
+
+static void record_drop(void *p) {
+    Record *r = p;
+    if (!r) return;
+    r->c->original = r->c->created = NULL; /* the texts' */
+    change_free(r->c);
+    text_free(r->original);
+    text_free(r->created);
+    free(r);
+}
+static void no_drop(void *v) { (void)v; }
+static void notes_drop(void *p) {
+    if (p) notes_free(p), free(p);
+}
+
 Analysis *an_new(const char *root) {
     Analysis *a = xcalloc(1, sizeof *a);
     a->root = xstrdup(root);
     size_t n = strlen(a->root);
     while (n > 1 && a->root[n - 1] == '/') a->root[--n] = 0;
     pthread_mutex_init(&a->mu, NULL);
+    pthread_mutex_init(&a->cmu, NULL);
+    a->defs.drop = defs_drop;
+    a->shows.drop = text_drop;
+    a->logs.drop = log_drop;
+    a->changes.drop = record_drop;
+    a->notes.drop = notes_drop;
+    a->cmds.drop = no_drop;
     a->no_defs = getenv("AIG_NO_DEFS") != NULL;
+    a->debug = getenv("AIG_DEBUG") != NULL;
     regcomp(&a->search, "^(grep|rg|ag|fd|find|git\\s+grep)(\\s|$)", REG_EXTENDED | REG_NOSUB);
     return a;
 }
@@ -668,6 +813,13 @@ void an_free(Analysis *a) {
     strmap_free(&a->nameix);
     regfree(&a->search);
     pthread_mutex_destroy(&a->mu);
+    cache_free(&a->defs);
+    cache_free(&a->shows);
+    cache_free(&a->logs);
+    cache_free(&a->changes);
+    cache_free(&a->notes);
+    cache_free(&a->cmds);
+    pthread_mutex_destroy(&a->cmu);
     free(a->root);
     free(a);
 }
@@ -720,12 +872,6 @@ typedef struct {
 } Defs;
 
 typedef struct {
-    uint64_t h;
-    size_t len;
-    Defs *d;
-} DefsSlot;
-
-typedef struct {
     int ev;      /* change event */
     int sub;     /* 0 its text before (originalFile, or the created file), 1 after; 2 today */
     Text *t;     /* loaded on first use */
@@ -741,7 +887,7 @@ typedef struct {
     int a, z;          /* read: its lines */
     int cid;
     Text *old;         /* change: the text before, when known */
-    Change *chg;       /* its record (hunks) */
+    const Change *chg; /* its record (hunks); borrowed from the cache */
     Hunk *moved;       /* its hunks moved to the later text */
     bool create, placed;
     int *rem, nrem;    /* lines it removed: (old line, origin) */
@@ -767,12 +913,7 @@ typedef struct {
     StrMap accix;
     StrMap seen; /* "actor\x1fkey" -> that agent's compaction gen */
     SynParse *parse;
-    DefsSlot cache[DEFS_CACHE];
-    int cache_next;
-    bool git_done;
-    char **commits;
-    long long *cts;
-    int ncommits;
+    const GitLog *log; /* NULL until needed; borrowed */
     StrMap shownix;
     Text **shown;
     int nshown, capshown;
@@ -824,6 +965,7 @@ typedef struct {
     bool *drop;     /* per event: a usage superseded by a later copy */
     char **tree;    /* today's files, sorted */
     int ntree;
+    char *head;     /* HEAD's commit, NULL: none (or not a repo) */
     int owned_from; /* names past this are ours to free */
 } B;
 
@@ -941,13 +1083,33 @@ static int cmp_call(const void *pa, const void *pb) {
     return a->off < b->off ? -1 : a->off > b->off;
 }
 
+/* tr_notes, cached: the text blocks before a call never change once all n of
+ * them are written. A copy (comment_of strips them in place). */
+static Notes notes_of(B *b, const char *src, long off, int n, const char *id) {
+    Analysis *an = b->an;
+    char *key = xmalloc(strlen(src) + strlen(id) + 48);
+    sprintf(key, "%s\x1f%ld\x1f%d\x1f%s", src, off, n, id);
+    int k = cache_find(&an->notes, key, an->builds);
+    const Notes *c = k >= 0 ? an->notes.val[k] : NULL;
+    Notes ns = c ? (Notes){xmalloc((size_t)(c->n + 1) * sizeof *ns.s), c->n} : tr_notes(src, off, n, id);
+    for (int i = 0; c && i < c->n; i++) ns.s[i] = xstrdup(c->s[i]);
+    if (!c && ns.n == n) {
+        Notes *keep = xmalloc(sizeof *keep);
+        *keep = (Notes){xmalloc((size_t)(n + 1) * sizeof *keep->s), n};
+        for (int i = 0; i < n; i++) keep->s[i] = xstrdup(ns.s[i]);
+        cache_put(&an->notes, key, keep, an->builds);
+    }
+    free(key);
+    return ns;
+}
+
 /* comment_of: the change's comment index, or -1 - index for the turn's earlier text. */
 static int comment_of(B *b, const AnEv *e) {
     int k = strmap_get(&b->noteix, e->tool_id);
     if (k >= 0) return b->note_val[k];
     const char *src = b->name[e->src];
     char *text = NULL;
-    Notes ns = tr_notes(src, e->note_off, e->notes, e->tool_id);
+    Notes ns = notes_of(b, src, e->note_off, e->notes, e->tool_id);
     size_t len = 0;
     for (int i = 0; i < ns.n; i++) len += strlen(ns.s[i]) + 2;
     text = xcalloc(len + 1, 1);
@@ -973,7 +1135,7 @@ static int comment_of(B *b, const AnEv *e) {
             for (int r = 0; r < b->nresets[a] && !reset; r++)
                 reset = b->resets[a][r] > y->start && b->resets[a][r] <= xs;
             if (!reset) {
-                Notes ys = tr_notes(src, y->note_off, y->notes, y->id);
+                Notes ys = notes_of(b, src, y->note_off, y->notes, y->id);
                 if (ys.n) {
                     free(text);
                     text = xstrdup(ys.s[ys.n - 1]);
@@ -1034,7 +1196,8 @@ static Text *read_text(const char *root, const char *rel, bool skip_binary, stru
     return text_own(s, n);
 }
 
-static void defs_free(Defs *d) {
+static void defs_drop(void *p) {
+    Defs *d = p;
     if (!d) return;
     for (int i = 0; i < d->n; i++) free(d->key[i]);
     free(d->key);
@@ -1042,14 +1205,23 @@ static void defs_free(Defs *d) {
     free(d);
 }
 
-/* defs: the file's functions and classes in text, cached by content. */
-static const Defs *defs_of(File *f, const Text *t) {
-    uint64_t h = hash64(t->s, t->len);
-    for (int i = 0; i < DEFS_CACHE; i++)
-        if (f->cache[i].d && f->cache[i].h == h && f->cache[i].len == t->len) return f->cache[i].d;
+/* defs: the file's functions and classes in text. Cached by language and
+ * content, across builds: the same text in the same language has the same defs. */
+static const Defs *defs_of(Analysis *an, File *f, const Text *t) {
+    char lang[SYN_NAME_MAX], key[SYN_NAME_MAX + 48];
+    syn_lang_name(f->rel, lang);
+    if (!t->h) ((Text *)t)->h = hash64(t->s, t->len) | 1; /* a file's texts are its worker's alone */
+    snprintf(key, sizeof key, "%s\x1f%016llx\x1f%zu", lang, (unsigned long long)t->h, t->len);
+    pthread_mutex_lock(&an->cmu);
+    int k = cache_find(&an->defs, key, an->builds);
+    const Defs *hit = k >= 0 ? an->defs.val[k] : NULL;
+    pthread_mutex_unlock(&an->cmu);
+    if (hit) return hit;
     Defs *d = xcalloc(1, sizeof *d);
     if (!f->parse) f->parse = syn_parse_new();
+    double c0 = mono();
     d->n = f->no_defs ? 0 : syn_defs(f->rel, t->s, (uint32_t)t->len, &d->d, f->parse);
+    double c1 = mono();
     d->key = xcalloc((size_t)(d->n ? d->n : 1), sizeof *d->key);
     for (int i = 0; i < d->n; i++) {
         int p = d->d[i].parent;
@@ -1059,10 +1231,12 @@ static const Defs *defs_of(File *f, const Text *t) {
             sprintf(d->key[i], "%s.%s", d->key[p], d->d[i].name);
         }
     }
-    DefsSlot *slot = &f->cache[f->cache_next++ % DEFS_CACHE];
-    defs_free(slot->d);
-    *slot = (DefsSlot){h, t->len, d};
-    return d;
+    pthread_mutex_lock(&an->cmu);
+    an->clk.parsed++;
+    an->clk.parse_s += c1 - c0;
+    const Defs *r = cache_put(&an->defs, key, d, an->builds); /* another thread's, if it was first */
+    pthread_mutex_unlock(&an->cmu);
+    return r;
 }
 
 static Acc *acc_of(File *f, const char *key) {
@@ -1074,41 +1248,75 @@ static Acc *acc_of(File *f, const char *key) {
     return &f->acc[f->nacc - 1];
 }
 
+/* The file's commits as of HEAD (b->head, read once per build): `git log
+ * HEAD -- file` is fixed for a HEAD commit, so it's cached by the two. */
+static const GitLog *git_log(B *b, const char *rel) {
+    if (!b->head) return &no_log;
+    Analysis *an = b->an;
+    char *key = xmalloc(strlen(b->head) + strlen(rel) + 2);
+    sprintf(key, "%s\x1f%s", b->head, rel);
+    int k = cache_find(&an->logs, key, an->builds);
+    if (k >= 0) {
+        free(key);
+        return an->logs.val[k];
+    }
+    const char *args[] = {"log", "--format=%H %ct", b->head, "--", rel, NULL};
+    char *out = git_ok(an, args, NULL);
+    if (!out) { /* not cached: it may work next time */
+        free(key);
+        return &no_log;
+    }
+    GitLog *l = xcalloc(1, sizeof *l);
+    for (char *line = out, *nl; *line; line = nl + 1) {
+        nl = strchr(line, '\n');
+        if (!nl) nl = line + strlen(line) - 1;
+        char *sp = memchr(line, ' ', (size_t)(nl - line));
+        if (sp) {
+            l->commit = xrealloc(l->commit, (size_t)(l->n + 1) * sizeof *l->commit);
+            l->ct = xrealloc(l->ct, (size_t)(l->n + 1) * sizeof *l->ct);
+            l->commit[l->n] = xstrndup(line, (size_t)(sp - line));
+            l->ct[l->n++] = atoll(sp + 1);
+        }
+        if (!nl[1]) break;
+    }
+    free(out);
+    cache_put(&an->logs, key, l, an->builds);
+    free(key);
+    return l;
+}
+
+/* The file at a commit (a reference), NULL when git can't show it. What a
+ * commit holds never changes: cached by commit and path. */
+static Text *git_show(B *b, const char *commit, const char *rel) {
+    Analysis *an = b->an;
+    char *key = xmalloc(strlen(commit) + strlen(rel) + 4);
+    sprintf(key, "%s:./%s", commit, rel);
+    int k = cache_find(&an->shows, key, an->builds);
+    if (k >= 0) {
+        free(key);
+        return text_ref(an->shows.val[k]);
+    }
+    const char *args[] = {"show", key, NULL};
+    size_t len = 0;
+    char *out = git_ok(an, args, &len);
+    Text *t = out ? text_own(out, len) : NULL;
+    if (t) cache_put(&an->shows, key, text_ref(t), an->builds); /* a failure isn't: it may work next time */
+    free(key);
+    return t;
+}
+
 /* git_text: the file as of the last commit at or before ts. */
 static const Text *git_text(B *b, File *f, double ts) {
-    if (!f->git_done) {
-        f->git_done = true;
-        const char *args[] = {"log", "--format=%H %ct", "--", f->rel, NULL};
-        char *out = git_ok(b->root, args, NULL);
-        for (char *line = out, *nl; line && *line; line = nl + 1) {
-            nl = strchr(line, '\n');
-            if (!nl) nl = line + strlen(line) - 1;
-            char *sp = memchr(line, ' ', (size_t)(nl - line));
-            if (sp) {
-                f->commits = xrealloc(f->commits, (size_t)(f->ncommits + 1) * sizeof *f->commits);
-                f->cts = xrealloc(f->cts, (size_t)(f->ncommits + 1) * sizeof *f->cts);
-                f->commits[f->ncommits] = xstrndup(line, (size_t)(sp - line));
-                f->cts[f->ncommits++] = atoll(sp + 1);
-            }
-            if (!nl[1]) break;
-        }
-        free(out);
-    }
+    if (!f->log) f->log = git_log(b, f->rel);
+    const GitLog *l = f->log;
     long long sec = (long long)floor(epoch(ts));
     int i = 0;
-    while (i < f->ncommits && f->cts[i] > sec) i++;
-    if (i == f->ncommits) return NULL;
-    int k = strmap_get(&f->shownix, f->commits[i]);
+    while (i < l->n && l->ct[i] > sec) i++;
+    if (i == l->n) return NULL;
+    int k = strmap_get(&f->shownix, l->commit[i]);
     if (k < 0) {
-        char *spec = xmalloc(strlen(f->commits[i]) + strlen(f->rel) + 4);
-        sprintf(spec, "%s:./%s", f->commits[i], f->rel);
-        const char *args[] = {"show", spec, NULL};
-        size_t len = 0;
-        char *out = git_ok(b->root, args, &len);
-        free(spec);
-        Text *t = out ? text_own(out, len) : NULL;
-        PUSH(f->shown, f->nshown, f->capshown, t);
-        strmap_put(&f->shownix, f->commits[i], k = f->nshown - 1);
+        PUSH(f->shown, f->nshown, f->capshown, git_show(b, l->commit[i], f->rel));
+        strmap_put(&f->shownix, l->commit[i], k = f->nshown - 1);
     }
     return f->shown[k];
 }
@@ -1144,6 +1352,31 @@ static int cmp_known(const void *pa, const void *pb, void *ud) {
     return a->ev - b->ev;
 }
 
+/* change_of: the change's record (tr_change), NULL when it has no result yet
+ * or can't be read. Transcripts are only appended to, so a record with its
+ * result never changes: cached by where it is and the file it picks. Its
+ * texts are that file's alone, like the rest of its texts (worker threads). */
+static const Record *change_of(B *b, const AnEv *e) {
+    Analysis *an = b->an;
+    const char *src = b->name[e->src];
+    char *key = xmalloc(strlen(src) + strlen(e->tool_id) + strlen(e->path) + 32);
+    sprintf(key, "%s\x1f%ld\x1f%s\x1f%s", src, e->src_off, e->tool_id, e->path);
+    int k = cache_find(&an->changes, key, an->builds);
+    Record *r = k >= 0 ? an->changes.val[k] : NULL;
+    if (k < 0) {
+        Change *c = tr_change(src, e->src_off, e->tool_id, b->root, e->path);
+        if (c->state == 0) {
+            r = xmalloc(sizeof *r);
+            *r = (Record){c, c->original ? text_take(c->original) : NULL, c->created ? text_take(c->created) : NULL};
+            cache_put(&an->changes, key, r, an->builds);
+        } else {
+            change_free(c); /* not cached: it may be complete next time */
+        }
+    }
+    free(key);
+    return r;
+}
+
 /* later_text: the first known text of the file after ts holding every hunk's
  * new side; the hunks moved there (into *moved, caller frees). */
 static const Text *later_text(B *b, File *f, double ts, const Hunk *h, int nh, Hunk **moved) {
@@ -1153,15 +1386,14 @@ static const Text *later_text(B *b, File *f, double ts, const Hunk *h, int nh, H
         if (k->sub != 2 && !(b->ev[k->ev].ts > ts || (b->ev[k->ev].ts == ts && k->sub == 1))) continue;
         if (!k->loaded) {
             k->loaded = true;
-            const AnEv *e = &b->ev[k->ev];
-            Change *c = tr_change(b->name[e->src], e->src_off, e->tool_id, b->root, e->path);
-            if (c->state == 0 && !c->cmd) {
-                if (c->created && k->sub == 0) k->t = text_take(c->created), c->created = NULL;
-                else if (!c->created && c->original && k->sub == 0) k->t = text_take(c->original), c->original = NULL;
+            const Record *r = change_of(b, &b->ev[k->ev]);
+            const Change *c = r ? r->c : NULL;
+            if (c && !c->cmd) {
+                if (c->created && k->sub == 0) k->t = text_ref(r->created);
+                else if (!c->created && c->original && k->sub == 0) k->t = text_ref(r->original);
                 else if (!c->created && c->original && k->sub == 1)
                     k->t = text_take(an_apply(c->original, c->hunks, c->nhunks, false, NULL, 0, NULL, NULL, NULL));
             }
-            change_free(c);
         }
         if (!k->t || !nh || !relocate_lines(k->t->l, k->t->n, h, nh, st)) continue;
         *moved = xmalloc((size_t)nh * sizeof **moved);
@@ -1232,8 +1464,8 @@ static void replay_read(B *b, const AnEv *e, File *f, int key) {
     PUSH(f->work, f->nwork, f->capwork, w);
 }
 
-static void work_read(File *f, const Work *w) {
-    const Defs *d = defs_of(f, w->t);
+static void work_read(Analysis *an, File *f, const Work *w) {
+    const Defs *d = defs_of(an, f, w->t);
     char buf[1200];
     for (int i = 0; i < d->n; i++)
         if (d->d[i].a <= w->z && d->d[i].b >= w->a) {
@@ -1257,25 +1489,19 @@ static void replay_change(B *b, int ei) {
     File *f = file_get(b, e->path);
     if (!f) return;
     AnSnapshot *s = b->s;
-    Change *chg = tr_change(b->name[e->src], e->src_off, e->tool_id, b->root, e->path);
-    if (chg->state != 0 || (!chg->cmd && !chg->created && !chg->patched)) {
-        change_free(chg);
-        return;
-    }
+    const Record *rec = change_of(b, e);
+    const Change *chg = rec ? rec->c : NULL;
+    if (!chg || (!chg->cmd && !chg->created && !chg->patched)) return;
     bool cmd = chg->cmd, create = !cmd && chg->created;
     const Hunk *hunks = chg->hunks;
     int nh = chg->nhunks;
     if (cmd && f->text && !f->unplaced && has_new_lines(f->text->l, f->text->n, hunks, nh)) {
         s->stats.dups++; /* an edit made while a command ran: Claude Code credits it to the command too */
-        change_free(chg);
         return;
     }
     int session = b->sess[e->actor];
     int t = turn_of(b, session, e->ts, true);
-    if (t < 0) {
-        change_free(chg);
-        return;
-    }
+    if (t < 0) return;
     int key = prompt_at(b, session, e->ts, NULL);
     int cid = s->nchanges;
     AnChange ch = {.turn = t, .comment = comment_of(b, e), .actor = actor_out(b, e->actor), .verify = AN_UNTESTED};
@@ -1376,17 +1602,15 @@ static void replay_change(B *b, int ei) {
             f->fill = cid;
         }
     } else if (create) {
-        nw = chg->created; /* taken: one copy of each text */
-        chg->created = NULL;
+        new = text_ref(rec->created);
         f->unplaced = false;
     } else {
-        old = text_take(chg->original);
-        chg->original = NULL;
+        old = text_ref(rec->original);
         resync(f, old);
         nw = apply_lines(old->l, old->n, hunks, nh, false, f->orig, cid, &no, &rem, &nrem);
     }
-    if (nw) {
-        new = text_take(nw);
+    if (nw || new) {
+        if (nw) new = text_take(nw);
         if (create) {
             no = xmalloc((size_t)new->n * sizeof *no);
             for (int i = 0; i < new->n; i++) no[i] = cid;
@@ -1404,7 +1628,7 @@ static void replay_change(B *b, int ei) {
 /* The second pass of a change: the functions it touched (holding its + lines in
  * the text after, its - lines in the one before), whether it changed one its
  * agent hadn't read, rework and trend per function. */
-static void work_change(File *f, Work *w) {
+static void work_change(Analysis *an, File *f, Work *w) {
     const Change *chg = w->chg;
     const Hunk *hunks = w->moved ? w->moved : chg->hunks;
     int nh = chg->nhunks, cid = w->cid;
@@ -1412,19 +1636,18 @@ static void work_change(File *f, Work *w) {
     Touch *touched = NULL;
     int ntouched = 0, captouched = 0;
     if (w->create) {
-        const Defs *d = defs_of(f, w->t);
+        const Defs *d = defs_of(an, f, w->t);
         for (int i = 0; i < d->n; i++) touch(&touched, &ntouched, &captouched, d->key[i])->add += d->d[i].b - d->d[i].a + 1;
     }
     bool old_set = w->old && w->old->len; /* build_data's `if old`: a non-empty text */
-    const Defs *od = old_set ? defs_of(f, w->old) : w->t ? defs_of(f, w->t) : NULL;
-    /* od may be evicted by the next defs_of: keep what we need of it */
+    const Defs *od = old_set ? defs_of(an, f, w->old) : w->t ? defs_of(an, f, w->t) : NULL;
     int nod = od ? od->n : 0;
     int *oa = xmalloc((size_t)(nod + 1) * sizeof *oa), *ob = xmalloc((size_t)(nod + 1) * sizeof *ob);
     char **ok = xmalloc((size_t)(nod + 1) * sizeof *ok);
     for (int i = 0; i < nod; i++) oa[i] = od->d[i].a, ob[i] = od->d[i].b, ok[i] = xstrdup(od->key[i]);
     int fa = 0, fd = 0;
     if (have_hunks && nh) {
-        const Defs *nd = w->t ? defs_of(f, w->t) : NULL;
+        const Defs *nd = w->t ? defs_of(an, f, w->t) : NULL;
         for (int k = 0; k < nh; k++) {
             int o = hunks[k].old_start, n = hunks[k].new_start;
             for (int j = 0; j < hunks[k].n; j++) {
@@ -1460,7 +1683,7 @@ static void work_change(File *f, Work *w) {
      * length. Not from a later text it was lined up with: that isn't the file right after it. */
     if (w->placed) {
         if (have_hunks && nh) {
-            const Defs *d = defs_of(f, w->t);
+            const Defs *d = defs_of(an, f, w->t);
             for (int i = 0; i < d->n; i++) {
                 bool hit = false;
                 for (int q = 0; q < ntouched && !hit; q++) hit = !strcmp(touched[q].key, d->key[i]);
@@ -1507,35 +1730,36 @@ static void work_change(File *f, Work *w) {
 
 /* The second pass over one file: its work in order, then today's functions.
  * Cancelled: only what the work holds is freed. */
-static void work_file(File *f, atomic_int *cancel) {
+static void work_file(Analysis *an, File *f) {
+    atomic_int *cancel = &an->cancel;
     for (int i = 0; i < f->nwork; i++) {
         Work *w = &f->work[i];
         if (atomic_load(cancel)) {
-        } else if (w->change) work_change(f, w);
-        else work_read(f, w);
+        } else if (w->change) work_change(an, f, w);
+        else work_read(an, f, w);
         text_free(w->t);
         text_free(w->old);
-        change_free(w->chg);
         free(w->moved);
         free(w->rem);
     }
     free(f->work);
     f->work = NULL;
     f->nwork = 0;
-    if (f->today && !atomic_load(cancel)) defs_of(f, f->today); /* cached for the tree */
+    if (f->today && !atomic_load(cancel)) defs_of(an, f, f->today); /* cached for the tree */
     syn_parse_free(f->parse); /* its last tree: only the next version would use it */
     f->parse = NULL;
 }
 
 typedef struct {
+    Analysis *an;
     File *files;
     int *order, n;
-    atomic_int next, *cancel;
+    atomic_int next;
 } Pool;
 
 static void *worker(void *ud) {
     Pool *p = ud;
-    for (int i; (i = atomic_fetch_add(&p->next, 1)) < p->n;) work_file(&p->files[p->order[i]], p->cancel);
+    for (int i; (i = atomic_fetch_add(&p->next, 1)) < p->n;) work_file(p->an, &p->files[p->order[i]]);
     return NULL;
 }
 
@@ -1546,8 +1770,7 @@ static int cmp_work(const void *pa, const void *pb, void *ud) {
 
 /* Files' second passes on worker threads, the busiest first. */
 static void work_all(B *b) {
-    Pool p = {.files = b->files, .order = xmalloc((size_t)(b->nfiles + 1) * sizeof(int)), .n = b->nfiles,
-              .cancel = &b->an->cancel};
+    Pool p = {.an = b->an, .files = b->files, .order = xmalloc((size_t)(b->nfiles + 1) * sizeof(int)), .n = b->nfiles};
     for (int i = 0; i < b->nfiles; i++) p.order[i] = i;
     qsort_r(p.order, (size_t)p.n, sizeof *p.order, cmp_work, b->files);
     atomic_init(&p.next, 0);
@@ -1635,7 +1858,7 @@ static void build_tree(B *b, char **tree, int ntree) {
         }
         fn->blame = runs;
         fn->nblame = nr;
-        const Defs *d = defs_of(f, f->today);
+        const Defs *d = defs_of(b->an, f, f->today);
         int *ix = xmalloc((size_t)(d->n + 1) * sizeof *ix), cx = 0;
         for (int j = 0; j < d->n; j++) {
             const SynDef *sd = &d->d[j];
@@ -1662,7 +1885,7 @@ static void build_tree(B *b, char **tree, int ntree) {
 static char **list_tree(B *b, int *n, bool *is_git) {
     const char *args[] = {"ls-files", "-z", "--cached", "--others", "--exclude-standard", NULL};
     size_t len = 0;
-    char *out = git_ok(b->root, args, &len);
+    char *out = git_ok(b->an, args, &len);
     char **l = NULL;
     int nl = 0, cap = 0;
     *is_git = out != NULL;
@@ -1787,7 +2010,7 @@ static void git_ignored(B *b, char **cand, int n, StrMap *out) {
         args[na] = NULL;
         size_t len = 0;
         int st = -1;
-        char *o = git(b->root, args, &len, &st); /* exit 1: none ignored */
+        char *o = git(b->an, args, &len, &st); /* exit 1: none ignored */
         for (size_t i = 0; o && st == 0 && i < len; i += strlen(o + i) + 1)
             if (o[i]) strmap_put(out, o + i, 1);
         free(o);
@@ -1809,6 +2032,12 @@ static void setup_files(B *b) {
     bool is_git;
     int n;
     char **all = list_tree(b, &n, &is_git);
+    { /* what the files' git logs are as of */
+        const char *args[] = {"rev-parse", "-q", "--verify", "HEAD^{commit}", NULL};
+        char *out = git_ok(b->an, args, NULL);
+        if (out && *out) out[strcspn(out, "\n")] = 0, b->head = out;
+        else free(out);
+    }
     char **tree = xmalloc((size_t)(n + 1) * sizeof *tree);
     bool *took = xcalloc((size_t)n + 1, sizeof *took);
     b->ntree = 0;
@@ -1907,6 +2136,24 @@ static void setup_files(B *b) {
     }
 }
 
+/* cmd_runs of a command: a test or build run under the root from start
+ * (verify), or a search anywhere. A function of the strings alone: cached by them. */
+static int runs(B *b, bool verify, const char *cmd, const char *start) {
+    Analysis *an = b->an;
+    const char *st = verify ? start ? start : an->root : "";
+    char *key = xmalloc(strlen(st) + strlen(cmd) + 32);
+    sprintf(key, "%c%zu:%s%s", verify ? 'v' : 's', strlen(st), st, cmd);
+    int k = cache_find(&an->cmds, key, an->builds), r;
+    if (k >= 0) r = (int)(intptr_t)an->cmds.val[k];
+    else {
+        pthread_once(&re_once, re_init);
+        r = verify ? cmd_runs(&re_verify, cmd, an->root, start) : cmd_runs(&an->search, cmd, NULL, NULL);
+        cache_put(&an->cmds, key, (void *)(intptr_t)r, an->builds);
+    }
+    free(key);
+    return r;
+}
+
 static void gather(Ctx *c, double ts, int key) {
     Item it = {ts, key, -1};
     PUSH(c->items, c->nitems, c->capitems, it);
@@ -1929,7 +2176,7 @@ static void replay(B *b) {
         case EV_COMPACT: c->gen++; break;
         case EV_SEARCH: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
         case EV_BASH_END:
-            if (e->text && (cmd_runs(&b->an->search, e->text, NULL, NULL) & CMD_RUN)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL));
+            if (e->text && (runs(b, false, e->text, NULL) & CMD_RUN)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL));
             break;
         case EV_TOOL: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
         case EV_USAGE:
@@ -1966,7 +2213,7 @@ static void verify(B *b) {
             sprintf(start, "%s/%s", b->an->root, e->path);
         }
         /* a run in another tree (a worktree, a scratch copy) doesn't verify this one: ignored */
-        bool run = an_verify_cmd(e->text, b->an->root, start ? start : e->path);
+        bool run = runs(b, true, e->text, start ? start : e->path) & CMD_RUN;
         free(start);
         if (!run) continue;
         int t = turn_of(b, b->sess[e->actor], e->ts, false);
@@ -2033,9 +2280,6 @@ static void file_free(File *f) {
     strmap_free(&f->accix);
     strmap_free(&f->seen);
     syn_parse_free(f->parse);
-    for (int k = 0; k < DEFS_CACHE; k++) defs_free(f->cache[k].d);
-    for (int k = 0; k < f->ncommits; k++) free(f->commits[k]);
-    free(f->commits), free(f->cts);
     strmap_free(&f->shownix);
     for (int k = 0; k < f->nshown; k++) text_free(f->shown[k]);
     free(f->shown);
@@ -2070,11 +2314,28 @@ static void b_free(B *b) {
     free(b->name);
     strmap_free(&b->nameix);
     free(b->ev);
+    free(b->head);
+}
+
+/* AIG_DEBUG: a build's phases (wall ms), and what git and tree-sitter took. */
+static void print_phases(Analysis *an, const double *t, int n, const char *const *name) {
+    fprintf(stderr, "an_build %.0f ms:", (t[n] - t[0]) * 1e3);
+    for (int i = 0; i < n; i++) fprintf(stderr, " %s %.0f", name[i], (t[i + 1] - t[i]) * 1e3);
+    fprintf(stderr, "; git %d calls %.0f ms, parsed %d texts %.0f ms (all threads)", an->clk.git, an->clk.git_s * 1e3,
+            an->clk.parsed, an->clk.parse_s * 1e3);
+    fprintf(stderr, "; kept defs %d, shows %d, logs %d, changes %d, notes %d, cmds %d\n", an->defs.n, an->shows.n,
+            an->logs.n, an->changes.n, an->notes.n, an->cmds.n);
 }
 
 AnSnapshot *an_build(Analysis *an) {
     B bb = {.an = an, .root = an->root}, *b = &bb;
     AnSnapshot *s = b->s = xcalloc(1, sizeof *s);
+    static const char *const phase[] = {"setup", "files", "replay", "work", "verify", "resync", "tree", "sweep"};
+    double t[9];
+    int np = 0;
+    t[np] = mono();
+    memset(&an->clk, 0, sizeof an->clk);
+    an->builds++; /* one build at a time: sview's worker, or the caller's thread */
     pthread_mutex_lock(&an->mu); /* a copy of what was added; its strings stay put */
     b->nev = (int)an->nev;
     b->ev = xmalloc((size_t)(b->nev + 1) * sizeof *b->ev);
@@ -2085,18 +2346,34 @@ AnSnapshot *an_build(Analysis *an) {
     qsort(b->ev, (size_t)b->nev, sizeof *b->ev, cmp_ev);
     setup_actors(b);
     setup_prompts(b);
+    t[++np] = mono();
     setup_files(b);
+    t[++np] = mono();
     if (!atomic_load(&an->cancel)) replay(b);
+    t[++np] = mono();
     work_all(b);
+    t[++np] = mono();
     if (atomic_load(&an->cancel)) goto cancelled;
     verify(b);
+    t[++np] = mono();
     /* At the end every file lines up with today's: each line has an origin or none. */
     for (int i = 0; i < b->nfiles; i++)
         if (b->files[i].in_tree) resync(&b->files[i], b->files[i].today);
+    t[++np] = mono();
     if (atomic_load(&an->cancel)) goto cancelled;
     finish_turns(b);
     build_tree(b, b->tree, b->ntree);
+    t[++np] = mono();
     b_free(b);
+    /* What this build didn't use goes; a cancelled build keeps all (its entries are whole). */
+    cache_sweep(&an->defs, an->builds);
+    cache_sweep(&an->shows, an->builds);
+    cache_sweep(&an->logs, an->builds);
+    cache_sweep(&an->changes, an->builds);
+    cache_sweep(&an->notes, an->builds);
+    cache_sweep(&an->cmds, an->builds);
+    t[++np] = mono();
+    if (an->debug) print_phases(an, t, np, phase);
     return s;
 cancelled:
     b_free(b);
