@@ -18,8 +18,12 @@
  * twice counts twice. an_build is a pure function of what was added, the
  * files on disk and git: it may run on a worker thread while more events are
  * added (an_add and an_build take turns on a lock), but an_free must not run
- * during a build. Its snapshot is immutable and owned by the caller.
- * AIG_NO_DEFS in the environment (read by an_new) turns functions off. */
+ * during a build, and builds of one Analysis run one at a time. Its snapshot
+ * is immutable and owned by the caller. A build reuses what the ones before
+ * it computed (caches the Analysis keeps), so a rebuild costs what changed;
+ * the result is the same as a fresh Analysis'.
+ * AIG_NO_DEFS in the environment (read by an_new) turns functions off;
+ * AIG_DEBUG prints each build's phases and what it reused to stderr. */
 typedef struct Analysis Analysis;
 
 enum { AN_DIR, AN_FILE, AN_FUNC, AN_CLASS };           /* AnNode.kind */

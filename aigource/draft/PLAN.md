@@ -181,9 +181,25 @@ Not done, from reading the code and the parity tests:
   pipefail need a real `set`, and dropped runs in another tree.
 - **`kind_color`** (the stage's palette, `model.c`) is still outside the ui
   palette; the P3 review suggested moving it.
-- **Rebuilds redo everything.** Each live rebuild reruns git, rereads and
-  reparses every file (~3 s on this repo). Per-file caches keyed by text hash
-  (defs, cx, today's line map) would make a rebuild cost what changed.
+- **Rebuilds redo everything.** Done: the `Analysis` keeps in-memory caches
+  across builds, each keyed by what its value was computed from (functions by
+  language and text hash, `git show` by commit and path, `git log` by HEAD
+  commit and path, change records and comments by their place in the
+  transcript, command matches by the command), so none needs invalidating;
+  entries a build didn't use are dropped after it (`docs/STRUCTURE.md`,
+  "Rebuilds and caching"). The replay itself still runs whole. Measured on
+  one fixed event set per row, old and new code in one process (phases with
+  `AIG_DEBUG=1 --structure-dump --rebuild N`), `an_build` only:
+
+  | history | first build | nothing new | one new edit of `analysis.c` |
+  |---|---|---|---|
+  | whole (18.9k events) | 2.1-2.5 s (was 2.1 s) | 0.11 s (was 2.1 s) | 0.13 s (was 2.2 s) |
+  | last 2 hours (9.8k) | 1.3 s (was 1.5 s) | 0.06 s (was 1.4 s) | 0.09 s (was 1.4 s) |
+
+  What a rebuild still spends: the replay (~70 ms), `git ls-files` and today's
+  files (~15 ms), verification (~8 ms). Today's line map (`resync` at the
+  end) measured 2 ms and is not cached. `tests/test_rebuild.c` checks rebuilds
+  byte for byte against fresh builds.
 - **Floating labels can collide** in crowded folders (the draft doesn't avoid
   it either; the app shows untouched files too, so folders are fuller).
 - **Exit-time leaks of the stage** (`model.c`, `ingest.c`, `timeline.c`,

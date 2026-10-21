@@ -43,9 +43,11 @@ Baselines come from git (`git`, `git_text`): `--literal-pathspecs`,
 `core.fsmonitor=` off, `GIT_TERMINAL_PROMPT=0`, `GIT_NO_LAZY_FETCH=1`, stdin
 and stderr on `/dev/null`, no shell (paths are argv), and a 10 s timeout after
 which the process is killed and the call counts as failed. A file's baseline at
-time T is the first commit at or before T's second in `git log -- FILE`, read
-with `git show COMMIT:./FILE`; one `git log` per file, one `git show` per
-commit used.
+time T is the first commit at or before T's second in `git log HEAD -- FILE`
+(HEAD as `git rev-parse` gives it at the start of the build; when that fails,
+no file has a baseline in that build), read with `git show COMMIT:./FILE`;
+one `git log` per file, one `git show` per commit used, and none of either
+when an earlier build already asked (Rebuilds and caching, below).
 
 ### The stream
 `transcript.c` reads every transcript into events; `ingest.c` merges them in
@@ -226,7 +228,7 @@ read back from the transcript (`tr_notes`) for the calls that need it.
 
 ### Functions and classes
 Found in each version of a file by tree-sitter (`syn_defs` in `syntax.c`,
-cached per file and text by `defs_of`):
+cached by language and text by `defs_of`):
 - The grammar is the one Neovim has installed, as for highlighting. The
   definitions are the captures `@function.outer` and `@class.outer` of
   `nvim-treesitter-textobjects`' `textobjects.scm` for the language, looked up
@@ -309,6 +311,54 @@ function; `work_all`), each file's versions parsed incrementally.
 `stats` in the snapshot counts what had to fall back: duplicate events dropped
 (`dups`), changes with no text before them, placed from git, placed in a later
 text, at file level only, and changed unread.
+
+### Rebuilds and caching
+Live rebuilds (3 s after new events, at most every 15 s) run the whole build
+again on everything added so far: the replay is not incremental, so nothing it
+derives can go stale. What a build reads and computes along the way goes into
+caches on the `Analysis`, kept in memory only, each entry under a key naming
+everything its value was computed from:
+
+| Cache | Key | Value |
+|---|---|---|
+| functions (`defs_of`) | language, `hash64` of the text, its length | the defs of that text |
+| `git show` (`git_show`) | commit, path | the file at that commit (failures aren't kept) |
+| `git log` (`git_log`) | HEAD commit, path | the file's commits as of that HEAD |
+| change records (`change_of`) | transcript, offset, tool id, path | `tr_change`'s record, once it has its result |
+| comments (`notes_of`) | transcript, offset, count, tool id | `tr_notes`' text blocks, once all are written |
+| commands (`runs`) | search or verify, where it started, the command | `cmd_runs`' bits |
+
+None of these values can change under its key, so nothing is ever
+invalidated: a commit's content is fixed; so is the history behind a HEAD
+commit, which is why the log is asked as of the commit `git rev-parse HEAD`
+gives (one call per build), and a new commit, checkout or reset simply makes
+new keys; transcripts are only appended to, and a record or comment is kept
+only once complete; the same text in the same language parses to the same
+functions, whichever version of the file was parsed before it (an incremental
+parse gives a fresh one's defs; `test_syntax` checks that over random edits of
+real files); `cmd_runs` depends on its strings alone. Two things are assumed:
+no 64-bit hash collision between two texts of the same length and language,
+and that the history behind a commit doesn't change (a shallow clone deepened,
+or replace refs, at the same HEAD, would not be noticed).
+
+Today's files are read again and `git ls-files`, `git check-ignore` and the
+replay itself run on every build: they cost little (about 15 ms and 70 ms on
+this repo) and are where changes show up. Each entry remembers the last build
+that used it; after a build the rest are dropped, so the caches hold about one
+build's working set. The largest part is the change records, which hold each
+change's text before it; a build uses those texts by reference, as it uses
+`git show`'s. A cancelled build drops nothing and adds only whole entries; the
+next finished build sweeps. The worker threads share the functions cache under
+a lock; the others are used by the build's own thread, and a cached text is
+only ever used for its own file, which one worker handles.
+
+`AIG_DEBUG=1` prints each build's phases, git calls, texts parsed and cache
+sizes to stderr; `--structure-dump --rebuild N` builds N more times in one
+process (new events polled first, as live), which times a warm rebuild. On
+this repo's whole history (18.9k events, 1394 changes) a first build takes
+about 2.2 s and a rebuild with nothing new about 0.11 s; one new edit of
+`analysis.c` about 0.13 s (one new text parsed; the file changing on disk too
+parses a second).
 
 ### Heat
 Every heat mode is a metric per node, on a log scale against the busiest node

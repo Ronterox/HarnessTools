@@ -177,6 +177,25 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/te
    src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o -ldl -lm -lpthread
 "$OUT/test_analysis" || fail=1
 
+# Rebuilds with warm caches agree with fresh builds (new events, a file changed
+# on disk, a new commit, cancelled builds). Under ASan/UBSan too when the asan
+# objects are there (make asan).
+cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_rebuild" tests/test_rebuild.c \
+   src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/event.c src/util.c build/yyjson.o build/tree-sitter.o \
+   -ldl -lm -lpthread
+"$OUT/test_rebuild" tests/fixtures/structure "$cfg/rebuild" || fail=1
+if [ -f build/asan/yyjson.o ] && [ -f build/asan/tree-sitter.o ]; then
+    cc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src \
+       -I$TS_INC -o "$OUT/test_rebuild_asan" tests/test_rebuild.c src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c \
+       src/event.c src/util.c build/asan/yyjson.o build/asan/tree-sitter.o -ldl -lm -lpthread
+    if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_rebuild_asan" tests/fixtures/structure \
+       "$cfg/rebuild-asan" > "$OUT/test_rebuild_asan.txt" 2>&1
+    then echo "ok   rebuild (asan, leaks checked)"
+    else cat "$OUT/test_rebuild_asan.txt"; echo "FAIL rebuild (asan)"; fail=1; fi
+else
+    echo "skip rebuild (asan): no build/asan (make asan)"
+fi
+
 # The stage's per-turn stats (turns.c), by the analysis' rules.
 cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_turns" tests/test_turns.c \
    src/turns.c src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o \
