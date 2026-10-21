@@ -10,6 +10,7 @@
 
 #include "nvim.h"
 #include "slayout.h"
+#include "ssearch.h"
 #include "sview_int.h"
 #include "util.h"
 
@@ -26,6 +27,11 @@
 #define CW_CLIP 7.2f      /* the draft's clip(): px per character, whatever the size */
 #define DEBOUNCE 3.0      /* live: rebuild this long after the last event... */
 #define DEBOUNCE_MAX 15.0 /* ...or once events have waited this long */
+#define SEARCH_WAIT 0.12  /* a content search starts this long after the last key */
+#define NAMES_MAX 100     /* name results listed (all of them are emphasised) */
+#define SHEAD_H 24.0f     /* the result list: a section's heading, */
+#define SNAME_H 24.0f     /* a name, */
+#define SHIT_H 40.0f      /* a line of a file */
 
 static const char *const VIEW_KEY[] = {"icicle", "treemap", "floating"};
 static const char *const VIEW_NAME[] = {"Icicle", "Treemap", "Floating nodes"};
@@ -50,6 +56,37 @@ static const char *const MODE_HI[ST_NMODES] = {
     "most fix turns", "most reading to change", "most output tokens",           "most agent time",
     "newest",         "",
 };
+
+/* Search: what matched by name, by content, or holds such a node (per node). */
+enum { QH_NAME = 1, QH_TEXT = 2, QH_IN = 4 };
+
+typedef struct { int node; SsName m; } NameHit;
+
+typedef struct {
+    SsEngine *eng;        /* content searches, on its own thread; made with the first build */
+    bool open;            /* the box has focus: keys go only to it */
+    bool all;             /* reopened: the query is selected, typing replaces it */
+    char q[SS_QBYTES];
+    double edited;        /* when the query last changed */
+    bool names_due, content_due;
+    unsigned gen;         /* the content search asked last, 0 none */
+    const StMetrics *m;   /* the build the files, names and marks are of */
+    SsNames *ix;          /* its node paths, folded (made with it, on the build's thread) */
+    int *found;           /* scratch: ss_names_find's, one per node */
+    int *file_node, nfiles; /* the engine's files: their nodes */
+    NameHit *names;       /* ranked, at most NAMES_MAX */
+    int nnames, nall;     /* listed, matched */
+    SsResult res;         /* content hits: the last search's that came back */
+    int *hnode, *hdef;    /* per hit: the node to inspect (its def, else the file), its def (-1) */
+    int hfiles;           /* files with hits */
+    unsigned char *hit;   /* per node: QH_* */
+    int sel, pick;        /* the selected result; test hook: the result to go to (1-based, 0 none) */
+    bool went;            /* went to sel since the query or the build changed */
+    bool follow;          /* the selection moved by key: scroll it into view */
+    float scroll;
+    bool hold;            /* after a jump: hovering doesn't inspect until the mouse moves */
+    Vector2 hold_at;
+} Search;
 
 /* A bar of the turn strip: turns order[a, b) (one, or a bin of them when
  * there are too many), drawn at x, w px wide; the gap after it is its own. */
@@ -80,6 +117,7 @@ struct SView {
     /* under mu: the worker's results */
     AnSnapshot *new_s;
     StMetrics *new_m;
+    SsNames *new_ix;
     bool done;
     char stats[256];
     /* the render thread's */
@@ -108,6 +146,7 @@ struct SView {
     struct { const char *key; float t; } tip;               /* a title waiting to show */
     struct { const StMetrics *m; float x0, w, gap; Slot *slot; int n; } bars;
     struct { unsigned gen; int from; const StMetrics *m; int n, *vis, *pi; bool *exact, *mark; } arcs;
+    Search sr;
 };
 
 /* ---- text ---------------------------------------------------------------- */
@@ -339,6 +378,18 @@ void sv_metric_word(const StMetrics *m, const StNode *d, int mode, char *b, size
 
 /* ---- builds: one at a time on a worker thread ------------------------------ */
 
+/* Every node's path below the root (the root's ""), folded once for the search's names. */
+static SsNames *names_index(const StMetrics *m) {
+    const char **paths = xmalloc(sizeof *paths * (size_t)(m->nnodes ? m->nnodes : 1));
+    for (int i = 0; i < m->nnodes; i++) {
+        const char *r = i ? strchr(m->nodes[i].id, '/') : NULL;
+        paths[i] = r ? r + 1 : "";
+    }
+    SsNames *x = ss_names_new(paths, m->nnodes);
+    free(paths);
+    return x;
+}
+
 static void *worker(void *arg) {
     SView *s = arg;
     AnSnapshot *snap = an_build(s->an);
@@ -356,9 +407,11 @@ static void *worker(void *arg) {
         free(buf);
         m = st_build(snap);
     }
+    SsNames *ix = m ? names_index(m) : NULL;
     pthread_mutex_lock(&s->mu);
     s->new_s = snap;
     s->new_m = m;
+    s->new_ix = ix;
     s->done = true;
     pthread_mutex_unlock(&s->mu);
     return NULL;
@@ -394,6 +447,7 @@ SView *sv_new(const char *root) {
     s->insp.legend_turn = INT_MIN;
     s->insp.strip_line = s->insp.card_line = -1;
     s->insp.doc.card = s->insp.card.card = -1;
+    s->insp.mark.node = -1;
     s->press_node = s->drag_body = -1;
     s->built = -1;
     return s;
@@ -407,8 +461,11 @@ void sv_add(SView *s, const Event *evs, size_t n) {
     s->last_add = GetTime();
 }
 
+static bool search_busy(const SView *s);
+
 bool sv_is_open(const SView *s) { return s && s->open; }
-bool sv_ready(const SView *s) { return s->open && s->m && !s->running && !s->hook_due; }
+bool sv_ready(const SView *s) { return s->open && s->m && !s->running && !s->hook_due && !search_busy(s); }
+bool sv_typing(const SView *s) { return s && s->open && s->sr.open; }
 
 void sv_toggle(SView *s) {
     s->open = !s->open;
@@ -437,6 +494,25 @@ static void lay_free(Lay *l) {
     l->gen = gen + 1;
 }
 
+static void search_drop_hits(SView *s) {
+    Search *q = &s->sr;
+    ss_result_free(&q->res);
+    free(q->hnode), free(q->hdef);
+    q->hnode = q->hdef = NULL;
+    q->hfiles = 0;
+    if (q->hit && q->m)
+        for (int i = 0; i < q->m->nnodes; i++) q->hit[i] &= (unsigned char)~QH_TEXT;
+}
+
+static void search_free(SView *s) {
+    Search *q = &s->sr;
+    ss_engine_free(q->eng); /* first: it reads the snapshot's texts */
+    q->eng = NULL;
+    search_drop_hits(s);
+    free(q->file_node), free(q->names), free(q->hit), free(q->found);
+    ss_names_free(q->ix);
+}
+
 static void arcs_free(SView *s) {
     free(s->arcs.vis), free(s->arcs.pi), free(s->arcs.exact), free(s->arcs.mark);
     memset(&s->arcs, 0, sizeof s->arcs);
@@ -451,6 +527,8 @@ static void drop_press(SView *s) {
 void sv_free(SView *s) {
     if (!s) return;
     if (s->running) an_cancel(s->an, true), pthread_join(s->th, NULL);
+    search_free(s);
+    ss_names_free(s->new_ix);
     st_free_pair(s->new_m, s->new_s);
     st_free_pair(s->m, s->snap);
     an_free(s->an);
@@ -542,13 +620,285 @@ static int find_turn(const StMetrics *m, const AnSnapshot *old, int t) {
     return -1;
 }
 
+/* ---- search: names and file contents ------------------------------------------ */
+
+static const char *rel_id(const char *id) { /* a node's path below the root */
+    const char *r = strchr(id, '/');
+    return r ? r + 1 : "";
+}
+
+static int nchars(const char *q) {
+    int n = 0;
+    for (; *q; q++) n += ((unsigned char)*q & 0xC0) != 0x80;
+    return n;
+}
+
+static bool search_on(const SView *s) { return s->sr.q[0] && s->sr.hit && s->sr.m == s->m; }
+
+static int search_total(const Search *q) { return q->nnames + q->res.n; }
+
+static int cmp_rel(const void *a, const void *b, void *ud) {
+    const StMetrics *m = ud;
+    return strcmp(m->nodes[*(const int *)a].id, m->nodes[*(const int *)b].id);
+}
+
+/* A new build: the worker gets its files (path order, the snapshot's texts),
+ * and the query runs again on it. */
+static void search_files(SView *s, const StMetrics *m, SsNames *ix) {
+    Search *q = &s->sr;
+    if (!q->eng) q->eng = ss_engine_new();
+    int nf = 0, *fn = xmalloc(sizeof *fn * (size_t)(m->nnodes ? m->nnodes : 1));
+    for (int i = 0; i < m->nnodes; i++)
+        if (m->nodes[i].kind == AN_FILE) fn[nf++] = i;
+    qsort_r(fn, (size_t)nf, sizeof *fn, cmp_rel, (void *)m);
+    SsFile *f = xmalloc(sizeof *f * (size_t)(nf ? nf : 1));
+    for (int k = 0; k < nf; k++) {
+        const AnNode *a = &m->snap->nodes[m->nodes[fn[k]].an];
+        f[k] = (SsFile){a->src, a->srclen};
+    }
+    ss_engine_files(q->eng, f, nf);
+    free(f);
+    search_drop_hits(s);
+    free(q->file_node);
+    q->file_node = fn, q->nfiles = nf;
+    q->nnames = q->nall = 0;
+    free(q->hit);
+    q->hit = xcalloc((size_t)(m->nnodes ? m->nnodes : 1), 1);
+    q->found = xrealloc(q->found, sizeof *q->found * (size_t)(m->nnodes ? m->nnodes : 1));
+    ss_names_free(q->ix);
+    q->ix = ix;
+    q->m = m;
+    q->gen = 0;
+    q->sel = 0, q->scroll = 0, q->went = false; /* other results */
+    q->names_due = true;
+    q->content_due = nchars(q->q) >= 2, q->edited = -1e9;
+}
+
+/* Ancestors of what matched hold a match: not dimmed. */
+static void search_marks(SView *s) {
+    Search *q = &s->sr;
+    const StMetrics *m = q->m;
+    for (int i = 0; i < m->nnodes; i++) q->hit[i] &= (unsigned char)~QH_IN;
+    for (int i = 0; i < m->nnodes; i++)
+        if (q->hit[i] & (QH_NAME | QH_TEXT))
+            for (int p = m->nodes[i].parent; p >= 0 && !(q->hit[p] & QH_IN); p = m->nodes[p].parent) q->hit[p] |= QH_IN;
+}
+
+/* Every node's path against the query, on this thread (ss_names_find: the
+ * build's paths folded once, a byte test first, a query extending the last
+ * one narrowed to its matches): 0.1 to 0.3 ms on this repo; on 60k paths 1 to
+ * 5 ms, 15 ms for a query whose letters scatter (src/model: fuzzy-scored). */
+static void search_names(SView *s) {
+    Search *q = &s->sr;
+    const StMetrics *m = q->m;
+    q->names_due = false;
+    q->nnames = q->nall = 0;
+    for (int i = 0; i < m->nnodes; i++) q->hit[i] &= (unsigned char)~QH_NAME;
+    if (q->q[0]) {
+        double t0 = now_wall();
+        q->nall = ss_names_find(q->ix, q->q, q->found, NAMES_MAX);
+        for (int k = 0; k < q->nall; k++) q->hit[q->found[k]] |= QH_NAME;
+        q->nnames = q->nall < NAMES_MAX ? q->nall : NAMES_MAX;
+        q->names = xrealloc(q->names, sizeof *q->names * (size_t)(q->nnames ? q->nnames : 1));
+        for (int k = 0; k < q->nnames; k++) {
+            q->names[k].node = q->found[k];
+            ss_names_match(q->ix, q->q, q->found[k], &q->names[k].m);
+        }
+        if (getenv("AIG_DEBUG"))
+            fprintf(stderr, "aigource: search names \"%s\": %d of %d nodes, %.2f ms\n", q->q, q->nall, m->nnodes,
+                    (now_wall() - t0) * 1e3);
+    }
+    if (q->sel >= search_total(q)) q->sel = search_total(q) ? search_total(q) - 1 : 0;
+    search_marks(s);
+}
+
+/* The worker's result for the query asked last: each hit's def (the deepest holding its line), else its file. */
+static void search_poll(SView *s) {
+    Search *q = &s->sr;
+    SsResult r;
+    if (!ss_engine_poll(q->eng, &r)) return;
+    if (r.gen != q->gen) { ss_result_free(&r); return; }
+    search_drop_hits(s);
+    const StMetrics *m = q->m;
+    q->res = r;
+    q->hnode = xmalloc(sizeof *q->hnode * (size_t)(r.n ? r.n : 1));
+    q->hdef = xmalloc(sizeof *q->hdef * (size_t)(r.n ? r.n : 1));
+    for (int i = 0; i < r.n; i++) {
+        const SsHit *h = &r.hits[i];
+        int f = q->file_node[h->file], n = f, def = -1;
+        for (bool deeper = true; deeper;) {
+            deeper = false;
+            for (int k = 0; k < m->nodes[n].nkids && !deeper; k++) {
+                const StNode *d = &m->nodes[m->nodes[n].kids[k]];
+                if (sv_is_def(d) && d->a <= h->line && h->line <= d->b) n = def = m->nodes[n].kids[k], deeper = true;
+            }
+        }
+        q->hnode[i] = n, q->hdef[i] = def;
+        q->hit[f] |= QH_TEXT, q->hit[n] |= QH_TEXT;
+        q->hfiles += !i || h->file != r.hits[i - 1].file;
+    }
+    if (getenv("AIG_DEBUG"))
+        fprintf(stderr, "aigource: search content \"%s\": %d%s lines in %d files of %d searched, %.2f ms\n", q->q, r.n,
+                r.capped ? "+" : "", q->hfiles, r.files, r.ms);
+    if (q->sel >= search_total(q)) q->sel = search_total(q) ? search_total(q) - 1 : 0;
+    search_marks(s);
+}
+
+/* The query changed: names at once, content after a pause in typing (2
+ * characters and up). The last query's lines go at once: nothing shows, is
+ * emphasised or can be gone to that isn't this query's. */
+static void search_edit(SView *s) {
+    Search *q = &s->sr;
+    q->names_due = true;
+    q->edited = GetTime();
+    q->sel = 0, q->scroll = 0, q->all = false, q->went = false;
+    q->content_due = nchars(q->q) >= 2;
+    if (q->eng) ss_engine_cancel(q->eng);
+    q->gen = 0;
+    search_drop_hits(s);
+    if (q->hit && q->m == s->m) search_marks(s);
+    if (!q->q[0]) si_mark(&s->insp, -1, 0, NULL, false);
+}
+
+/* A content search asked and not back yet, names to rank, or a test hook's pick to make. */
+static bool search_busy(const SView *s) {
+    const Search *q = &s->sr;
+    return q->q[0] && (q->names_due || q->content_due || (q->gen && q->res.gen != q->gen) || q->pick);
+}
+
+/* Result k, as Enter: its folder (or file, for a function) in focus, it
+ * inspected; a line of a file shown and lit in the inspector's code. */
+static void search_go(SView *s, int k) {
+    Search *q = &s->sr;
+    const StMetrics *m = s->m;
+    if (!m || q->m != m || k < 0 || k >= search_total(q)) return;
+    int n, line = 0;
+    if (k < q->nnames) n = q->names[k].node;
+    else n = q->hnode[k - q->nnames], line = q->res.hits[k - q->nnames].line;
+    int p = m->nodes[n].parent;
+    s->focus = p >= 0 ? p : n;
+    inspect(s, n);
+    si_mark(&s->insp, line ? n : -1, line, q->q, ss_smart_case(q->q));
+    q->sel = k, q->open = false, q->went = true;
+    q->hold = true, q->hold_at = (Vector2){-1, -1};
+}
+
+static void search_update(SView *s) {
+    Search *q = &s->sr;
+    if (!s->m || !q->eng || q->m != s->m) return;
+    if (q->names_due) search_names(s);
+    if (q->content_due && GetTime() - q->edited >= SEARCH_WAIT) {
+        q->content_due = false;
+        q->gen = ss_engine_search(q->eng, q->q, ss_smart_case(q->q));
+    }
+    search_poll(s);
+    if (q->pick && !q->names_due && !q->content_due && !(q->gen && q->res.gen != q->gen)) {
+        search_go(s, q->pick - 1);
+        q->pick = 0;
+    }
+}
+
+static void search_open(SView *s) {
+    s->sr.open = true;
+    s->sr.all = s->sr.q[0] != 0;
+    s->sr.follow = true;
+}
+
+static bool word_sep(char c) { return strchr(" /._-:,()", c) != NULL; }
+
+/* Keys while the box has focus, none reaching anything else: text, Backspace
+ * (Ctrl: a word, as Ctrl+W), the selection, Enter, Esc. */
+static void search_type(SView *s, bool ctrl) {
+    Search *q = &s->sr;
+    size_t n = strlen(q->q);
+    bool changed = false;
+    for (int c; (c = GetCharPressed());) {
+        int len;
+        if (ctrl || c < 0x20 || c == 0x7F) continue;
+        const char *u = CodepointToUTF8(c, &len);
+        if (q->all) n = 0, q->all = false;
+        if (n + (size_t)len >= sizeof q->q || nchars(q->q) >= SS_QMAX) continue; /* what names and content both match */
+        memcpy(q->q + n, u, (size_t)len);
+        q->q[n += (size_t)len] = 0;
+        changed = true;
+    }
+    bool bs = IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE);
+    if ((bs || (ctrl && IsKeyPressed(KEY_W))) && n) {
+        if (q->all) n = 0;
+        else if (ctrl) {
+            while (n && word_sep(q->q[n - 1])) n--;
+            while (n && !word_sep(q->q[n - 1])) n--;
+        } else {
+            n--;
+            while (n && ((unsigned char)q->q[n] & 0xC0) == 0x80) n--;
+        }
+        q->q[n] = 0;
+        changed = true;
+    }
+    if (changed) {
+        search_edit(s);
+        if (q->ix && q->m == s->m) search_names(s); /* an Enter in this frame goes to this query's */
+    }
+    int total = search_total(q), step = 0;
+#define KEY(k) (IsKeyPressed(k) || IsKeyPressedRepeat(k))
+    if (KEY(KEY_DOWN) || (ctrl && KEY(KEY_N))) step = 1;
+    if (KEY(KEY_UP) || (ctrl && KEY(KEY_P))) step = -1;
+    if (KEY(KEY_PAGE_DOWN)) step = 10;
+    if (KEY(KEY_PAGE_UP)) step = -10;
+#undef KEY
+    if (step && total) {
+        q->sel = q->sel + step < 0 ? 0 : q->sel + step >= total ? total - 1 : q->sel + step;
+        q->follow = true;
+    }
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER)) {
+        if (total) search_go(s, q->sel < total ? q->sel : total - 1);
+        else q->open = false;
+    }
+    if (IsKeyPressed(KEY_ESCAPE)) q->open = false;
+}
+
+/* The box closed, the screen's: '/' or Ctrl+F open it (what follows '/' in
+ * the same frame is typed), n / N go to the next and previous result. True
+ * when it took the frame's keys. */
+static bool search_keys(SView *s, bool ctrl) {
+    Search *q = &s->sr;
+    if (!s->m) return false;
+    if (ctrl && IsKeyPressed(KEY_F)) {
+        while (GetCharPressed()) {}
+        search_open(s);
+        return true;
+    }
+    for (int c; (c = GetCharPressed());) {
+        if (c == '/') {
+            search_open(s);
+            search_type(s, ctrl);
+            return true;
+        }
+        int total = search_total(q);
+        if ((c == 'n' || c == 'N') && q->q[0] && total && !ctrl) /* the first goes to the selected one */
+            search_go(s, ((q->sel + (!q->went ? 0 : c == 'n' ? 1 : -1)) % total + total) % total);
+    }
+    return false;
+}
+
+void sv_search(SView *s, const char *query, int pick) {
+    Search *q = &s->sr;
+    snprintf(q->q, sizeof q->q, "%s", query);
+    q->open = true;
+    q->pick = pick > 0 ? pick : 0;
+    q->names_due = true;
+    q->content_due = nchars(q->q) >= 2, q->edited = -1e9;
+    if (!s->open) sv_toggle(s);
+}
+
 /* A finished build: the same folder, node and turns when they're still there. */
 static void swap_in(SView *s) {
     pthread_mutex_lock(&s->mu);
     bool done = s->done;
     AnSnapshot *ns = s->new_s;
     StMetrics *nm = s->new_m;
-    if (done) s->done = false, s->new_s = NULL, s->new_m = NULL;
+    SsNames *nix = s->new_ix;
+    if (done) s->done = false, s->new_s = NULL, s->new_m = NULL, s->new_ix = NULL;
     pthread_mutex_unlock(&s->mu);
     if (!done) return;
     pthread_join(s->th, NULL);
@@ -562,6 +912,7 @@ static void swap_in(SView *s) {
     }
     StMetrics *om = s->m;
     NodeRef f = om ? ref_of(om, s->focus) : (NodeRef){0}, sh = om ? ref_of(om, s->shown) : (NodeRef){0};
+    NodeRef mk = om ? ref_of(om, s->insp.mark.node) : (NodeRef){0};
     int turn = om ? find_turn(nm, om->snap, s->turn) : -1, sturn = om ? find_turn(nm, om->snap, s->shown_turn) : -1;
     /* nothing reads the old pair past this point: the caches keyed by it go first */
     lay_free(&s->lay);
@@ -570,6 +921,7 @@ static void swap_in(SView *s) {
     s->fill_m = NULL;
     s->bars.m = NULL;
     s->insp.doc.m = NULL;
+    search_files(s, nm, nix); /* before the old texts go: the search may be reading them */
     st_free_pair(om, s->snap);
     s->snap = ns;
     s->m = nm;
@@ -580,8 +932,10 @@ static void swap_in(SView *s) {
     s->turn = turn;
     s->shown_turn = sturn;
     s->hov = -1;
+    s->insp.mark.node = mk.id ? find_ref(nm, mk) : -1;
     free(f.id);
     free(sh.id);
+    free(mk.id);
     if (s->restart) start_build(s);
 }
 
@@ -805,10 +1159,16 @@ static void ensure_arcs(SView *s, Rectangle st, int from) {
 
 /* ---- stage drawing ---------------------------------------------------------- */
 
+/* A selected turn dims what it didn't touch, a search what doesn't match or
+ * hold a match; both at once dim what either would. */
 static float node_alpha(const SView *s, int i) {
-    if (s->turn < 0) return 1;
-    return st_turn_touches(&s->m->turns[s->turn], i) ? 1 : DIM_A;
+    if (s->turn >= 0 && !st_turn_touches(&s->m->turns[s->turn], i)) return DIM_A;
+    if (search_on(s) && !s->sr.hit[i]) return DIM_A;
+    return 1;
 }
+
+/* Matched by name or content itself: outlined amber (faded as node_alpha fades it). */
+static bool found(const SView *s, int i) { return search_on(s) && (s->sr.hit[i] & (QH_NAME | QH_TEXT)); }
 
 static bool partner(const SView *s, int i) { return s->arcs.mark && s->arcs.mark[i]; }
 
@@ -839,6 +1199,7 @@ static void draw_icicle(SView *s, Rectangle st) {
                 DrawRectangleRec(r, ui_fade(s->fill[i], a));
                 if (i == s->hov) outline(r, 2, C_FOCUS);
                 else if (partner(s, i)) outline(r, 1.5f, WHITE);
+                else if (found(s, i)) outline(r, 1.5f, ui_fade(C_HOT, a));
                 if (nf && q.width > 14 + (float)nf * 9) flag_dots(d->kinds, r.x + q.width - 8, r.y + 9, a);
                 continue;
             }
@@ -886,6 +1247,7 @@ static void draw_treemap(SView *s, Rectangle st) {
                 DrawRectangleRec(r, ui_fade(c, a));
                 if (i == s->hov) outline(r, 2, C_FOCUS);
                 else if (partner(s, i)) outline(r, 1.5f, WHITE);
+                else if (found(s, i)) outline(r, 1.5f, ui_fade(C_HOT, a));
                 else outline(r, 0.5f, ui_fade(C_BG, a));
                 if (nf && w > 14 + (float)nf * 9 && h > 12) flag_dots(d->kinds, r.x + w - 7, r.y + 8, a);
             } else if (h > 16 && w > 20 && !tm_covered(d, q)) {
@@ -935,6 +1297,7 @@ static void draw_floating(SView *s, Rectangle st) {
         else fillc = f;
         if (i == s->hov && !hub) stroke = C_FOCUS, sw = 2;
         else if (partner(s, i)) stroke = WHITE, sw = 1.5f;
+        else if (found(s, i) && !hub) stroke = C_HOT, sw = 2;
         DrawCircleV(p, o->r, ui_fade(fillc, a));
         if (sw > 0) {
             if (d->kind == AN_DIR && !hub) dashed_circle(p, o->r, sw, 5, 3, ui_fade(stroke, a));
@@ -1036,7 +1399,15 @@ typedef struct {
     Rectangle tab[3], mode[ST_NMODES], heat, prev, next, ticks, cur, legend, turns_lbl;
     Rectangle crumb[64];
     int crumb_node[64], ncrumb;
+    Rectangle sbox, slist; /* the search box; its results (open only) */
 } Geo;
+
+/* The result list: a heading, the names, a heading, the lines; y of result k from its top. */
+static float slist_h(const Search *q) { return 4 + 2 * SHEAD_H + (float)q->nnames * SNAME_H + (float)q->res.n * SHIT_H + 4; }
+static float srow_y(const Search *q, int k) {
+    return 4 + SHEAD_H + (k < q->nnames ? (float)k * SNAME_H : (float)q->nnames * SNAME_H + SHEAD_H + (float)(k - q->nnames) * SHIT_H);
+}
+static float srow_h(const Search *q, int k) { return k < q->nnames ? SNAME_H : SHIT_H; }
 
 static float tab_w(int v) { return 10 + sv_tw(F_SANS, VIEW_NAME[v], 13) + 6 + sv_tw(F_MONO, "1", 11) + 10; }
 static float mode_w(int k) { return 10 + sv_tw(F_SANS, MODE_NAME[k], 13) + 10; }
@@ -1113,6 +1484,13 @@ static Geo geometry(SView *s) {
             cx += w + sv_tw(F_MONO, "/", 13) + 6;
         }
     }
+    /* the search box at the stage's right end of the path's band, its results under it */
+    float bw = fminf(420, fmaxf(220, g.stage.width * 0.42f));
+    g.sbox = (Rectangle){g.stage.x + g.stage.width - 12 - bw, g.crumbs.y + (CRUMBS_H - 28) / 2, bw, 28};
+    if (s->sr.open && s->m) {
+        float sw = fminf(fmaxf(bw, 660), W - 24), sh = fminf(slist_h(&s->sr), fmaxf(80, g.stage.y + g.stage.height - g.sbox.y - 28 - 12));
+        g.slist = (Rectangle){fminf(g.sbox.x, W - 12 - sw), g.sbox.y + g.sbox.height + 4, sw, sh};
+    }
     return g;
 }
 
@@ -1156,18 +1534,18 @@ static void draw_crumbs(SView *s, const Geo *g, Vector2 mp) {
     Rectangle c = g->crumbs;
     DrawRectangleRec(c, C_WIN);
     hline(0, c.width, c.y + c.height - 1, C_LINE);
-    float cy = c.y + c.height / 2, end = 12;
-    BeginScissorMode(0, (int)c.y, (int)c.width, (int)c.height);
+    float cy = c.y + c.height / 2, end;
+    BeginScissorMode(0, (int)c.y, (int)(g->sbox.x - 8), (int)c.height);
     for (int k = 0; k < g->ncrumb; k++) {
         Rectangle r = g->crumb[k];
         const char *nm = s->m->nodes[g->crumb_node[k]].name;
         bool last = k == g->ncrumb - 1;
-        if (!last && CheckCollisionPointRec(mp, r)) DrawRectangleRounded(r, 4 / 12.0f, 6, C_RAISED);
+        if (!last && CheckCollisionPointRec(mp, r) && mp.x < g->sbox.x - 8) DrawRectangleRounded(r, 4 / 12.0f, 6, C_RAISED);
         sv_tx(F_MONO, nm, r.x + 5, sv_mid(cy, 13), 13, last ? C_FG : C_FOCUS);
         if (!last) sv_tx(F_MONO, "/", r.x + r.width + 3, sv_mid(cy, 13), 13, C_FAINT);
-        end = r.x + r.width;
     }
     EndScissorMode();
+    end = g->sbox.x + g->sbox.width; /* the scale goes right of the search box */
     /* the scale: lo -> hi words, or the owners' colours */
     float x = c.width - 12;
     if (s->mode == ST_OWNER && s->m) {
@@ -1325,14 +1703,14 @@ static void draw_hint(const Geo *g) {
     float cy = r.y + r.height / 2;
     static const char *const keys[][2] = {{"hover", "inspect + partners"}, {"wheel", "scroll panel"},
                                           {"click", "open"},               {"center / path / Esc", "back"},
-                                          {"1 2 3", "views"},              {"[ ]", "turns"},
-                                          {"S", "stage"}};
+                                          {"/", "search"},                 {"1 2 3", "views"},
+                                          {"[ ]", "turns"},                {"S", "stage"}};
     static const char *const flags[] = {"corrected / interrupted", "untested / failing", "changed unread", "slow"};
     static const int fk[] = {STK_CORR, STK_TEST, STK_BLIND, STK_SLOW};
     float kw = 0;
     for (int i = 0; i < 4; i++) kw += 13 + sv_tw(F_MONO, flags[i], 12) + (i ? 12 : 0);
     float kx = r.width - 12 - kw, x = 12;
-    for (int i = 0; i < 7; i++) {
+    for (int i = 0; i < 8; i++) {
         float w = sv_tw(F_MONO_B, keys[i][0], 12) + 6 + sv_tw(F_MONO, keys[i][1], 12);
         if (x + w > kx - 18) break;
         sv_tx(F_MONO_B, keys[i][0], x, sv_mid(cy, 12), 12, C_DIM);
@@ -1347,10 +1725,202 @@ static void draw_hint(const Geo *g) {
     }
 }
 
+/* ---- the search box and its results ------------------------------------------- */
+
+/* The result under mp, -1 none. */
+static int search_row_at(const SView *s, const Geo *g, Vector2 mp) {
+    const Search *q = &s->sr;
+    if (!q->open || !CheckCollisionPointRec(mp, g->slist)) return -1;
+    float y = mp.y - g->slist.y + q->scroll;
+    for (int k = 0, n = search_total(q); k < n; k++)
+        if (y >= srow_y(q, k) && y < srow_y(q, k) + srow_h(q, k)) return k;
+    return -1;
+}
+
+static bool search_over(const SView *s, const Geo *g, Vector2 mp) {
+    return CheckCollisionPointRec(mp, g->sbox) || (s->sr.open && CheckCollisionPointRec(mp, g->slist));
+}
+
+/* A click: on a result, it; on the closed box, open it; elsewhere, close an
+ * open box (and nothing else). True when it took the click. */
+static bool search_press(SView *s, const Geo *g, Vector2 mp) {
+    Search *q = &s->sr;
+    if (!s->m) return false;
+    if (q->open && CheckCollisionPointRec(mp, g->slist)) {
+        search_go(s, search_row_at(s, g, mp));
+        return true;
+    }
+    if (CheckCollisionPointRec(mp, g->sbox)) {
+        if (!q->open) search_open(s);
+        return true;
+    }
+    if (!q->open) return false;
+    q->open = false; /* only closes it: the keys go back to the screen first */
+    return true;
+}
+
+/* s in mono at css, its middle at cy: the bytes mk marks bold in hc (on a
+ * faint amber box when box), the rest in c; cut to maxw with "…", from the
+ * left (a path keeps its name) or the right. */
+static void draw_marked(const char *s, const unsigned char *mk, float x, float cy, float css, Color c, Color hc, bool box,
+                        float maxw, bool from_left) {
+    size_t n = strlen(s), a = 0, b = n;
+    float cw = sv_tw(F_MONO, "M", css), y = sv_mid(cy, css);
+    int len = nchars(s);
+    if ((float)len * cw > maxw) {
+        int fit = (int)((maxw - cw) / cw), skip = from_left ? len - fit : fit;
+        if (fit < 1) return;
+        size_t i = 0;
+        for (int k = 0; i < n && k < skip; k++)
+            for (i++; i < n && ((unsigned char)s[i] & 0xC0) == 0x80; i++) {}
+        if (from_left) a = i;
+        else b = i;
+    }
+    if (a) sv_tx(F_MONO, "\xE2\x80\xA6", x, y, css, C_FAINT), x += cw;
+    char run[256];
+    for (size_t i = a; i < b;) {
+        bool on = mk && mk[i];
+        size_t j = i + 1;
+        while (j < b && (((unsigned char)s[j] & 0xC0) == 0x80 || (j - i < sizeof run - 8 && (!mk || !!mk[j] == on)))) j++;
+        memcpy(run, s + i, j - i);
+        run[j - i] = 0;
+        float w = (float)nchars(run) * cw;
+        if (on && box) DrawRectangleRounded((Rectangle){x - 1, cy - PX(css) / 2 - 1, w + 2, PX(css) + 2}, 0.3f, 4, ui_fade(C_HOT, 0.22f));
+        sv_tx(on ? F_MONO_B : F_MONO, run, x, y, css, on ? hc : c);
+        x += w;
+        i = j;
+    }
+    if (b < n) sv_tx(F_MONO, "\xE2\x80\xA6", x, y, css, C_FAINT);
+}
+
+/* A magnifier at (x, y), its lens' centre */
+static void magnifier(float x, float y, Color c) {
+    DrawRing((Vector2){x, y}, 3.6f, 5.0f, 0, 360, 24, c);
+    DrawLineEx((Vector2){x + 3.6f, y + 3.6f}, (Vector2){x + 7.5f, y + 7.5f}, 1.6f, c);
+}
+
+static void search_heading(const char *label, const char *what, float x, float y) {
+    float cy = y + SHEAD_H / 2 + 2;
+    sv_txs(F_SANS_B, label, x + 12, sv_mid(cy, 10.5f), 10.5f, 0.9f, C_FAINT);
+    sv_tx(F_SANS, what, x + 12 + sv_tws(F_SANS_B, label, 10.5f, 0.9f) + 10, sv_mid(cy, 12), 12, C_DIM);
+}
+
+static void draw_search(SView *s, const Geo *g, Vector2 mp) {
+    Search *q = &s->sr;
+    Rectangle b = g->sbox;
+    float cy = b.y + b.height / 2;
+    DrawRectangleRounded(b, 5 / 14.0f, 6, C_BG);
+    DrawRectangleRoundedLinesEx(b, 5 / 14.0f, 6, 1, q->open ? C_FOCUS : CheckCollisionPointRec(mp, b) ? C_DIM : C_LINE);
+    magnifier(b.x + 14, cy - 1, q->open || q->q[0] ? C_SOFT : C_FAINT);
+    char right[96] = "";
+    int total = search_total(q);
+    if (q->q[0] && !q->open && total && q->went) snprintf(right, sizeof right, "%d/%d  n N", q->sel + 1, total);
+    else if (q->q[0] && !q->open && total) snprintf(right, sizeof right, "\xE2\x80\x93/%d  n N", total);
+    else if (q->q[0] && search_busy(s)) snprintf(right, sizeof right, "\xE2\x80\xA6");
+    else if (q->q[0]) snprintf(right, sizeof right, "%d", total);
+    float rw = *right ? sv_tw(F_MONO, right, 11) + 10 : 0, tx = b.x + 28, tw = b.width - 28 - 8 - rw;
+    if (*right) sv_tx(F_MONO, right, b.x + b.width - 8 - rw + 10, sv_mid(cy, 11), 11, C_FAINT);
+    if (!q->q[0]) {
+        sv_tx(F_SANS, q->open ? "names and file contents" : "/  search names and file contents", tx, sv_mid(cy, 12.5f), 12.5f, C_FAINT);
+    } else {
+        float qw = fminf(tw, (float)nchars(q->q) * sv_tw(F_MONO, "M", 13));
+        if (q->open && q->all) DrawRectangle((int)tx - 1, (int)(cy - 9), (int)qw + 2, 18, ui_fade(C_FOCUS, 0.35f));
+        draw_marked(q->q, NULL, tx, cy, 13, q->open ? C_FG : C_SOFT, C_FG, false, tw, true);
+        if (q->open && !q->all) DrawRectangle((int)(tx + qw + 1), (int)(cy - 8), 1, 16, C_FOCUS);
+    }
+    if (q->open && !q->q[0]) DrawRectangle((int)tx - 1, (int)(cy - 8), 1, 16, C_FOCUS);
+    if (!q->open) return;
+
+    /* the results */
+    Rectangle r = g->slist;
+    float full = slist_h(q), maxs = fmaxf(0, full - r.height);
+    if (q->follow && total) { /* the selection in view, with its heading when it's a section's first */
+        int k = q->sel < total ? q->sel : total - 1;
+        float y0 = srow_y(q, k) - (k == 0 ? 4 + SHEAD_H : k == q->nnames ? SHEAD_H : 0), y1 = srow_y(q, k) + srow_h(q, k);
+        if (y0 < q->scroll) q->scroll = y0;
+        if (y1 > q->scroll + r.height) q->scroll = y1 - r.height + 4;
+        q->follow = false;
+    }
+    q->scroll = fmaxf(0, fminf(maxs, q->scroll));
+    DrawRectangleRounded((Rectangle){r.x + 2, r.y + 3, r.width, r.height}, 6 / fminf(r.width, r.height), 6, ui_fade(BLACK, 0.35f));
+    DrawRectangleRounded(r, 6 / fminf(r.width, r.height), 6, HEX(0x0b0f15));
+    DrawRectangleRoundedLinesEx(r, 6 / fminf(r.width, r.height), 6, 1, C_LINE);
+    BeginScissorMode((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, (int)r.height - 2);
+    float oy = r.y - q->scroll, w = r.width;
+    int hot = search_row_at(s, g, mp);
+    char what[160], buf[600];
+    const StMetrics *m = s->m;
+    if (!q->nall) snprintf(what, sizeof what, "none");
+    else if (q->nall > q->nnames) snprintf(what, sizeof what, "%d of %d", q->nnames, q->nall);
+    else snprintf(what, sizeof what, "%d", q->nall);
+    search_heading("NAMES", what, r.x, oy + 4);
+    if (nchars(q->q) < 2) snprintf(what, sizeof what, "type 2 characters");
+    else if (q->gen && q->res.gen != q->gen) snprintf(what, sizeof what, "searching\xE2\x80\xA6");
+    else if (!q->res.n) snprintf(what, sizeof what, "none");
+    else if (q->res.capped) snprintf(what, sizeof what, "%d+ lines in %d files", SS_CAP, q->hfiles);
+    else snprintf(what, sizeof what, "%d line%s in %d file%s", q->res.n, q->res.n == 1 ? "" : "s", q->hfiles,
+                  q->hfiles == 1 ? "" : "s");
+    search_heading("IN FILES", what, r.x, oy + 4 + SHEAD_H + (float)q->nnames * SNAME_H);
+    for (int k = 0; k < total; k++) {
+        float y = oy + srow_y(q, k), h = srow_h(q, k);
+        if (y + h < r.y || y > r.y + r.height) continue;
+        Rectangle row = {r.x + 4, y, w - 8, h};
+        if (k == q->sel) {
+            DrawRectangleRounded(row, 4 / h, 6, sv_brighter(C_RAISED, 0.4f));
+            DrawRectangle((int)row.x, (int)row.y + 3, 2, (int)h - 6, C_FOCUS);
+        } else if (k == hot) DrawRectangleRounded(row, 4 / h, 6, C_RAISED);
+        if (k < q->nnames) { /* kind, path with the matched characters */
+            const NameHit *nh = &q->names[k];
+            const StNode *d = &m->nodes[nh->node];
+            const char *path = rel_id(d->id);
+            size_t pn = strlen(path);
+            unsigned char *mk = xcalloc(pn + 1, 1);
+            for (int i = 0; i < nh->m.npos; i++)
+                for (size_t j = (size_t)nh->m.pos[i]; j < pn && (j == (size_t)nh->m.pos[i] || ((unsigned char)path[j] & 0xC0) == 0x80); j++)
+                    mk[j] = 1;
+            sv_tx(F_SANS, sv_kind_word(d->kind), row.x + 10, sv_mid(y + h / 2, 11.5f), 11.5f, C_FAINT);
+            draw_marked(path, mk, row.x + 74, y + h / 2, 12.5f, C_SOFT, C_HOT, false, row.width - 84, true);
+            free(mk);
+            continue;
+        }
+        /* path:line, the function holding it; the line, its match marked */
+        const SsHit *hh = &q->res.hits[k - q->nnames];
+        int def = q->hdef[k - q->nnames];
+        const StNode *f = &m->nodes[q->file_node[hh->file]];
+        snprintf(buf, sizeof buf, "%s:%d", rel_id(f->id), hh->line);
+        char fn[300] = "";
+        if (def >= 0) snprintf(fn, sizeof fn, "in %s", m->nodes[def].name);
+        float fw = *fn ? fminf(sv_tw(F_SANS, fn, 12), row.width * 0.4f) : 0;
+        draw_marked(buf, NULL, row.x + 10, y + 11, 12, C_DIM, C_FG, false, row.width - 20 - (fw ? fw + 14 : 0), true);
+        if (*fn) {
+            char fitb[300];
+            sv_fit(F_SANS, fitb, sizeof fitb, fn, 12, fw + 1);
+            sv_tx(F_SANS, fitb, row.x + row.width - 10 - fw, sv_mid(y + 11, 12), 12, C_FAINT);
+        }
+        size_t sn = strlen(hh->snip);
+        unsigned char *mk = xcalloc(sn + 1, 1);
+        for (int j = hh->ms; j < hh->ms + hh->ml && (size_t)j < sn; j++) mk[j] = 1;
+        draw_marked(hh->snip, mk, row.x + 22, y + 28, 12.5f, C_SOFT, C_HOT, true, row.width - 32, false);
+        free(mk);
+    }
+    EndScissorMode();
+    if (maxs > 0) {
+        float th = r.height - 8, bh = fmaxf(20, th * r.height / full);
+        DrawRectangleRounded((Rectangle){r.x + r.width - 6, r.y + 4 + (th - bh) * q->scroll / maxs, 3, bh}, 1, 4,
+                             ui_fade(C_DIM, 0.45f));
+    }
+}
+
 /* ---- the frame -------------------------------------------------------------- */
 
 bool sv_keys(SView *s) {
     if (!s->open) return false;
+    bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL);
+    if (s->sr.open) { /* typing: the screen's keys stay off; Esc closes the box first */
+        search_type(s, ctrl);
+        return IsKeyPressed(KEY_ESCAPE);
+    }
+    if (search_keys(s, ctrl)) return false;
     if (IsKeyPressed(KEY_ONE)) s->view = 0;
     if (IsKeyPressed(KEY_TWO)) s->view = 1;
     if (IsKeyPressed(KEY_THREE)) s->view = 2;
@@ -1364,7 +1934,8 @@ bool sv_keys(SView *s) {
     if (IsKeyPressed(KEY_RIGHT_BRACKET)) step_turn(s, 1);
     int up = s->focus >= 0 ? s->m->nodes[s->focus].parent : -1;
     if (esc) {
-        if (s->turn >= 0) select_turn(s, -1);
+        if (s->sr.q[0]) s->sr.q[0] = 0, search_edit(s); /* a query undims, as a turn does */
+        else if (s->turn >= 0) select_turn(s, -1);
         else if (up >= 0) set_focus(s, up);
         else s->open = false;
     }
@@ -1384,13 +1955,14 @@ static int code_at(SView *s, Rectangle insp, Vector2 mp, char *path, size_t n) {
 }
 
 static bool handle_press(SView *s, const Geo *g, Vector2 mp) {
+    if (search_press(s, g, mp)) return true;
     for (int v = 0; v < 3; v++)
         if (CheckCollisionPointRec(mp, g->tab[v])) { s->view = v; return true; }
     for (int k = 0; k < ST_NMODES; k++)
         if (CheckCollisionPointRec(mp, g->mode[k])) { s->mode = k; return true; }
     if (!s->m) return true;
-    for (int k = 0; k < g->ncrumb - 1; k++)
-        if (CheckCollisionPointRec(mp, g->crumb[k])) { set_focus(s, g->crumb_node[k]); return true; }
+    for (int k = 0; k < g->ncrumb - 1; k++) /* not where the box covers them */
+        if (CheckCollisionPointRec(mp, g->crumb[k]) && mp.x < g->sbox.x - 8) { set_focus(s, g->crumb_node[k]); return true; }
     if (CheckCollisionPointRec(mp, g->prev)) { step_turn(s, -1); return true; }
     if (CheckCollisionPointRec(mp, g->next)) { step_turn(s, 1); return true; }
     if (CheckCollisionPointRec(mp, g->cur)) {
@@ -1427,6 +1999,9 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     apply_hooks(s);
     if (!s->open) return;
     live(s);
+    search_update(s);
+    Search *q = &s->sr;
+    if (q->hold && q->hold_at.x < 0) q->hold_at = mp;
     Geo g = geometry(s);
     float wheel = GetMouseWheelMove();
     const StMetrics *m = s->m;
@@ -1469,7 +2044,9 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     }
     /* Over the stage the wheel scrolls the panel too (si_wheel: outside the code box), so the hovered
      * node's panel reads without crossing other nodes to reach it. */
-    if (wheel != 0 && ready && (CheckCollisionPointRec(mp, g.insp) || CheckCollisionPointRec(mp, g.stage)))
+    bool over = ready && search_over(s, &g, mp);
+    if (wheel != 0 && over) q->scroll -= wheel * 3 * SNAME_H;
+    else if (wheel != 0 && ready && (CheckCollisionPointRec(mp, g.insp) || CheckCollisionPointRec(mp, g.stage)))
         si_wheel(&s->insp, g.insp, mp, wheel, IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT));
     if (ready && s->view == 2 && l->sim.n) {
         s->clock += dt;
@@ -1477,9 +2054,11 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
         lay_sim_clamp(&l->sim, g.stage.width, g.stage.height, l->below);
     }
     s->hov = -1;
-    if (ready && !(s->pressed && s->press_node < 0))
+    if (ready && !over && !(s->pressed && s->press_node < 0))
         s->hov = s->drag_body > 0 && s->drag_body < l->sim.n ? l->body_node[s->drag_body] : stage_hit(s, g.stage, mp);
-    if (s->hov >= 0) inspect(s, s->hov); /* hovering inspects, and it stays when the mouse moves on */
+    /* hovering inspects, and it stays when the mouse moves on; after a search's jump, once the mouse moves */
+    if (q->hold && q->hold_at.x >= 0 && hypotf(mp.x - q->hold_at.x, mp.y - q->hold_at.y) > 3) q->hold = false;
+    if (s->hov >= 0 && !q->hold) inspect(s, s->hov);
 
     /* drawing */
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), C_WIN);
@@ -1504,15 +2083,18 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     if (ready) {
         si_show(&s->insp, m, s->fill, s->mode, s->shown, s->shown_turn, g.insp.width - 28);
         char path[PATH_MAX];
-        s->insp.nvim = !s->pressed && code_at(s, g.insp, mp, path, sizeof path) && nv_find(s->root, NULL, 0);
-        si_draw(&s->insp, g.insp, mp);
+        Vector2 imp = over ? (Vector2){-1, -1} : mp; /* the result list covers the inspector there */
+        s->insp.nvim = !s->pressed && !over && code_at(s, g.insp, imp, path, sizeof path) && nv_find(s->root, NULL, 0);
+        si_draw(&s->insp, g.insp, imp);
     }
     ui_hand(s->insp.nvim);
     draw_strip(s, &g, mp);
     draw_hint(&g);
+    if (ready) draw_search(s, &g, mp);
     /* tooltips: the node under the mouse at once; titles after a moment */
     char buf[600];
     int bar;
+    if (over) return;
     if (ready && s->hov >= 0 && !s->pressed) {
         const StNode *d = &m->nodes[s->hov];
         char t[64];

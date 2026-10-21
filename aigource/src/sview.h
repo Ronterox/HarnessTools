@@ -31,6 +31,12 @@ bool sv_ready(const SView *s);
  * in time order, negative from the end, 0 none); opens the screen and applies
  * them once the first build is in. */
 void sv_hooks(SView *s, const char *spec, int turn);
+/* Test hook: --structure-search QUERY and --structure-pick N; opens the
+ * screen with the search box showing QUERY's results, then goes to result N
+ * (1-based) as Enter does, 0 none. */
+void sv_search(SView *s, const char *query, int pick);
+/* The search box has focus: every key is its (S and Q included). */
+bool sv_typing(const SView *s);
 /* The screen's keys, before anything is drawn this frame; true when it used
  * Esc (which may also have closed it). */
 bool sv_keys(SView *s);

@@ -1727,13 +1727,15 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     }
 
     if (o->structure || o->structure_turn) sv_hooks(structure(&v), o->structure, o->structure_turn);
+    if (o->structure_search) sv_search(structure(&v), o->structure_search, o->structure_pick);
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
         v.hand = false;
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v.click_at = GetMousePosition(); /* either screen: a hint shows there */
-        if (IsKeyPressed(KEY_Q)) break;
-        if (IsKeyPressed(KEY_S)) sv_toggle(structure(&v));
+        bool typing = sv_typing(v.sv); /* the structure screen's search box takes every key */
+        if (IsKeyPressed(KEY_Q) && !typing) break;
+        if (IsKeyPressed(KEY_S) && !typing) sv_toggle(structure(&v));
         bool esc_used = (v.sv && sv_keys(v.sv)); /* before drawing: Esc may close it this frame */
         if (sv_is_open(v.sv)) { /* the structure screen: the stage plays on behind it, undrawn */
             ingest_new_events(&v, q);

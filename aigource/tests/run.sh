@@ -172,6 +172,24 @@ if [ -x build/asan/aigource ]; then
 fi
 unset AIG_NO_DEFS
 
+# The structure screen's search end to end: a --shot of the fixture repo with
+# the search box on a query and its first result gone to, as Enter does. It
+# opens a window, so only on a display given for it (AIG_TEST_DISPLAY, e.g. a
+# private Xephyr or Xvfb; never the inherited DISPLAY), software GL, nvim
+# sockets in an empty directory.
+if [ -n "${AIG_TEST_DISPLAY:-}" ]; then
+    mkdir -p "$cfg/nvim"
+    rm -f "$OUT/search-shot.png"
+    if DISPLAY=$AIG_TEST_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe AIG_NVIM_DIR="$cfg/nvim" \
+       timeout 120 $BIN --root "$srepo" "$cfg/st/st1.jsonl" "$cfg/st/st2.jsonl" --seek 1 --frames 5 --mouse 5,5 \
+       --structure floating --structure-search helper --structure-pick 1 --shot "$OUT/search-shot.png" \
+       > "$OUT/search-shot.txt" 2>&1 && [ -s "$OUT/search-shot.png" ]
+    then echo "ok   search shot ($OUT/search-shot.png)"
+    else cat "$OUT/search-shot.txt"; echo "FAIL search shot"; fail=1; fi
+else
+    echo "skip search shot (set AIG_TEST_DISPLAY to a private X display)"
+fi
+
 # Line diff, hunks, relocation.
 cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_analysis" tests/test_analysis.c \
    src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o -ldl -lm -lpthread
@@ -270,6 +288,18 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -o "$OUT/test_layout" tests/test_l
 cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_slayout" tests/test_slayout.c \
    src/slayout.c src/util.c -lm -lpthread
 "$OUT/test_slayout" || fail=1
+
+# Search on the structure screen: names ranked like a file finder (and the
+# names index against them), content hits (smart case, lines and columns, CRLF,
+# UTF-8 and bytes that aren't), the worker (binary texts skipped, the cap,
+# cancelled searches). Under ASan/UBSan too.
+cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_ssearch" tests/test_ssearch.c src/ssearch.c src/util.c -lm -lpthread
+"$OUT/test_ssearch" || fail=1
+cc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -Isrc -o "$OUT/test_ssearch_asan" \
+   tests/test_ssearch.c src/ssearch.c src/util.c -lm -lpthread
+if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_ssearch_asan" > "$OUT/test_ssearch_asan.txt" 2>&1
+then echo "ok   ssearch (asan, leaks checked)"
+else cat "$OUT/test_ssearch_asan.txt"; echo "FAIL ssearch (asan)"; fail=1; fi
 
 # Opening code in Neovim: discovery and msgpack-RPC against headless nvims
 # started in a throwaway socket dir (skipped without nvim).
