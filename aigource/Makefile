@@ -7,7 +7,7 @@ CPPFLAGS += -D_GNU_SOURCE -I$(RAYLIB)/include -I$(YYJSON) -I$(TS)/include
 LDLIBS  := $(RAYLIB)/lib/libraylib.a -lGL -lX11 -lm -lpthread -ldl -lrt
 
 STAMP   := $(RAYLIB)/lib/libraylib.a $(YYJSON)/yyjson.c $(TS)/src/lib.c
-SRC := src/main.c src/util.c src/event.c src/transcript.c src/ingest.c src/model.c src/render.c src/ui.c src/timeline.c src/watch.c src/cmdguess.c src/syntax.c src/analysis.c src/metrics.c src/slayout.c src/sview.c src/sinsp.c src/turns.c src/nvim.c
+SRC := src/main.c src/util.c src/event.c src/transcript.c src/ingest.c src/model.c src/render.c src/ui.c src/timeline.c src/watch.c src/cmdguess.c src/syntax.c src/analysis.c src/metrics.c src/slayout.c src/sview.c src/sinsp.c src/ssearch.c src/turns.c src/nvim.c
 OBJ := $(SRC:src/%.c=build/%.o) build/yyjson.o build/tree-sitter.o
 
 build/aigource: $(OBJ)

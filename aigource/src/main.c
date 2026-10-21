@@ -49,11 +49,15 @@ static void usage(void) {
           "                     cost, time, age, owner); a folder to focus, or a file or\n"
           "                     function to inspect (path below the root)\n"
           "  --structure-turn N select its Nth turn in time order (negative: from the end)\n"
+          "  --structure-search QUERY\n"
+          "                     open the structure screen's search box on QUERY\n"
+          "  --structure-pick N with --structure-search: go to its Nth result, as Enter\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
           "      F fullscreen, Q quit, Esc close window, S structure screen. Click or\n"
           "      drag the timeline to jump; click an actor to see its current turn;\n"
           "      click a line of code to open it in the nvim working in the root.\n"
-          "      Structure screen: 1 2 3 views, [ ] turns, Esc/Backspace up, R rebuild.\n",
+          "      Structure screen: 1 2 3 views, [ ] turns, Esc/Backspace up, R rebuild,\n"
+          "      / or Ctrl+F search (Enter go, n/N next/previous).\n",
           stderr);
 }
 
@@ -180,6 +184,8 @@ int main(int argc, char **argv) {
         else if (TAKES("--file", "--file")) vo.file = v;
         else if (TAKES("--structure", "--structure")) vo.structure = v;
         else if (TAKES("--structure-turn", "--structure-turn")) vo.structure_turn = atoi(v);
+        else if (TAKES("--structure-search", "--structure-search")) vo.structure_search = v;
+        else if (TAKES("--structure-pick", "--structure-pick")) vo.structure_pick = atoi(v);
         else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (TAKES("--metrics", "--metrics")) metrics = v;
         else if (TAKES("--rebuild", "--rebuild")) rebuild = atoi(v);

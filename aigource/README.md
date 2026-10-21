@@ -144,12 +144,53 @@ code, is in [docs/STRUCTURE.md](docs/STRUCTURE.md).
 
 Click a folder to focus it, a file to open its functions; the centre, a path
 segment, `Esc` or `Backspace` go up. Keys: `1` `2` `3` views, `[` `]` turns,
-`Esc` clears the turn, then goes up, then back to the stage; `Backspace` up;
-`R` rebuild now, `S` stage, `Q` quit. The heat modes are picked in the bar
+`/` or `Ctrl+F` search (below), `n` `N` its next and previous result,
+`Esc` closes the search box, then clears the search, then the turn, then goes
+up, then back to the stage; `Backspace` up; `R` rebuild now, `S` stage, `Q` quit. The heat modes are picked in the bar
 (click). Wheel scrolls the inspector, over the inspector or over the stage
 (any view: read the hovered node's panel while still pointing at it); inside
 the inspector's code, the code, and `Shift`+wheel sideways. Click a line of
 the inspector's code to open it in your Neovim (below).
+
+**Search.** `/` or `Ctrl+F` opens a box at the right of the path, its
+results in one list under it; while it has focus every key is the box's (none
+of the screen's, `S` and `Q` included). `Backspace` deletes a character,
+`Ctrl+Backspace` or `Ctrl+W` a word; `Up`/`Down` (or `Ctrl+P`/`Ctrl+N`,
+`PgUp`/`PgDn`) move the selection, the wheel scrolls the list, hovering lights
+a row; `Enter` or a click goes to a result, `Esc` or a click elsewhere (which
+does nothing else) closes the box. A query counts up to 64 characters. Two kinds:
+- **Names**: the paths of folders, files, functions and classes,
+  case-insensitive, ranked as a file finder does: the exact name first, then a
+  name starting with the query, a name holding it, a path holding it, then the
+  query's letters in order anywhere in the path (fzy's scoring: runs of
+  consecutive letters and letters starting a word count more). Each with its
+  kind and path, the matched letters in amber; the first 100 are listed. The
+  paths are folded once per build (on its thread), a byte test goes first, the
+  fuzzy ones are scored only when fewer than 100 matched better, and a query
+  extending the last one looks only among its matches: well under a millisecond
+  on this repo, a few ms per key on 60,000 paths.
+- **In files**: every file of the tree holding the query as typed (literal),
+  smart case (case-sensitive only when the query has a capital), from 2
+  characters, 120 ms after the last key. One row per line, `path:line`, the
+  function or class holding it, the line trimmed with the match marked; at most
+  500 lines ("500+"). It runs on a worker thread, a newer query cancelling an
+  older one, over the texts the build read (the tree's files, binaries and
+  files over 8 MB already left out; section 0 of docs/STRUCTURE.md). On this
+  repo (174 files, 2 MB) a search takes 1 to 12 ms. While a new query waits for
+  its lines, the last query's are gone: nothing shown or gone to is another
+  query's.
+
+Going to a name focuses its folder (a function's file or class: its
+functions), so it shows, and inspects it; going to a line inspects the function
+holding it, else the file, and the inspector's code scrolls to the line, lit,
+the query's matches in it marked (a line past the code's first 400 lines, or
+a function's 80, moves the code there: "lines A–B of 1–N"). The box closes and
+the query stays: `n` `N` step through the results (the first `n` goes to the
+selected one; the box shows `–/N` until then), `/` opens the box on it again,
+selected, so typing replaces it. While a query is active, what matched is outlined amber and what
+neither matched nor holds a match is dimmed, as a selected turn dims what it
+didn't touch (the outline fades with it); with both, a node shows only when
+both would show it.
 
 ## Open in Neovim
 
@@ -208,15 +249,20 @@ tests use it).
                    cost, time, age, owner); a folder to focus, or a file or
                    function to inspect (path below the root)
 --structure-turn N select its Nth turn in time order (negative: from the end)
+--structure-search QUERY
+                   open the structure screen's search box on QUERY
+--structure-pick N with --structure-search: go to its Nth result, as Enter
 ```
 
-`--structure` and `--structure-turn` are for `--shot` (a `--shot` waits for the
-build): `--structure floating:risk:src/model.c/model_new --structure-turn -1`.
+`--structure`, `--structure-turn`, `--structure-search` and `--structure-pick`
+are for `--shot` (a `--shot` waits for the build, and for the search's results):
+`--structure floating:risk:src/model.c/model_new --structure-turn -1`,
+`--structure icicle --structure-search an_build --structure-pick 15`.
 
 Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause (live, like a
 DVR: unpausing replays from 2 s before the pause at x1, idle stretches squeezed, back to live and its speed once caught up), `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
 `H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `Q` quit.
-In the structure screen: `1` `2` `3` views, `[` `]` turns, `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
+In the structure screen: `1` `2` `3` views, `[` `]` turns, `/` or `Ctrl+F` search (`Enter` go, `n` `N` next, previous), `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
 
 ## Where the data comes from
 
@@ -250,7 +296,11 @@ discovery and msgpack-RPC against headless nvims in a throwaway socket
 directory; skipped without nvim), the folder layout (`tests/test_layout.c`: no
 crossing lines on random trees), the structure screen's geometry
 (`tests/test_slayout.c`: treemap and partition against d3's numbers, nesting
-on random trees, the floating nodes' simulation), the structure analysis
+on random trees, the floating nodes' simulation), its search
+(`tests/test_ssearch.c`: ranking, highlights, the names index against them,
+smart case, lines and columns with CRLF, UTF-8 and bytes that aren't, binary
+texts skipped, the cap, cancelled searches; with `AIG_TEST_DISPLAY` set to a
+private X display, a `--shot` of a search and its first result), the structure analysis
 (`tests/test_analysis.c`: line alignment, hunks, relocation; `tests/test_change.c`:
 a change read back from the transcript; `tests/test_metrics.c`; expected JSON
 for a hand-built structure fixture, also with `AIG_NO_DEFS=1`) and syntax

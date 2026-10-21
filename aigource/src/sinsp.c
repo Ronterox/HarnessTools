@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "ssearch.h"
 #include "sview_int.h"
 #include "util.h"
 
@@ -746,7 +747,7 @@ static void blame_legend(Doc *d, const StNode *n, float x, float *y, float w) {
 
 /* Today's code of a def (its first lines) or a file (its first MAXL_FILE),
  * a strip per line in the colour of the turn that wrote it, the blame card
- * under it. */
+ * under it. A search hit (d->mark) past those lines moves them to it. */
 static void code(Doc *d, int node, float x, float *y, float w) {
     const StMetrics *m = d->m;
     const StNode *n = &m->nodes[node];
@@ -758,19 +759,31 @@ static void code(Doc *d, int node, float x, float *y, float w) {
     if (!orig || !norig) { free(orig); return; }
     bool def = sv_is_def(n);
     int first = def ? n->a : 1, total = norig, cap = def ? MAXL_DEF : MAXL_FILE, shown = total > cap ? cap : total;
-    ui_code_init(&d->cv, f->name, fa->src, first, first + shown - 1);
+    int from = first;
+    if (d->mark >= first + shown && d->mark < first + total) { /* the hit in the middle */
+        from = d->mark - shown / 2;
+        if (from > first + total - shown) from = first + total - shown;
+        memmove(orig, orig + (from - first), sizeof *orig * (size_t)(norig - (from - first)));
+        norig -= from - first;
+    }
+    ui_code_init(&d->cv, f->name, fa->src, from, from + shown - 1);
     if (!d->cv.n) { free(orig); ui_code_free(&d->cv); return; }
-    d->orig = orig, d->norig = norig, d->line0 = first, d->code_node = node, d->cols = ui_code_cols(&d->cv);
+    d->orig = orig, d->norig = norig, d->line0 = from, d->code_node = node, d->cols = ui_code_cols(&d->cv);
     char t[128];
-    snprintf(t, sizeof t, "Code \xC2\xB7 lines %d\xE2\x80\x93%d \xC2\xB7 who wrote each line", first, first + total - 1);
+    if (from == first)
+        snprintf(t, sizeof t, "Code \xC2\xB7 lines %d\xE2\x80\x93%d \xC2\xB7 who wrote each line", first, first + total - 1);
+    else /* moved to a search hit */
+        snprintf(t, sizeof t, "Code \xC2\xB7 lines %d\xE2\x80\x93%d of %d\xE2\x80\x93%d \xC2\xB7 who wrote each line", from,
+                 from + d->cv.n - 1, first, first + total - 1);
     h3(d, x, y, t);
     IItem *it = add(d, IT_CODE);
     it->x = x, it->y = *y, it->w = w, it->h = fminf(CODE_MAX_H, (float)d->cv.n * CODE_ROW + 12);
     *y += it->h;
-    if (total > shown) {
-        snprintf(t, sizeof t, "\xE2\x80\xA6 %d more lines", total - shown);
-        more(d, x, y, w, t);
-    }
+    int above = from - first, below = first + total - from - d->cv.n;
+    if (above > 0 && below > 0) snprintf(t, sizeof t, "\xE2\x80\xA6 %d lines above, %d below", above, below);
+    else if (above > 0) snprintf(t, sizeof t, "\xE2\x80\xA6 %d lines above", above);
+    else if (below > 0) snprintf(t, sizeof t, "\xE2\x80\xA6 %d more lines", below);
+    if (above > 0 || below > 0) more(d, x, y, w, t);
     *y += 6;
     IItem *c = add(d, IT_CARD);
     c->x = x, c->y = *y, c->w = w, c->h = CARD_MIN;
@@ -1051,6 +1064,36 @@ static void build_turn(Doc *d, int t, float x, float w) {
     d->h = y;
 }
 
+static float gutter_w(const Doc *d);
+
+/* Cells (characters) of s before byte b */
+static int cells(const char *s, long b) {
+    int c = 0;
+    for (long i = 0; i < b && s[i]; i++) c += ((unsigned char)s[i] & 0xC0) != 0x80;
+    return c;
+}
+
+/* The marked line into view: the panel scrolled to the code, the code to
+ * the line (centred), sideways to its first match. */
+static void mark_jump(Insp *in) {
+    Doc *d = &in->doc;
+    int row = d->mark - d->line0;
+    in->mark.jump = false;
+    for (int i = 0; i < d->n && row >= 0 && row < d->cv.n; i++) {
+        const IItem *it = &d->it[i];
+        if (it->k != IT_CODE) continue;
+        in->scroll = fmaxf(0, it->y - 34); /* its heading too */
+        d->code_scroll = fmaxf(0, (float)row * CODE_ROW + 6 - (it->h - CODE_ROW) / 2);
+        const char *s = d->cv.d->lines[row].s;
+        size_t ml;
+        long at = *in->mark.q ? ss_match(s, strlen(s), 0, in->mark.q, in->mark.cs, &ml) : -1;
+        float cw = ui_code_cell(), room = it->w - 6 - gutter_w(d) - 10 - 12;
+        if (at >= 0 && (float)(cells(s, at) + cells(s + at, (long)ml)) * cw > room)
+            d->code_hscroll = fmaxf(0, (float)cells(s, at) * cw - room / 3);
+        return;
+    }
+}
+
 void si_show(Insp *in, const StMetrics *m, const Color *fill, int mode, int node, int turn, float w) {
     Doc *d = &in->doc;
     if (d->m == m && d->node == node && d->turn == turn && d->w == w && (d->mode == mode || turn >= 0)) return;
@@ -1067,9 +1110,17 @@ void si_show(Insp *in, const StMetrics *m, const Color *fill, int mode, int node
     in->card_line = -1;
     doc_reset(&in->card);
     in->card.w = -1;
+    d->mark = turn < 0 && node >= 0 && node == in->mark.node ? in->mark.line : 0;
     if (turn >= 0) build_turn(d, turn, 0, w);
     else if (node >= 0) build_node(d, fill, mode, node, 0, w);
     if (same) d->code_scroll = keep_code;
+    if (d->mark && in->mark.jump) mark_jump(in);
+}
+
+void si_mark(Insp *in, int node, int line, const char *q, bool cs) {
+    in->mark.node = node, in->mark.line = node >= 0 ? line : 0, in->mark.cs = cs, in->mark.jump = node >= 0;
+    snprintf(in->mark.q, sizeof in->mark.q, "%s", node >= 0 && q ? q : "");
+    in->doc.w = -1; /* laid out again: the code's window may move */
 }
 
 /* ---- drawing ---------------------------------------------------------------- */
@@ -1224,6 +1275,20 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
         float ry = b.y + 6 + (float)i * CODE_ROW - d->code_scroll;
         if (ry > b.y + b.height) break;
         if (i == hot) DrawRectangle((int)(b.x + 6), (int)ry, (int)(b.width - 6), (int)CODE_ROW, ui_fade(C_FG, 0.06f));
+        if (d->mark == d->line0 + i) { /* a search hit: the line lit, the query's matches marked */
+            DrawRectangle((int)(b.x + 6), (int)ry, (int)(b.width - 6), (int)CODE_ROW, ui_fade(C_HOT, 0.14f));
+            const char *ls = d->cv.d->lines[i].s;
+            size_t ml, len = strlen(ls);
+            float cw = ui_code_cell();
+            for (long at = 0; *in->mark.q && (at = ss_match(ls, len, (size_t)at, in->mark.q, in->mark.cs, &ml)) >= 0;
+                 at += (long)(ml ? ml : 1)) {
+                float mx = sx - d->code_hscroll + (float)cells(ls, at) * cw, mw = (float)cells(ls + at, (long)ml) * cw;
+                if (mx < sx) mw -= sx - mx, mx = sx; /* not over the gutter */
+                if (mw <= 0) continue;
+                DrawRectangleRec((Rectangle){mx, ry + 1, mw, CODE_ROW - 2}, ui_fade(C_HOT, 0.35f));
+                DrawRectangleRec((Rectangle){mx, ry + CODE_ROW - 2, mw, 1.5f}, C_HOT);
+            }
+        }
         int t = line_turn(d, i);
         float a = 1;
         if (on_c != INT_MIN) a = d->orig[i] == on_c ? 1 : 0.15f;

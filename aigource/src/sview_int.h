@@ -98,6 +98,7 @@ typedef struct {
     CodeView cv;
     int *orig, norig, line0, cols; /* code: each line's origin, first line number, longest line */
     int code_node;                 /* whose legend colours the strips */
+    int mark;                      /* code: the file line a search hit lights, 0 none */
     float code_scroll, code_hscroll;
     int card;                      /* blame card item, -1 */
     const StMetrics *m;
@@ -115,6 +116,9 @@ typedef struct {
     const char *tip;   /* this frame: the hovered item's title */
     Vector2 tip_at;
     bool nvim;         /* this frame: the mouse is on a code line an nvim in the root can open */
+    /* a search hit: node's code shows file line `line`, lit, with q's matches
+     * marked; jump: scroll to it at the next layout */
+    struct { int node, line; bool jump, cs; char q[256]; } mark;
 } Insp;
 
 typedef struct { int node, turn; } SiAct; /* a click: open a node, select a turn; -1 none */
@@ -123,6 +127,10 @@ typedef struct { int node, turn; } SiAct; /* a click: open a node, select a turn
  * current mode (lists' dots). Laid out only when one of them changed; the
  * scroll stays while it shows the same thing (a rebuild keeps it). */
 void si_show(Insp *in, const StMetrics *m, const Color *fill, int mode, int node, int turn, float w);
+/* A search hit: when node is shown, its code shows file line `line` lit and
+ * scrolled into view (once), q's matches in it marked (cs: case-sensitive);
+ * node -1 clears it. */
+void si_mark(Insp *in, int node, int line, const char *q, bool cs);
 void si_draw(Insp *in, Rectangle r, Vector2 mp);
 SiAct si_click(Insp *in, Rectangle r, Vector2 mp);
 /* The code line under mp (its number in the file; 0 none), its file node's id into *id. */

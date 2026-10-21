@@ -16,6 +16,8 @@ typedef struct {
     const char *file;      /* test hook: open this file's last change, as a click on it does */
     const char *structure; /* test hook: open the structure screen, VIEW[:MODE[:PATH]] */
     int structure_turn;    /* test hook: and select its turn N in time order (1-based, <0 from the end) */
+    const char *structure_search; /* test hook: the structure screen's search box showing this query's results */
+    int structure_pick;    /* test hook: then go to its result N (1-based), as Enter does */
 } VizOpts;
 
 int viz_run(const VizOpts *o, EvQueue *q);
