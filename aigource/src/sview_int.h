@@ -114,6 +114,7 @@ typedef struct {
     int card_line;     /* the line the card shows: the last strip hovered, -1 */
     const char *tip;   /* this frame: the hovered item's title */
     Vector2 tip_at;
+    bool nvim;         /* this frame: the mouse is on a code line an nvim in the root can open */
 } Insp;
 
 typedef struct { int node, turn; } SiAct; /* a click: open a node, select a turn; -1 none */
@@ -124,6 +125,8 @@ typedef struct { int node, turn; } SiAct; /* a click: open a node, select a turn
 void si_show(Insp *in, const StMetrics *m, const Color *fill, int mode, int node, int turn, float w);
 void si_draw(Insp *in, Rectangle r, Vector2 mp);
 SiAct si_click(Insp *in, Rectangle r, Vector2 mp);
+/* The code line under mp (its number in the file; 0 none), its file node's id into *id. */
+int si_code_at(const Insp *in, Rectangle r, Vector2 mp, const char **id);
 void si_wheel(Insp *in, Rectangle r, Vector2 mp, float wheel, bool shift);
 void si_free(Insp *in);
 

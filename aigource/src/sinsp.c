@@ -1204,7 +1204,7 @@ static void spark(Insp *in, const IItem *it, float x, float y, Vector2 mp) {
     }
 }
 
-static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle clip) {
+static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle clip, Vector2 mp) {
     Doc *d = &in->doc;
     Rectangle b = {x, y, it->w, it->h};
     DrawRectangleRounded(b, 5 / fminf(b.width, b.height), 6, C_BG);
@@ -1219,9 +1219,11 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
     float gw = gutter_w(d), sx = b.x + 6 + gw + 10;
     const StNode *n = &d->m->nodes[d->code_node];
     int on_c = in->strip_line >= 0 ? d->orig[in->strip_line] : INT_MIN;
+    int hot = in->nvim ? (int)((mp.y - b.y - 6 + d->code_scroll) / CODE_ROW) : -1; /* a click opens it in nvim */
     for (int i = (int)(d->code_scroll / CODE_ROW); i < d->cv.n; i++) {
         float ry = b.y + 6 + (float)i * CODE_ROW - d->code_scroll;
         if (ry > b.y + b.height) break;
+        if (i == hot) DrawRectangle((int)(b.x + 6), (int)ry, (int)(b.width - 6), (int)CODE_ROW, ui_fade(C_FG, 0.06f));
         int t = line_turn(d, i);
         float a = 1;
         if (on_c != INT_MIN) a = d->orig[i] == on_c ? 1 : 0.15f;
@@ -1234,6 +1236,14 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
                       ui_fade(t < 0 ? C_UNKNOWN : sv_blame_col(st_blame_slot(n, t)), a));
     }
     DrawRectangle((int)(b.x + 6 + gw), (int)b.y, 1, (int)b.height, C_LINE);
+    float hh = 18;
+    if (in->nvim && iy1 - iy0 >= 3 * hh) { /* in a corner of what shows, away from the hovered row */
+        static const char hint[] = "click: open in nvim";
+        float hw = sv_tw(F_SANS, hint, 11) + 12, hx = b.x + b.width - hw - 8, hy = iy1 - hh - 6;
+        if (mp.y > (iy0 + iy1) / 2) hy = iy0 + 6;
+        DrawRectangleRounded((Rectangle){hx, hy, hw, hh}, 0.4f, 6, ui_fade(C_RAISED, 0.95f));
+        sv_tx(F_SANS, hint, hx + 6, sv_mid(hy + hh / 2, 11), 11, C_DIM);
+    }
     EndScissorMode();
     BeginScissorMode((int)clip.x, (int)clip.y, (int)clip.width, (int)clip.height);
     if (max_scroll > 0) {
@@ -1320,7 +1330,7 @@ void si_draw(Insp *in, Rectangle r, Vector2 mp) {
         case IT_LINE: DrawRectangle((int)x, (int)y, (int)it->w, 1, it->c); break;
         case IT_NOTE: ui_nv_boxes(&d->nv[it->aux], (Rectangle){x, y, it->w, it->h}, &d->nvs[it->aux]); break;
         case IT_SPARK: spark(in, it, x, y, mp); break;
-        case IT_CODE: draw_code(in, it, x, y, (Rectangle){r.x + 1, r.y, r.width - 1, r.height}); break;
+        case IT_CODE: draw_code(in, it, x, y, (Rectangle){r.x + 1, r.y, r.width - 1, r.height}, mp); break;
         case IT_CARD: {
             float h = fmaxf(CARD_MIN, in->card.h);
             Color bc = C_LINE;
@@ -1356,6 +1366,17 @@ SiAct si_click(Insp *in, Rectangle r, Vector2 mp) {
         if (CheckCollisionPointRec(mp, q)) return (SiAct){it->turn >= 0 ? -1 : it->node, it->turn};
     }
     return (SiAct){-1, -1};
+}
+
+int si_code_at(const Insp *in, Rectangle r, Vector2 mp, const char **id) {
+    const Doc *d = &in->doc;
+    if (!d->cv.n || !d->m || !CheckCollisionPointRec(mp, r)) return 0;
+    Rectangle c = code_rect(in, r);
+    if (!CheckCollisionPointRec(mp, c) || mp.y < c.y + 6) return 0;
+    int i = (int)((mp.y - c.y - 6 + d->code_scroll) / CODE_ROW);
+    if (i < 0 || i >= d->cv.n) return 0;
+    *id = d->m->nodes[d->m->nodes[d->code_node].file].id;
+    return d->line0 + i;
 }
 
 void si_wheel(Insp *in, Rectangle r, Vector2 mp, float wheel, bool shift) {

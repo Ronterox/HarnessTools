@@ -55,7 +55,9 @@ first), a search's parameters and matches, any other tool's input and result.
 It's read back from the transcript on click, so nothing extra stays in memory;
 a step still running shows so and fills in when its result lands. Wheel or
 `PgUp`/`PgDn` scroll, `Ctrl+C` copies it, `✕`/`Esc`/click outside close it
-(one window at a time).
+(one window at a time). **Click a line of code** in it (a read, a created
+file, a diff's kept and added lines; a removed line goes to where it was on
+the new side) to open the file at that line in your Neovim (below).
 
 Code in it (reads, created files, diffs) is syntax highlighted with
 tree-sitter, using the grammars and highlight queries Neovim has installed
@@ -105,7 +107,7 @@ its time, duration, prompt, +/− and tags, click it to jump to its start. Under
 it the activity strip (amber = writes, blue = reads); on the bar, ticks are
 prompts in the actor's color, dark notches are idle stretches squeezed to 2
 minutes so multi-day histories stay usable. Jumping back rebuilds the scene from history and keeps
-the layout where it was. "go live →" (or `L`) returns to now.
+the layout where it was. "go live →" (or `L`) returns to now, playing (a pause ends).
 
 ## Structure view
 
@@ -146,7 +148,29 @@ segment, `Esc` or `Backspace` go up. Keys: `1` `2` `3` views, `[` `]` turns,
 `R` rebuild now, `S` stage, `Q` quit. The heat modes are picked in the bar
 (click). Wheel scrolls the inspector, over the inspector or over the stage
 (any view: read the hovered node's panel while still pointing at it); inside
-the inspector's code, the code, and `Shift`+wheel sideways.
+the inspector's code, the code, and `Shift`+wheel sideways. Click a line of
+the inspector's code to open it in your Neovim (below).
+
+## Open in Neovim
+
+Clicking a line of code (the stage's detail window, the structure
+inspector's code) opens that file at that line in the Neovim whose working
+directory is the repo root (`--root`; compared as real paths), and only
+that one: `:edit` in its current window, or in the tab's first window with
+a normal buffer when the current one is special (a terminal, a file tree,
+quickfix, `winfixbuf`); never a new tab or split. The cursor goes on the
+line, centred. Hovering such a line shows a pointing hand and the line lit
+when there is one, with "click: line N in nvim" in the detail window's
+header, "click: open in nvim" in a corner of the inspector's code. Neovim
+0.9+ listens by default on `$XDG_RUNTIME_DIR/nvim.<pid>.0`; aigource looks
+there for nvim processes whose `/proc/<pid>/cwd` is the root, newest first
+(the next when one doesn't answer), re-checking every 2 s, and talks to
+them over the socket with msgpack-RPC (`nvim_exec_lua`, the path passed as
+data: no character in it can run a command). With none, nothing opens and
+a hint says "no nvim open in <root>"; an error in Neovim (`E37: No write
+since last change`, …) shows as a hint too, and no reply within 3 s as
+"sent; nvim is busy". `AIG_NVIM_DIR` replaces the socket directory (the
+tests use it).
 
 ## Options
 
@@ -189,7 +213,8 @@ the inspector's code, the code, and `Shift`+wheel sideways.
 `--structure` and `--structure-turn` are for `--shot` (a `--shot` waits for the
 build): `--structure floating:risk:src/model.c/model_new --structure-turn -1`.
 
-Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause, `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
+Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause (live, like a
+DVR: unpausing replays from 2 s before the pause at x1, idle stretches squeezed, back to live and its speed once caught up), `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
 `H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `Q` quit.
 In the structure screen: `1` `2` `3` views, `[` `]` turns, `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
 
@@ -220,7 +245,9 @@ only: nothing records past filesystem changes, so replays don't have them.
 `make test` checks the parser and session discovery against the hand-built
 transcripts in `tests/fixtures` (regenerate with `tests/make_fixtures.py`), and
 unit-tests the timeline's time mapping (`tests/test_timeline.c`), its per-turn stats (`tests/test_turns.c`), change ring
-sizing (`tests/test_rings.c`), the folder layout (`tests/test_layout.c`: no
+sizing (`tests/test_rings.c`), opening code in Neovim (`tests/test_nvim.c`:
+discovery and msgpack-RPC against headless nvims in a throwaway socket
+directory; skipped without nvim), the folder layout (`tests/test_layout.c`: no
 crossing lines on random trees), the structure screen's geometry
 (`tests/test_slayout.c`: treemap and partition against d3's numbers, nesting
 on random trees, the floating nodes' simulation), the structure analysis
@@ -243,4 +270,4 @@ are long-lived allocations the app never frees, not errors.
 ## Roadmap
 
 - M3: tree-sitter dependency edges (using Neovim's installed grammars),
-  fading agent trails, same-turn grouping, click to open in Neovim.
+  fading agent trails, same-turn grouping.

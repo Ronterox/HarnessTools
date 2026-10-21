@@ -54,6 +54,9 @@ float ui_spacing(Font f, float size); /* the house letter spacing of a font: san
 void ui_fmt_count(char *buf, size_t n, long v);                          /* 12,345 */
 void ui_fmt_ago(char *buf, size_t n, double secs);                       /* 3m 05s ago */
 void ui_fmt_clock(char *buf, size_t n, double ts, const char *fmt);      /* strftime, local time */
+/* The mouse cursor: the pointing hand over what a click opens (code: in
+ * nvim), else the default. Once a frame; raylib is told only on a change. */
+void ui_hand(bool on);
 
 /* ---- rich text: **bold** and `code` (the agent's markdown), wrapped ---- */
 

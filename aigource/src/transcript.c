@@ -1339,6 +1339,20 @@ Detail *detail_new(const char *tool) {
 
 void detail_line(Detail *d, DlKind kind, const char *s) { dl_text(d, kind, s, 0); }
 
+int detail_file_line(const Detail *d, int i) {
+    const DetailLine *dl = &d->lines[i];
+    if (dl->no <= 0) return 0;
+    if (dl->kind != DL_DEL) return dl->no;
+    for (int k = i + 1; k < d->n && d->lines[k].no > 0; k++)
+        if (d->lines[k].kind != DL_DEL) return d->lines[k].no;
+    int k = i - 1;
+    for (; k >= 0 && d->lines[k].no > 0; k--)
+        if (d->lines[k].kind != DL_DEL) return d->lines[k].no;
+    int at = 1;
+    if (k >= 0 && d->lines[k].kind == DL_HUNK) sscanf(d->lines[k].s, "@@ -%*d,%*d +%d", &at);
+    return at > 0 ? at : 1;
+}
+
 void detail_free(Detail *d) {
     if (!d) return;
     for (int i = 0; i < d->n; i++) free(d->lines[i].s);

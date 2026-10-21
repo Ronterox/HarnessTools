@@ -6,7 +6,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
+#include "nvim.h"
 #include "slayout.h"
 #include "sview_int.h"
 #include "util.h"
@@ -1370,6 +1372,17 @@ bool sv_keys(SView *s) {
     return esc;
 }
 
+/* The inspector's code line under mp (0 none), its file's absolute path into
+ * path: a file still on disk (ids start with the root's name). */
+static int code_at(SView *s, Rectangle insp, Vector2 mp, char *path, size_t n) {
+    const char *id, *rel;
+    int line = si_code_at(&s->insp, insp, mp, &id);
+    if (line <= 0 || !(rel = strchr(id, '/'))) return 0;
+    snprintf(path, n, "%s%s", s->root, rel);
+    struct stat st;
+    return !stat(path, &st) && S_ISREG(st.st_mode) ? line : 0;
+}
+
 static bool handle_press(SView *s, const Geo *g, Vector2 mp) {
     for (int v = 0; v < 3; v++)
         if (CheckCollisionPointRec(mp, g->tab[v])) { s->view = v; return true; }
@@ -1388,6 +1401,12 @@ static bool handle_press(SView *s, const Geo *g, Vector2 mp) {
     if (t >= 0) { select_turn(s, t == s->turn ? -1 : t); return true; }
     if (CheckCollisionPointRec(mp, g->insp)) {
         if (s->insp.doc.m != s->m) return true; /* laid out for the build just swapped out */
+        char path[PATH_MAX];
+        int line = code_at(s, g->insp, mp, path, sizeof path);
+        if (line) { /* a line of code: in nvim */
+            nv_open(s->root, path, line);
+            return true;
+        }
         SiAct a = si_click(&s->insp, g->insp, mp);
         if (a.turn >= 0) select_turn(s, a.turn);
         else if (a.node >= 0) go(s, a.node);
@@ -1481,10 +1500,14 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     }
     DrawRectangleRec(g.insp, C_PANEL);
     DrawRectangle((int)g.insp.x, (int)g.insp.y, 1, (int)g.insp.height, C_LINE);
+    s->insp.nvim = false;
     if (ready) {
         si_show(&s->insp, m, s->fill, s->mode, s->shown, s->shown_turn, g.insp.width - 28);
+        char path[PATH_MAX];
+        s->insp.nvim = !s->pressed && code_at(s, g.insp, mp, path, sizeof path) && nv_find(s->root, NULL, 0);
         si_draw(&s->insp, g.insp, mp);
     }
+    ui_hand(s->insp.nvim);
     draw_strip(s, &g, mp);
     draw_hint(&g);
     /* tooltips: the node under the mouse at once; titles after a moment */

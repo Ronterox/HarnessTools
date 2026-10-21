@@ -51,7 +51,8 @@ static void usage(void) {
           "  --structure-turn N select its Nth turn in time order (negative: from the end)\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
           "      F fullscreen, Q quit, Esc close window, S structure screen. Click or\n"
-          "      drag the timeline to jump; click an actor to see its current turn.\n"
+          "      drag the timeline to jump; click an actor to see its current turn;\n"
+          "      click a line of code to open it in the nvim working in the root.\n"
           "      Structure screen: 1 2 3 views, [ ] turns, Esc/Backspace up, R rebuild.\n",
           stderr);
 }

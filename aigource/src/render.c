@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 
 #include "model.h"
+#include "nvim.h"
 #include "syntax.h"
 #include "transcript.h"
 #include "raylib.h"
@@ -30,6 +31,7 @@
 #define TB_H 36.0f         /* its turn histogram's tallest bar */
 #define LEGEND_W 230.0f
 #define BACKLOG_SECS 10.0  /* live: events older than this arrive as backlog, no effects */
+#define PAUSE_BACK 2.0     /* pausing while live steps back this far: events still on their way play after the pause */
 #define SEEK_THROTTLE 0.08 /* seconds between rebuilds while dragging the timeline */
 #define WIN_ROW 22.0f      /* turn window row height */
 #define DIM_OTHERS 0.15f   /* alpha of everything outside an open turn */
@@ -96,6 +98,8 @@ typedef struct {
     History h;
     double sim, speed;
     bool live, paused, auto_cam, legend;
+    bool dvr;          /* replaying at x1 what came during a pause made while live */
+    double dvr_speed;  /* the replay speed before it, back when it rejoins live */
     Camera2D cam;
     HoverKind hover;
     int hover_i;
@@ -157,6 +161,11 @@ typedef struct {
     int ntt, tbig;
     double tt_t;
     bool scrub_bar; /* the scrub began on a bar: at its turn's start until the mouse moves */
+    /* Code in the detail window opens in nvim: the row under the mouse can (an nvim
+     * works in the root), and where the latest hint showed up. */
+    bool hand;
+    Vector2 click_at, hint_at; /* the latest press; where the hint shows */
+    double hint_age;
 } Viz;
 
 static void apply_until(Viz *v, double t, bool effects) {
@@ -182,8 +191,9 @@ static void label_recent(Viz *v) {
 static void seek(Viz *v, double t) {
     double now = now_wall();
     if (v->h.n && t < v->h.ev[0].ts - 1) t = v->h.ev[0].ts - 1;
-    v->live = t >= now - 1;
+    v->live = t >= now - 1 && !v->paused; /* paused at the end: it plays on from there when unpaused */
     if (v->live) t = now;
+    if (v->live && v->dvr) v->speed = v->dvr_speed, v->dvr = false;
     if (t >= v->sim) {
         apply_until(v, t, false);
     } else {
@@ -199,6 +209,31 @@ static void seek(Viz *v, double t) {
     }
     v->sim = t;
     label_recent(v);
+}
+
+/* space. Pausing while live freezes there, like a DVR: unpausing replays
+ * from that point at x1 (what came meanwhile waits in the history; idle
+ * stretches squeezed as any replay's), and the replay rejoins live by itself,
+ * back at the speed it had. It freezes a little back (PAUSE_BACK, not past
+ * what's already on stage), so events the transcripts record late play
+ * after the pause too. A replay's pause keeps its speed. */
+static void toggle_pause(Viz *v) {
+    if (!v->paused && v->live) {
+        v->live = false;
+        v->dvr = true;
+        v->dvr_speed = v->speed;
+        v->speed = 1;
+        double back = v->sim - PAUSE_BACK;
+        if (v->h.applied) back = fmax(back, v->h.ev[v->h.applied - 1].ts); /* applied stays a prefix */
+        v->sim = fmin(v->sim, back);
+    }
+    v->paused = !v->paused;
+}
+
+/* L, "go live →": now, playing. */
+static void go_live(Viz *v) {
+    v->paused = false;
+    seek(v, now_wall());
 }
 
 /* A failed-call marker: flag its command's BASH event (in this batch or the
@@ -889,6 +924,23 @@ static void detail_copy(Viz *v) {
 
 #define DET_TOP 58.0f /* header height */
 
+/* The file line under the mouse in the detail window (0 none), its file's
+ * absolute path into path: a row of a file that is still there. */
+static int detail_code_at(Viz *v, Vector2 mouse, char *path, size_t n) {
+    if (!v->det || !v->det_path || !*v->det_path || !CheckCollisionPointRec(mouse, v->det_win)) return 0;
+    float top = v->det_win.y + DET_TOP;
+    if (mouse.y < top || mouse.x > v->det_win.x + v->det_win.width - 12) return 0; /* not the scrollbar's column */
+    int first = v->det_scroll > 0 ? (int)v->det_scroll : 0; /* the wheel may have taken it below 0 since the last draw */
+    int r = first + (int)floorf((mouse.y - top) / DET_ROW);
+    if (r < 0 || r >= first + v->det_vis || r >= v->det_nrows) return 0;
+    int no = detail_file_line(v->det, v->det_rows[r].line);
+    if (!no) return 0;
+    if (*v->det_path == '/') snprintf(path, n, "%s", v->det_path); /* read outside the repo */
+    else snprintf(path, n, "%s/%s", v->o->root, v->det_path);
+    struct stat st;
+    return !stat(path, &st) && S_ISREG(st.st_mode) ? no : 0;
+}
+
 static Color actor_color_by_id(Viz *v, const char *id) {
     int ai = id ? actor_index(v->m, id) : -1;
     return ai >= 0 ? v->m->actors[ai].color : TEXT;
@@ -939,10 +991,6 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     ui_text(fitbuf, x + 32, y + 11, 16, TEXT);
     ui_text(tm, x + w - 44 - tw, y + 13, 13, DIM);
     ui_text("\xE2\x9C\x95", v->det_close.x + 6, v->det_close.y + 3, 18, CheckCollisionPointRec(mouse, v->det_close) ? TEXT : DIM);
-    snprintf(line, sizeof line, "%s%s  \xC2\xB7  %d lines  \xC2\xB7  wheel/PgUp/PgDn scroll  \xC2\xB7  Ctrl+C copy  \xC2\xB7  Esc close",
-             d->tool, d->state == 1 ? "  \xC2\xB7  running\xE2\x80\xA6 (no result yet)" : "", d->n);
-    ui_fit(fitbuf, sizeof fitbuf, line, 13, w - 46);
-    ui_text(fitbuf, x + 32, y + 34, 13, d->state == 1 ? kind_color(EV_EDIT) : DIM);
     DrawLine((int)x + 10, (int)(y + DET_TOP - 4), (int)(x + w - 10), (int)(y + DET_TOP - 4), ui_fade(DIM, 0.3f));
 
     /* Body: gutter with line numbers when the content has them, wrapped rows. */
@@ -959,12 +1007,26 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     if (v->det_scroll > max_scroll) v->det_scroll = (float)max_scroll;
     if (v->det_scroll < 0) v->det_scroll = 0;
     int first = (int)v->det_scroll;
+    v->det_vis = vis;
+    /* A file's line under the mouse opens in nvim when one works in the root: the hand, its rows lit, a hint. */
+    char path[PATH_MAX], nv_note[48] = "";
+    int no = v->drag ? 0 : detail_code_at(v, mouse, path, sizeof path), hot_line = -1;
+    if (no && nv_find(v->o->root, NULL, 0)) {
+        hot_line = v->det_rows[first + (int)floorf((mouse.y - y - DET_TOP) / DET_ROW)].line;
+        snprintf(nv_note, sizeof nv_note, "  \xC2\xB7  click: line %d in nvim", no);
+        v->hand = true;
+    }
+    snprintf(line, sizeof line, "%s%s  \xC2\xB7  %d lines%s  \xC2\xB7  wheel/PgUp/PgDn scroll  \xC2\xB7  Ctrl+C copy  \xC2\xB7  Esc close",
+             d->tool, d->state == 1 ? "  \xC2\xB7  running\xE2\x80\xA6 (no result yet)" : "", d->n, nv_note);
+    ui_fit(fitbuf, sizeof fitbuf, line, 13, w - 46);
+    ui_text(fitbuf, x + 32, y + 34, 13, d->state == 1 ? kind_color(EV_EDIT) : DIM);
     float ry = y + DET_TOP;
     BeginScissorMode((int)x, (int)(y + DET_TOP - 2), (int)w, (int)(h - DET_TOP));
     for (int r = first; r < v->det_nrows && r < first + vis; r++, ry += DET_ROW) {
         DetRow *row = &v->det_rows[r];
         DetailLine *dl = &d->lines[row->line];
         bool cont = r > 0 && v->det_rows[r - 1].line == row->line; /* wrapped continuation */
+        if (row->line == hot_line) DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, ui_fade(TEXT, 0.07f));
         Color c = TEXT, mark_c = TEXT;
         switch (dl->kind) {
         case DL_ADD: c = mark_c = (Color){150, 240, 160, 255}; DrawRectangle((int)x + 6, (int)ry, (int)w - 12, (int)DET_ROW, (Color){40, 120, 60, 60}); break;
@@ -988,7 +1050,6 @@ static void draw_detail(Viz *v, Vector2 mouse) {
         float by = y + DET_TOP + (track_h - bh) * (v->det_scroll / (float)max_scroll);
         DrawRectangleRounded((Rectangle){x + w - 7, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
     }
-    v->det_vis = vis;
 }
 
 static void draw_turn_window(Viz *v, Vector2 mouse) {
@@ -1441,6 +1502,26 @@ static void draw_hover(Viz *v, Vector2 mouse) {
     for (int i = 0; i < n; i++) ui_text(l[i], x + 10, y + 7 + (i ? 22 + 18 * (float)(i - 1) : 0), i ? 14 : 16, c[i]);
 }
 
+/* How opening code in nvim went, for a few seconds where the click was:
+ * where it opened, or why it didn't. */
+static void draw_nvim_hint(Viz *v) {
+    char s[PATH_MAX + 64];
+    double age;
+    int kind;
+    if (!nv_hint(s, sizeof s, &age, &kind)) { v->hint_age = 1e9; return; }
+    if (age < v->hint_age) v->hint_at = v->click_at; /* a new one: where the click that asked was */
+    v->hint_age = age;
+    char fit[512];
+    ui_fit(fit, sizeof fit, s, 14, fminf(640, (float)GetScreenWidth() - 40));
+    float a = fminf(1, (float)(NV_HINT_SECS - age) / 0.5f); /* fades over its last half second */
+    float w = ui_text_w(fit, 14) + 20, h = 28;
+    float x = fminf(v->hint_at.x + 16, (float)GetScreenWidth() - w - 8), y = v->hint_at.y - h - 10;
+    if (y < 8) y = v->hint_at.y + 20;
+    DrawRectangleRounded((Rectangle){x, y, w, h}, 0.3f, 6, ui_fade(PANEL, a));
+    Color c = kind == NV_OK ? TEXT : kind == NV_BUSY ? DIM : (Color){255, 150, 150, 255};
+    ui_text(fit, x + 10, y + 6, 14, ui_fade(c, a));
+}
+
 /* ---- camera ------------------------------------------------------------- */
 
 static void auto_camera(Viz *v, float dt) {
@@ -1491,15 +1572,15 @@ again:
 static void handle_input(Viz *v, float dt) {
     (void)dt;
     Vector2 mouse = GetMousePosition();
-    if (IsKeyPressed(KEY_SPACE)) v->paused = !v->paused;
-    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD) || IsKeyPressed(KEY_UP)) v->speed *= 2;
+    if (IsKeyPressed(KEY_SPACE)) toggle_pause(v);
+    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD) || IsKeyPressed(KEY_UP)) v->speed *= 2, v->dvr = false;
     if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT) || IsKeyPressed(KEY_DOWN))
-        /* Stop at real time on the way down, then x0.5 and x0.25. */
-        v->speed = v->speed > 1 && v->speed / 2 < 1 ? 1 : fmax(0.25, v->speed / 2);
+        /* Stop at real time on the way down, then x0.5 and x0.25. A speed picked now stays. */
+        v->speed = v->speed > 1 && v->speed / 2 < 1 ? 1 : fmax(0.25, v->speed / 2), v->dvr = false;
     if (IsKeyPressed(KEY_C) && !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL)) v->auto_cam = true;
     if (IsKeyPressed(KEY_H)) v->legend = !v->legend;
     if (IsKeyPressed(KEY_F)) ToggleFullscreen();
-    if (IsKeyPressed(KEY_L)) seek(v, now_wall());
+    if (IsKeyPressed(KEY_L)) go_live(v);
     if (IsKeyPressed(KEY_HOME) && v->h.n) seek(v, v->h.ev[0].ts - 1);
     if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_RIGHT)) {
         /* Step 2% of the timeline, like a video's arrow keys. */
@@ -1540,7 +1621,10 @@ static void handle_input(Viz *v, float dt) {
             if (CheckCollisionPointRec(mouse, v->row_rect[k])) row = v->row_actor[k];
         v->press_outside = false;
         if (v->det && CheckCollisionPointRec(mouse, v->det_win)) {
+            char path[PATH_MAX];
+            int no = detail_code_at(v, mouse, path, sizeof path);
             if (CheckCollisionPointRec(mouse, v->det_close)) detail_close(v);
+            else if (no) nv_open(v->o->root, path, no); /* a file's line: in nvim */
             v->drag = 3;
         } else if (v->det && CheckCollisionPointRec(mouse, v->note_win)) {
             v->drag = 3; /* consumed by the comments panel */
@@ -1551,7 +1635,7 @@ static void handle_input(Viz *v, float dt) {
                 detail_open(v, &v->h.ev[v->steps[v->win_first + r]], true); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
         } else if (in_timeline(mouse) && mouse.x > tr.x1 - ui_text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
-            seek(v, now_wall()); /* "go live" label */
+            go_live(v); /* "go live" label */
         } else if (in_timeline(mouse)) {
             int k = turn_hit(v, mouse); /* a bar: its turn's start */
             v->drag = 2;
@@ -1611,6 +1695,7 @@ static void advance_clock(Viz *v, float dt) {
         if (v->sim >= now || v->h.applied == v->h.n) { /* caught up / replay exhausted */
             v->sim = now;
             v->live = true;
+            if (v->dvr) v->speed = v->dvr_speed, v->dvr = false;
         }
     }
     apply_until(v, v->sim, true);
@@ -1636,6 +1721,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         double end = timeline_end(&v);
         seek(&v, tl_from_v(&v.h, o->seek * tl_length(&v.h, end), end));
         v.paused = true;
+        v.live = false; /* at the end too: paused is never live; --speed stays */
         for (int i = 0; i < 240; i++) model_update(v.m, 1.0f / 60, v.sim);
         label_recent(&v); /* settling took their time */
     }
@@ -1644,6 +1730,8 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
+        v.hand = false;
+        if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v.click_at = GetMousePosition(); /* either screen: a hint shows there */
         if (IsKeyPressed(KEY_Q)) break;
         if (IsKeyPressed(KEY_S)) sv_toggle(structure(&v));
         bool esc_used = (v.sv && sv_keys(v.sv)); /* before drawing: Esc may close it this frame */
@@ -1655,6 +1743,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
             BeginDrawing();
             ClearBackground(BG);
             sv_frame(v.sv, mouse, dt);
+            draw_nvim_hint(&v);
             EndDrawing();
             if (sv_ready(v.sv) && frame < INT_MAX) frame++; /* a shot waits for the build */
             if (o->shot && frame >= o->frames) {
@@ -1709,6 +1798,8 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         draw_detail(&v, mouse);
         draw_note_preview(&v, mouse);
         draw_hover(&v, mouse);
+        draw_nvim_hint(&v);
+        ui_hand(v.hand);
         EndDrawing();
 
         if (frame < INT_MAX) frame++; /* also gates the test hooks to the first frame */
@@ -1719,6 +1810,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
             break;
         }
     }
+    nv_shutdown();
     detail_close(&v);
     free(v.det_rows);
     ui_nv_clear(&v.hov_nv);
