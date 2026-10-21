@@ -83,6 +83,11 @@ void change_free(Change *ch);
 void notes_free(Notes *ns);
 Detail *detail_new(const char *tool);
 void detail_line(Detail *d, DlKind kind, const char *s); /* s may hold newlines */
+/* The line of the file detail line i stands for, 0 none: the numbered lines
+ * of a read, a created file, a diff's kept and added lines. A removed line
+ * takes the new side's line where it was: the next kept or added one, else
+ * (at a hunk's end) the one before, else the hunk's start. */
+int detail_file_line(const Detail *d, int i);
 const char *tr_actor_name(const Transcript *t);
 
 #endif

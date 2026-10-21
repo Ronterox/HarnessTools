@@ -163,6 +163,13 @@ Color ui_fade(Color c, float a) {
     return c;
 }
 
+void ui_hand(bool on) {
+    static bool cur;
+    if (on == cur) return;
+    SetMouseCursor(on ? MOUSE_CURSOR_POINTING_HAND : MOUSE_CURSOR_DEFAULT);
+    cur = on;
+}
+
 static bool is_mono(Font f) { return f.texture.id && (f.texture.id == ui_mono.texture.id || f.texture.id == ui_mono_bold.texture.id); }
 
 float ui_spacing(Font f, float size) { return is_mono(f) ? 0 : size * (font_ok ? 0.02f : 0.1f); }

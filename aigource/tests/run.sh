@@ -248,6 +248,11 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -o "$OUT/test_change"
    src/cmdguess.c src/util.c build/yyjson.o -lm -lpthread
 "$OUT/test_change" || fail=1
 
+# The file line a detail window row opens in nvim (detail_file_line).
+cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -o "$OUT/test_detail" tests/test_detail.c src/transcript.c \
+   src/cmdguess.c src/util.c build/yyjson.o -lm -lpthread
+"$OUT/test_detail" || fail=1
+
 # Timeline mapping unit test.
 cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_timeline" tests/test_timeline.c src/timeline.c src/event.c src/util.c -lm -lpthread
 "$OUT/test_timeline" || fail=1
@@ -265,6 +270,15 @@ cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -o "$OUT/test_layout" tests/test_l
 cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_slayout" tests/test_slayout.c \
    src/slayout.c src/util.c -lm -lpthread
 "$OUT/test_slayout" || fail=1
+
+# Opening code in Neovim: discovery and msgpack-RPC against headless nvims
+# started in a throwaway socket dir (skipped without nvim).
+if command -v nvim > /dev/null; then
+    cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_nvim" tests/test_nvim.c src/nvim.c src/util.c -lm -lpthread
+    "$OUT/test_nvim" || fail=1
+else
+    echo "skip nvim (no nvim installed)"
+fi
 
 # Syntax highlighting with Neovim's grammars (skipped where none is installed).
 TS=vendor/tree-sitter-0.25.10/lib
