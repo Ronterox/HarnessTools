@@ -9,6 +9,8 @@
 #include <time.h>
 #include <sys/stat.h>
 
+#include "context.h"
+#include "cview.h"
 #include "model.h"
 #include "nvim.h"
 #include "syntax.h"
@@ -93,6 +95,7 @@ typedef struct {
     const VizOpts *o;
     Scene *m;
     SView *sv;    /* the structure screen (S), made when first opened */
+    CView *cv;    /* the context screen (X, or a turn window's "context"), made when first opened */
     Event *aside; /* until then: the analysis-only events the stage drops */
     size_t naside, capaside;
     History h;
@@ -113,7 +116,7 @@ typedef struct {
     size_t *steps, nsteps, capsteps;
     bool *hl, *hl_dir;
     int hl_cap, hl_count; /* files touched by the open turn */
-    Rectangle win, win_close;
+    Rectangle win, win_close, win_ctx;
     int win_first, win_vis;
     bool hover_from_win;
     Vector2 press_at;
@@ -301,6 +304,22 @@ static SView *structure(Viz *v) {
     v->aside = NULL;
     v->naside = v->capaside = 0;
     return v->sv;
+}
+
+/* The context screen on an actor: its transcript, from its events (Event.src)
+ * or found by its id; at the call of the stage's moment (the last one live). */
+static void context_open(Viz *v, const char *id) {
+    char *path = NULL, *err = NULL;
+    for (size_t i = v->h.n; i-- > 0 && !path;)
+        if (v->h.ev[i].src && !strcmp(v->h.ev[i].actor, id)) path = xstrdup(v->h.ev[i].src);
+    if (!path && !(path = ctx_find(v->o->root, id, &err))) {
+        fprintf(stderr, "aigource: context: %s\n", err ? err : id);
+        free(err);
+        return;
+    }
+    if (!v->cv) v->cv = cv_new(v->o->root);
+    cv_open(v->cv, path, CV_NONE, -1, v->live ? 0 : v->sim);
+    free(path);
 }
 
 /* ---- turn window: data ------------------------------------------------- */
@@ -632,7 +651,7 @@ static void draw_counters(Viz *v) {
 static void swatch(float x, float y, Color c) { DrawCircle((int)x + 6, (int)y + 8, 5, c); }
 
 #define LEGEND_Y 84
-#define LEGEND_H (22 + 6 * 20 + 26 + 2 * 20 + 20 + 40 + 20 + 20 + 26 + 5 * 17 + 10)
+#define LEGEND_H (22 + 6 * 20 + 26 + 2 * 20 + 20 + 40 + 20 + 20 + 26 + 6 * 17 + 10)
 
 /* Shown, and room for it above the panel. The turn window replaces it. */
 static bool legend_shown(Viz *v) {
@@ -713,8 +732,9 @@ static void draw_legend(Viz *v) {
         "+/- speed    L live    H legend",
         "drag pan    wheel zoom    C camera",
         "F fullscreen    Esc close    Q quit",
+        "S structure    X agent's context",
     };
-    for (int i = 0; i < 5; i++, cy += 17) ui_text(keys[i], cx, cy, 13, ui_fade(TEXT, 0.8f));
+    for (int i = 0; i < 6; i++, cy += 17) ui_text(keys[i], cx, cy, 13, ui_fade(TEXT, 0.8f));
 }
 
 static void draw_panel(Viz *v) {
@@ -1087,11 +1107,17 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     DrawRectangleRoundedLinesEx(v->win, 0.03f, 6, 1.5f, ui_fade(ac, 0.6f));
 
     char line[512], fitbuf[512];
-    snprintf(line, sizeof line, "%s  \xC2\xB7  turn %d", aname, v->turn_no);
-    ui_text(line, x + 14, y + 10, 17, ac);
     v->win_close = (Rectangle){x + w - 34, y + 6, 26, 26};
     bool hot_close = CheckCollisionPointRec(mouse, v->win_close);
     ui_text("\xE2\x9C\x95", v->win_close.x + 6, v->win_close.y + 3, 18, hot_close ? TEXT : DIM);
+    float cw = ui_text_w("context", 13) + 16; /* its context window (X) */
+    v->win_ctx = (Rectangle){v->win_close.x - 8 - cw, y + 8, cw, 22};
+    snprintf(line, sizeof line, "%s  \xC2\xB7  turn %d", aname, v->turn_no);
+    ui_fit(fitbuf, sizeof fitbuf, line, 17, v->win_ctx.x - 10 - (x + 14));
+    ui_text(fitbuf, x + 14, y + 10, 17, ac);
+    bool hot_ctx = CheckCollisionPointRec(mouse, v->win_ctx);
+    DrawRectangleRoundedLinesEx(v->win_ctx, 0.35f, 6, 1, ui_fade(ac, hot_ctx ? 0.9f : 0.5f));
+    ui_text("context", v->win_ctx.x + 8, v->win_ctx.y + 4, 13, hot_ctx ? TEXT : DIM);
     snprintf(line, sizeof line, "%s%s", prompt, cut_mark(prompt));
     ui_fit(fitbuf, sizeof fitbuf, line, 15, w - 28);
     ui_text(fitbuf, x + 14, y + 36, 15, TEXT);
@@ -1631,6 +1657,7 @@ static void handle_input(Viz *v, float dt) {
         } else if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
             int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
             if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
+            else if (CheckCollisionPointRec(mouse, v->win_ctx)) context_open(v, v->turn_actor);
             else if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps)
                 detail_open(v, &v->h.ev[v->steps[v->win_first + r]], true); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
@@ -1728,15 +1755,41 @@ int viz_run(const VizOpts *o, EvQueue *q) {
 
     if (o->structure || o->structure_turn) sv_hooks(structure(&v), o->structure, o->structure_turn);
     if (o->structure_search) sv_search(structure(&v), o->structure_search, o->structure_pick);
+    if (o->context) v.cv = cv_new(o->root), cv_open(v.cv, o->context, o->context_call, o->context_sel, 0);
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
         v.hand = false;
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v.click_at = GetMousePosition(); /* either screen: a hint shows there */
-        bool typing = sv_typing(v.sv); /* the structure screen's search box takes every key */
+        bool typing = sv_typing(v.sv) || cv_typing(v.cv); /* a screen's search or filter box takes every key */
         if (IsKeyPressed(KEY_Q) && !typing) break;
-        if (IsKeyPressed(KEY_S) && !typing) sv_toggle(structure(&v));
-        bool esc_used = (v.sv && sv_keys(v.sv)); /* before drawing: Esc may close it this frame */
+        if (IsKeyPressed(KEY_S) && !typing && !cv_is_open(v.cv)) sv_toggle(structure(&v));
+        if (IsKeyPressed(KEY_X) && !typing && !sv_is_open(v.sv)) { /* the hovered agent's context, or the turn window's */
+            if (cv_is_open(v.cv)) cv_close(v.cv);
+            else if (v.hover == HOVER_ACTOR && !v.hover_from_win) context_open(&v, v.m->actors[v.hover_i].id);
+            else if (v.turn_open) context_open(&v, v.turn_actor);
+        }
+        bool esc_used = (v.sv && sv_keys(v.sv)) || (v.cv && cv_keys(v.cv)); /* before drawing: Esc may close one */
+        if (cv_is_open(v.cv)) { /* the context screen: the stage plays on behind it, undrawn */
+            ingest_new_events(&v, q);
+            advance_clock(&v, dt);
+            model_update(v.m, v.paused ? 0 : dt, v.sim);
+            Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
+            BeginDrawing();
+            ClearBackground(BG);
+            cv_clock(v.cv, v.sim); /* followed until the view is moved on its own */
+            cv_frame(v.cv, mouse, dt);
+            draw_nvim_hint(&v);
+            EndDrawing();
+            if (cv_ready(v.cv) && frame < INT_MAX) frame++; /* a shot waits for the load */
+            if (o->shot && frame >= o->frames) {
+                Image img = LoadImageFromScreen();
+                ExportImage(img, o->shot);
+                UnloadImage(img);
+                break;
+            }
+            continue;
+        }
         if (sv_is_open(v.sv)) { /* the structure screen: the stage plays on behind it, undrawn */
             ingest_new_events(&v, q);
             advance_clock(&v, dt);
@@ -1821,6 +1874,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     free(v.hov_id);
     free(v.press_file);
     sv_free(v.sv);
+    cv_free(v.cv);
     ts_free(v.ts);
     for (size_t i = 0; i < v.naside; i++) ev_free(&v.aside[i]);
     free(v.aside);

@@ -192,10 +192,52 @@ neither matched nor holds a match is dimmed, as a selected turn dims what it
 didn't touch (the outline fades with it); with both, a node shows only when
 both would show it.
 
+## Context view
+
+`X` on an agent (the one under the mouse, else the turn window's; or the
+**context** button in a turn window) opens the **context screen**: what that
+agent (a session's main agent or a subagent) had in its context window at one
+of its API calls, rebuilt exactly from the request records in its transcript
+(`docs/CONTEXT.md` has the rules). The agent sits in the middle, its model and
+how full its window is on a ring; every item of its context is a window around
+it, newer ones nearer (distance follows age, no two overlap): the system
+prompt, tool definitions, injected text (CLAUDE.md, memory, hook output,
+system reminders), prompts, its own text, thinking and tool calls, and the
+results, each with what is in the context: a Read's lines as code with their
+numbers (click one: that file at that line in Neovim), a command's output, an
+Edit as a diff, prompts and text as light markdown. Its title bar says the
+kind and source and the tokens; under it, its share of the context, the call
+it entered and its age, its cache state at this call (read, written, new),
+what holding it has cost so far, and whether its file went stale (`stale ·
+known` when the change is the agent's own, `⚠` when not). Older items are
+title-bar chips (a click opens one); the last calls' items and the call's own
+response (dashed) start open, ten at most. Drag a window by its title (it
+stays there), resize it from its corner, scroll its body with the wheel; drag
+the background to pan, wheel on it to zoom.
+
+The strip at the bottom has a bar per call (height: context size; red: a
+compaction; hollow: no response recorded): click or drag to scrub, `←` `→`
+step, `space` plays (new items fly out of the agent, a compaction folds the
+windows into its summary). The right panel shows what the context is made of
+by kind, and the agent's actions (a filter box, `/`): pick one to go to the
+call that made it, with dashed links from the agent to the items likely
+behind it ("likely · read of a.c", "the prompt of this turn", …), listed
+under **why it decided**. The bar's picker switches to another agent of the
+session (at the call of the same moment, or its last when at the end).
+
+It follows the stage's clock (the last call at or before it; live: the
+newest), "following the stage" in the bar, until you scrub, step, play or pick
+an action ("detached"); `L` or a click on it follows again. While it is open
+the agent's transcript is watched: once it stops growing for 3 s (15 s at
+most) it is read again in the background, and the windows, sizes, what you
+opened or folded, scroll, the selected action, the filter and the view stay
+as they were, new items flying in. `Esc` clears the filter's focus, then the
+selection, then the filter, then goes back to the stage (as does `X`).
+
 ## Open in Neovim
 
 Clicking a line of code (the stage's detail window, the structure
-inspector's code) opens that file at that line in the Neovim whose working
+inspector's code, a Read window of the context screen) opens that file at that line in the Neovim whose working
 directory is the repo root (`--root`; compared as real paths), and only
 that one: `:edit` in its current window, or in the tab's first window with
 a normal buffer when the current one is special (a terminal, a file tree,
@@ -236,6 +278,15 @@ tests use it).
                    build times go to stderr
 --rebuild N        with --structure-dump: build N more times on the same
                    analysis (its caches warm), as live rebuilds do
+--context-dump AGENT
+                   print what one agent had in its context window at each API
+                   call as JSON (the context view's data, shaped like the
+                   draft's data.json) and exit; AGENT is a transcript path, or
+                   a session or subagent id (or a unique prefix) of the root's
+                   sessions; counts, load time and memory go to stderr
+--context-at CALLS with --context-dump: also each item's tokens, cache state and
+                   carried cost at these calls (comma-separated, negative from
+                   the end, or all)
 --shot FILE        render, save a PNG after --frames frames, exit
 --frames N         frames before --shot (default 600)
 --seek F           start paused at fraction F (0..1) of the timeline
@@ -252,17 +303,31 @@ tests use it).
 --structure-search QUERY
                    open the structure screen's search box on QUERY
 --structure-pick N with --structure-search: go to its Nth result, as Enter
+--context AGENT[:CALL[:ACTION]]
+                   open the context screen on an agent (AGENT as --context-dump
+                   takes it) at its call CALL (negative: from the end; the
+                   last by default), with the action item ACTION (as
+                   --context-dump numbers items) selected; either way it
+                   doesn't follow the stage's clock (L does)
 ```
 
 `--structure`, `--structure-turn`, `--structure-search` and `--structure-pick`
 are for `--shot` (a `--shot` waits for the build, and for the search's results):
 `--structure floating:risk:src/model.c/model_new --structure-turn -1`,
 `--structure icicle --structure-search an_build --structure-pick 15`.
+`--context` too (a `--shot` waits for the load, or its error): `--context
+ee491c71:-1`, `--context ~/.claude/projects/x/s.jsonl:12:340`.
+`AIG_CTX_BENCH=N` scrubs the context screen through the last N calls, a call a
+frame, then fits everything in view, and prints the layout and frame times to
+stderr; `AIG_DEBUG=1` prints each live reload's time and what it kept.
 
 Keys: `Esc` close the top window (step, then turn; quits when none is open), `space` pause (live, like a
 DVR: unpausing replays from 2 s before the pause at x1, idle stretches squeezed, back to live and its speed once caught up), `←`/`→` seek 2%, `Home` start, `+`/`-` speed (down to x0.25), `L` live,
-`H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `Q` quit.
+`H` legend, `C` auto camera (after mouse pan/zoom), `F` fullscreen, `S` structure screen, `X` the context screen of
+the agent under the mouse (or the turn window's), `Q` quit.
 In the structure screen: `1` `2` `3` views, `[` `]` turns, `/` or `Ctrl+F` search (`Enter` go, `n` `N` next, previous), `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
+In the context screen: `←` `→` calls, `space` play, `L` follow the stage, `f` fit the open windows, `a` fit all, `/` or
+`Ctrl+F` filter the actions (`Enter` leaves the box), `Esc` clear (filter box, selection, filter) then back, `X` back.
 
 ## Where the data comes from
 
@@ -310,7 +375,19 @@ two parity checks: `tests/metrics_parity.js` (`--metrics` against the page's own
 JavaScript; part of `make test`, needs node and the d3 that
 `scripts/fetch-deps.sh` fetches, skipped without them, a failure with
 `REQUIRE_PARITY=1`) and `tests/structure_parity.py` (`--structure-dump` against
-`build_data.py` on this repo's transcripts; run by hand).
+`build_data.py` on this repo's transcripts; run by hand). The context engine
+(`docs/CONTEXT.md`) has the same: expected JSON for a hand-built project
+(`tests/fixtures/context`, from `tests/make_context_fixture.py`), plain and
+leak-checked, that `draft/context/build_ctx.py` must agree on too, unit tests
+for sha256, Python's `json.dumps` and the API (`tests/test_context.c`), and
+`tests/context_parity.py` (`--context-dump` against `build_ctx.py` on every
+agent of this repo's sessions; run by hand). The context screen's rules
+(`tests/test_clay.c`, plain and leak-checked): which windows start open and the
+cap, ranks and target distances, the calls strip's hit test, the header's words
+on the fixture, a reload keeping the user's choices by item key (the fixture
+transcript appended), and the window layout (settled apart, pinned windows
+kept, newest nearest); with `AIG_TEST_DISPLAY`, a `--shot` of the fixture's main
+agent with an action selected (plain and asan).
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 `make asan` builds `build/asan/aigource` with AddressSanitizer and UBSan (its
 own objects, the normal build is untouched); run it with the same flags, e.g.

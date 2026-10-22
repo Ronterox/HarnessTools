@@ -58,7 +58,7 @@ static void load_font(void) {
 static bool load_mono_face(Font *f, const char *const *paths) {
     static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2030, 0x203A},
                                     {0x2190, 0x21FF}, {0x2212, 0x2212}, {0x2260, 0x2265}, {0x2500, 0x25FF},
-                                    {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
+                                    {0x26A0, 0x26A0}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
     int cps[1220], n = 0;
     for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
         for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
