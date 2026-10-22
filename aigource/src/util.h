@@ -9,6 +9,15 @@ void *xcalloc(size_t n, size_t sz);
 void *xrealloc(void *p, size_t n);
 char *xstrdup(const char *s);
 char *xstrndup(const char *s, size_t n);
+/* Room for one more element at index n of a growable array p (capacity cap). */
+#define GROW(p, n, cap)                                                   \
+    do {                                                                  \
+        if ((n) >= (cap)) {                                               \
+            (cap) = (cap) ? (cap) * 2 : 16;                               \
+            if ((cap) <= (n)) (cap) = (n) + 1;                            \
+            (p) = xrealloc((p), (size_t)(cap) * sizeof *(p));             \
+        }                                                                 \
+    } while (0)
 
 double parse_iso8601(const char *s); /* epoch seconds, 0 when unparseable */
 double now_wall(void);

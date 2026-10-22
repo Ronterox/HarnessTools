@@ -190,6 +190,112 @@ else
     echo "skip search shot (set AIG_TEST_DISPLAY to a private X display)"
 fi
 
+# The context engine (context.c) on a hand-built project (tests/make_context_fixture.py):
+# every agent's data as JSON with each call's derived values, leak-checked under
+# asan; the draft (build_ctx.py, the oracle) agrees on it (tests/context_parity.py);
+# sha256, json.dumps as Python writes it, and the API (plain and asan). HOME and
+# CLAUDE_CONFIG_DIR are fixed: their path pieces are stop words for links.
+ctx_proj=tests/fixtures/context/proj
+pretty() {
+    python3 -c 'import json, re, sys
+print(re.sub(r"\[\s+([^][{}]*?)\s+\]", lambda m: "[" + " ".join(m.group(1).split()) + "]",
+             json.dumps(json.load(sys.stdin), indent=1, ensure_ascii=False)))'
+}
+context() { # binary
+    for f in s1.jsonl s1/subagents/agent-sub1.jsonl s1/subagents/agent-sub2.jsonl s2.jsonl s3.jsonl e1.jsonl; do
+        env HOME=/home/test CLAUDE_CONFIG_DIR=/home/test/.claude "$1" --root /REPO --context-dump "$ctx_proj/$f" \
+            --context-at all 2>/dev/null | pretty || return 1
+    done
+}
+check context context $BIN
+if [ -x build/asan/aigource ]; then
+    if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 context build/asan/aigource > "$OUT/context-asan.ndjson" &&
+       diff -q tests/expected/context.ndjson "$OUT/context-asan.ndjson" > /dev/null; then echo "ok   context (asan, leaks checked)"
+    else echo "FAIL context (asan)"; fail=1; fi
+else
+    echo "skip context (asan): no build/asan (make asan)"
+fi
+if [ -f draft/context/build_ctx.py ]; then
+    if env HOME=/home/test CLAUDE_CONFIG_DIR=/home/test/.claude python3 tests/context_parity.py --project "$ctx_proj" \
+       --root /REPO > "$OUT/context-oracle.txt" 2>&1; then echo "ok   context oracle (build_ctx.py agrees on the fixture)"
+    else cat "$OUT/context-oracle.txt"; echo "FAIL context oracle"; fail=1; fi
+else
+    echo "skip context oracle (no draft/context/build_ctx.py)"
+fi
+mkdir -p "$cfg/ctx/projects"
+ln -s "$PWD/$ctx_proj" "$cfg/ctx/projects/-REPO"
+cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -o "$OUT/test_context" tests/test_context.c src/context.c \
+   src/pyjson.c src/util.c build/yyjson.o -lm -lpthread
+HOME=/home/test "$OUT/test_context" "$ctx_proj" "$cfg/ctx" || fail=1
+if [ -f build/asan/yyjson.o ]; then
+    cc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src \
+       -o "$OUT/test_context_asan" tests/test_context.c src/context.c src/pyjson.c src/util.c build/asan/yyjson.o -lm -lpthread
+    if HOME=/home/test ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_context_asan" "$ctx_proj" \
+       "$cfg/ctx" > "$OUT/test_context_asan.txt" 2>&1
+    then echo "ok   context unit (asan, leaks checked)"
+    else cat "$OUT/test_context_asan.txt"; echo "FAIL context unit (asan)"; fail=1; fi
+else
+    echo "skip context unit (asan): no build/asan (make asan)"
+fi
+
+# The context screen's rules that draw nothing (clay.c: the open/chip rule, ranks,
+# the strip's hit test, the header's words, on the fixture) and its window layout
+# (lay_wins: settled apart, pinned kept, newest nearest). Under ASan/UBSan too.
+cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -o "$OUT/test_clay" tests/test_clay.c src/clay.c src/slayout.c \
+   src/context.c src/pyjson.c src/util.c build/yyjson.o -lm -lpthread
+mkdir -p "$cfg/clay" "$cfg/clay-asan"
+HOME=/home/test TZ=UTC "$OUT/test_clay" "$ctx_proj" "$cfg/clay" || fail=1
+if [ -f build/asan/yyjson.o ]; then
+    cc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src \
+       -o "$OUT/test_clay_asan" tests/test_clay.c src/clay.c src/slayout.c src/context.c src/pyjson.c src/util.c \
+       build/asan/yyjson.o -lm -lpthread
+    if HOME=/home/test TZ=UTC ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 "$OUT/test_clay_asan" "$ctx_proj" \
+       "$cfg/clay-asan" > "$OUT/test_clay_asan.txt" 2>&1
+    then echo "ok   clay (asan, leaks checked)"
+    else cat "$OUT/test_clay_asan.txt"; echo "FAIL clay (asan)"; fail=1; fi
+else
+    echo "skip clay (asan): no build/asan (make asan)"
+fi
+
+# The context screen end to end: a --shot of the fixture's main agent with an
+# action selected (its call, its likely causes linked), as the search shot: only
+# on AIG_TEST_DISPLAY, software GL, nvim sockets in an empty directory. The
+# asan build too when it's there (leaks not checked: the GL driver's own).
+if [ -n "${AIG_TEST_DISPLAY:-}" ]; then
+    mkdir -p "$cfg/nvim"
+    for bin in $BIN build/asan/aigource; do
+        [ -x "$bin" ] || continue
+        name=context-shot; [ "$bin" = "$BIN" ] || name=context-shot-asan
+        rm -f "$OUT/$name.png"
+        if HOME=/home/test CLAUDE_CONFIG_DIR=/home/test/.claude DISPLAY=$AIG_TEST_DISPLAY LIBGL_ALWAYS_SOFTWARE=1 \
+           GALLIUM_DRIVER=llvmpipe AIG_NVIM_DIR="$cfg/nvim" ASAN_OPTIONS=detect_leaks=0 UBSAN_OPTIONS=halt_on_error=1 \
+           timeout 120 "$bin" --root /REPO "$ctx_proj/s1.jsonl" --seek 1 --frames 5 --mouse 5,5 \
+           --context "$ctx_proj/s1.jsonl:1:12" --shot "$OUT/$name.png" > "$OUT/$name.txt" 2>&1 && [ -s "$OUT/$name.png" ]
+        then echo "ok   $name ($OUT/$name.png)"
+        else cat "$OUT/$name.txt"; echo "FAIL $name"; fail=1; fi
+    done
+else
+    echo "skip context shot (set AIG_TEST_DISPLAY to a private X display)"
+fi
+
+# ctx_reload resumes from the bytes appended since the last load: at every
+# line, inside every line and at random cuts of each fixture transcript, each
+# reload equals a fresh load (JSON with every call's derived values, item
+# keys); plain and under ASan/UBSan with leaks checked.
+cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -o "$OUT/ctx_reload" tests/ctx_reload.c src/context.c \
+   src/pyjson.c src/util.c build/yyjson.o -lm -lpthread
+python3 tests/context_reload.py --fixture "$OUT/ctx_reload" || fail=1
+if [ -f build/asan/yyjson.o ]; then
+    cc -std=c11 -O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src \
+       -o "$OUT/ctx_reload_asan" tests/ctx_reload.c src/context.c src/pyjson.c src/util.c build/asan/yyjson.o -lm -lpthread
+    if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=halt_on_error=1 python3 tests/context_reload.py --fixture \
+       "$OUT/ctx_reload_asan" > "$OUT/ctx_reload_asan.txt" 2>&1
+    then echo "ok   context reload (asan, leaks checked)"
+    else cat "$OUT/ctx_reload_asan.txt"; echo "FAIL context reload (asan)"; fail=1; fi
+else
+    echo "skip context reload (asan): no build/asan (make asan)"
+fi
+
 # Line diff, hunks, relocation.
 cc -std=c11 -D_GNU_SOURCE -Isrc -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_analysis" tests/test_analysis.c \
    src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o -ldl -lm -lpthread

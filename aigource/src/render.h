@@ -18,6 +18,9 @@ typedef struct {
     int structure_turn;    /* test hook: and select its turn N in time order (1-based, <0 from the end) */
     const char *structure_search; /* test hook: the structure screen's search box showing this query's results */
     int structure_pick;    /* test hook: then go to its result N (1-based), as Enter does */
+    const char *context;   /* test hook: open the context screen on this transcript */
+    int context_call;      /* test hook: at this call (negative from the end; main gives -1, the last, when none) */
+    int context_sel;       /* test hook: with this action item selected (-1 none) */
 } VizOpts;
 
 int viz_run(const VizOpts *o, EvQueue *q);

@@ -1,0 +1,3 @@
+{"type":"api-request-blob","hash":"f3971274662ed100d70384a7a770d7f3bae515f5dd2446ed12ec0c2b3464c91d","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>\nA note only s2 recorded.\n</system-reminder>"}]}}
+{"type":"assistant","timestamp":"2026-10-14T10:00:47.700Z","cwd":"/REPO","message":{"id":"x1","role":"assistant","content":[{"type":"tool_use","id":"xt1","name":"Bash","input":{"command":"sed -i s/1/2/ src/b.py"}}]}}
+{"type":"user","timestamp":"2026-10-14T10:00:47.700Z","cwd":"/REPO","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"xt1","content":""}]}}

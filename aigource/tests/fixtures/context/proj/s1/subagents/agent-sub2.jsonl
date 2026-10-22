@@ -1,0 +1,4 @@
+{"type":"api-request-shape","shapeHash":"shx","timestamp":"2026-10-14T10:00:41.000Z","shape":{"system":[{"type":"text","text":"You are subagent"}],"tools":[]}}
+{"type":"user","timestamp":"2026-10-14T10:00:41.000Z","cwd":"/REPO","message":{"role":"user","content":"Count the words in a.txt"}}
+{"type":"api-request","id":"x1","timestamp":"2026-10-14T10:00:41.000Z","shapeHash":"shx","keep":0,"params":{"model":"claude-opus-5-5"},"tail":["581016750b0000a33faf5e4821c899cf1f772bcdfb60a82d5f8bc64e430572b3"]}
+{"type":"assistant","timestamp":"2026-10-14T10:00:41.300Z","cwd":"/REPO","requestRef":"x1","requestId":"rx1","message":{"model":"claude-opus-5-5","id":"xm1","role":"assistant","content":[{"type":"text","text":"Five."}],"usage":{"input_tokens":5,"cache_read_input_tokens":2,"cache_creation_input_tokens":3,"cache_creation":{"ephemeral_5m_input_tokens":3,"ephemeral_1h_input_tokens":0},"output_tokens":1}}}

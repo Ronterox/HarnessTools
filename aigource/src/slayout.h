@@ -53,4 +53,29 @@ void lay_sim_tick(LSim *s, double t, bool drift);
 void lay_sim_clamp(LSim *s, float w, float h, const bool *below);
 void lay_sim_free(LSim *s);
 
+/* Floating windows (the context screen, context.tpl.html: simulate()):
+ * rectangles around a hub fixed at 0,0, each pulled toward its target
+ * distance (d3's forceRadial, strength 0.12) and pushed off the others' rects
+ * (the draft's rectCollide, LAY_WIN_PAD apart), then settled: of two that
+ * still overlap, the later ranked (older) one moves outward, until none do.
+ * Pinned ones stay. A fresh one first takes a free spot near its target
+ * distance, at an angle from its id, so the forces only fine-tune. */
+#define LAY_WIN_PAD 10
+typedef struct {
+    float x, y, w, h; /* centre, size */
+    float tr;         /* target distance from the hub */
+    int rank;         /* 0 first: the nearest, the one that stays when two overlap */
+    unsigned id;      /* a fresh one's angle */
+    bool pinned;      /* stays at x, y */
+    bool fresh;       /* not placed yet (cleared once it is) */
+    float vx, vy;     /* scratch */
+} LWin;
+
+/* ticks of the forces, then up to passes settling passes, on n windows
+ * around a hub x hub square. */
+void lay_wins(LWin *w, int n, float hub, int ticks, int passes);
+/* Pairs (the hub included) nearer than LAY_WIN_PAD on both axes: 0 once settled. */
+int lay_wins_overlaps(const LWin *w, int n, float hub);
+float lay_win_angle(unsigned id); /* a fresh window's angle, radians */
+
 #endif

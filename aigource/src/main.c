@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include "analysis.h"
+#include "context.h"
 #include "event.h"
 #include "ingest.h"
 #include "metrics.h"
@@ -36,6 +37,15 @@ static void usage(void) {
           "  --rebuild N        with --structure-dump: build N more times on the same\n"
           "                     analysis (its caches warm), adding any new events first,\n"
           "                     as live rebuilds do; prints the last, each time to stderr\n"
+          "  --context-dump AGENT\n"
+          "                     print what one agent had in its context window at each\n"
+          "                     API call as JSON (the context view's data) and exit;\n"
+          "                     AGENT: a transcript path, or a session or subagent id\n"
+          "                     (or a unique prefix) of the root's sessions; counts,\n"
+          "                     time and memory go to stderr\n"
+          "  --context-at CALLS with --context-dump: also each item's tokens, cache state\n"
+          "                     and carried cost at these calls (comma-separated,\n"
+          "                     negative from the end, or all)\n"
           "  --shot FILE        render, save a PNG after --frames frames, exit\n"
           "  --frames N         frames before --shot (default 600)\n"
           "  --seek F           start paused at fraction F (0..1) of the timeline\n"
@@ -52,12 +62,21 @@ static void usage(void) {
           "  --structure-search QUERY\n"
           "                     open the structure screen's search box on QUERY\n"
           "  --structure-pick N with --structure-search: go to its Nth result, as Enter\n"
+          "  --context AGENT[:CALL[:ACTION]]\n"
+          "                     open the context screen on an agent (AGENT as\n"
+          "                     --context-dump takes it) at its call CALL (negative:\n"
+          "                     from the end; the last by default), with the action\n"
+          "                     item ACTION (as --context-dump numbers items) selected;\n"
+          "                     either way it doesn't follow the stage's clock (L does)\n"
           "Keys: space pause, arrows seek, +/- speed, L live, H legend, C camera,\n"
-          "      F fullscreen, Q quit, Esc close window, S structure screen. Click or\n"
+          "      F fullscreen, Q quit, Esc close window, S structure screen, X context\n"
+          "      screen of the hovered agent (or the turn window's). Click or\n"
           "      drag the timeline to jump; click an actor to see its current turn;\n"
           "      click a line of code to open it in the nvim working in the root.\n"
           "      Structure screen: 1 2 3 views, [ ] turns, Esc/Backspace up, R rebuild,\n"
-          "      / or Ctrl+F search (Enter go, n/N next/previous).\n",
+          "      / or Ctrl+F search (Enter go, n/N next/previous).\n"
+          "      Context screen: Left/Right calls, space play, f / a fit, / filter actions,\n"
+          "      Esc clear, back.\n",
           stderr);
 }
 
@@ -136,6 +155,80 @@ static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *
     return rc;
 }
 
+/* --context-at: "all", or N[,N...] (negative: from the end). Returns the
+ * count, or -1 for a malformed list or a call out of range (ncalls < 0: the
+ * syntax only). */
+static int context_calls(const char *at, int ncalls, int **out) {
+    int *calls = NULL, n = 0;
+    for (const char *p = at; p && *p;) {
+        if (!strncmp(p, "all", 3)) {
+            calls = xrealloc(calls, (size_t)(n + (ncalls > 0 ? ncalls : 0) + 1) * sizeof *calls);
+            for (int c = 0; c < ncalls; c++) calls[n++] = c;
+            p += 3;
+        } else {
+            char *e;
+            long c = strtol(p, &e, 10);
+            if (e == p || (*e && *e != ',')) { free(calls); return -1; }
+            if (ncalls >= 0) {
+                if (c < 0) c += ncalls;
+                if (c < 0 || c >= ncalls) { free(calls); return -1; }
+                calls = xrealloc(calls, (size_t)(n + 1) * sizeof *calls);
+                calls[n++] = (int)c;
+            }
+            p = e;
+        }
+        if (*p == ',' && p[1]) p++;
+        else if (*p) { free(calls); return -1; }
+    }
+    if (out) *out = calls;
+    else free(calls);
+    return n;
+}
+
+/* One agent's context data, as JSON. */
+static int context_dump(const char *root, const char *agent, const char *at) {
+    if (at && context_calls(at, -1, NULL) < 0) {
+        fprintf(stderr, "aigource: --context-at %s: expected all or call numbers separated by commas\n", at);
+        return 2;
+    }
+    char *err = NULL, *path = ctx_find(root, agent, &err);
+    if (!path) {
+        fprintf(stderr, "aigource: %s\n", err);
+        free(err);
+        return 1;
+    }
+    double t0 = now_wall();
+    CtxAgent *a = ctx_load(root, path, NULL, NULL, &err);
+    double t1 = now_wall();
+    free(path);
+    if (!a) {
+        fprintf(stderr, "aigource: %s\n", err);
+        free(err);
+        return 1;
+    }
+    int *calls = NULL, n = at ? context_calls(at, a->ncalls, &calls) : 0;
+    if (n < 0) {
+        fprintf(stderr, "aigource: --context-at %s: no such call (%d calls)\n", at, a->ncalls);
+        ctx_free(a);
+        return 2;
+    }
+    ctx_json(stdout, a, calls, n);
+    size_t text = 0;
+    for (int i = 0; i < a->nstr; i++) text += a->slen[i];
+    long rss = 0;
+    FILE *st = fopen("/proc/self/status", "r");
+    char line[256];
+    while (st && fgets(line, sizeof line, st))
+        if (!strncmp(line, "VmHWM:", 6)) rss = atol(line + 6);
+    if (st) fclose(st);
+    fprintf(stderr, "context: %s %s, %d calls%s, %d items, %d texts (%.1f MB), missing %d, found elsewhere %d; "
+            "load %.0f ms, peak RSS %.0f MB\n", a->kind, a->id, a->ncalls, a->est ? " (estimated)" : "", a->nitems,
+            a->nstr, text / 1e6, a->missing, a->found_elsewhere, (t1 - t0) * 1e3, rss / 1024.0);
+    free(calls);
+    ctx_free(a);
+    return 0;
+}
+
 /* History as sorted NDJSON; with follow > 0, then new events as they come. */
 static int dump(Ingest *in, EvQueue *q, double follow, int details) {
     double until = now_wall() + follow;
@@ -158,12 +251,12 @@ static int dump(Ingest *in, EvQueue *q, double follow, int details) {
 
 int main(int argc, char **argv) {
     char root[PATH_MAX];
-    const char *root_arg = ".", *metrics = NULL;
+    const char *root_arg = ".", *metrics = NULL, *context = NULL, *context_at = NULL, *context_view = NULL;
     double since_h = 2;
     int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0, rebuild = 0;
     double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
-                  .mouse_x = -1, .mouse_y = -1};
+                  .mouse_x = -1, .mouse_y = -1, .context_call = INT_MIN, .context_sel = -1};
     const char **files = xcalloc((size_t)argc, sizeof *files);
     int nfiles = 0;
 
@@ -189,6 +282,9 @@ int main(int argc, char **argv) {
         else if (TAKES("--follow", "--follow")) follow = atof(v);
         else if (TAKES("--metrics", "--metrics")) metrics = v;
         else if (TAKES("--rebuild", "--rebuild")) rebuild = atoi(v);
+        else if (TAKES("--context-dump", "--context-dump")) context = v;
+        else if (TAKES("--context-at", "--context-at")) context_at = v;
+        else if (TAKES("--context", "--context")) context_view = v;
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
         else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;
@@ -204,6 +300,10 @@ int main(int argc, char **argv) {
         fputs("aigource: --metrics and --rebuild need --structure-dump\n", stderr);
         return 2;
     }
+    if (context_at && !context) {
+        fputs("aigource: --context-at needs --context-dump\n", stderr);
+        return 2;
+    }
     if (rebuild < 0) {
         fputs("aigource: --rebuild needs a count of 0 or more\n", stderr);
         return 2;
@@ -212,6 +312,37 @@ int main(int argc, char **argv) {
         /* Fixtures name a root that need not exist; keep it verbatim when absolute. */
         if (*root_arg != '/') { perror(root_arg); return 1; }
         snprintf(root, sizeof root, "%s", root_arg);
+    }
+
+    if (context) {
+        free(files);
+        return context_dump(root, context, context_at);
+    }
+    char *context_path = NULL;
+    if (context_view) { /* AGENT[:CALL[:ACTION]]: the numbers from the end (a path may hold ':') */
+        char spec[PATH_MAX], *e;
+        long num[2];
+        int nn = 0;
+        snprintf(spec, sizeof spec, "%s", context_view);
+        for (char *p; nn < 2 && (p = strrchr(spec, ':'));) {
+            long v = strtol(p + 1, &e, 10);
+            if (e == p + 1 || *e) break;
+            num[nn++] = v, *p = 0;
+        }
+        if (!*spec) {
+            fprintf(stderr, "aigource: --context %s: expected AGENT[:CALL[:ACTION]]\n", context_view);
+            return 2;
+        }
+        char *err = NULL;
+        if (!(context_path = ctx_find(root, spec, &err))) {
+            fprintf(stderr, "aigource: %s\n", err);
+            free(err);
+            return 1;
+        }
+        vo.context = context_path;
+        if (nn == 2) vo.context_call = (int)num[1], vo.context_sel = (int)num[0];
+        else if (nn == 1) vo.context_call = (int)num[0];
+        else vo.context_call = -1; /* a shot's: the last call, not the stage's clock */
     }
 
     EvQueue q;
@@ -239,5 +370,6 @@ int main(int argc, char **argv) {
     }
     int rc = viz_run(&vo, &q);
     ingest_stop(in);
+    free(context_path);
     return rc;
 }

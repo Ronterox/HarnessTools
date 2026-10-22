@@ -41,13 +41,6 @@ typedef struct { /* a prompt while computing */
     int nstamps, capstamps, nchg, capchg;
 } Pr;
 
-#define GROW(a, n, cap)                                                   \
-    do {                                                                  \
-        if ((n) == (cap)) {                                               \
-            (cap) = (cap) ? (cap)*2 : 16;                                 \
-            (a) = xrealloc((a), (size_t)(cap) * sizeof *(a));             \
-        }                                                                 \
-    } while (0)
 
 TurnStats *ts_new(const char *root) {
     TurnStats *t = xcalloc(1, sizeof *t);
