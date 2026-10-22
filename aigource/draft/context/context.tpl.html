@@ -1,0 +1,959 @@
+<meta charset="utf-8">
+<title>aigource Context Draft</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* One app window like aigource's own (dark, single theme): session and stats on top, the stage with the agent and its
+ * context windows, the actions list right, the calls strip at the bottom. */
+:root {
+  color-scheme: dark;
+  --bg: #0d1117;
+  --win: #10161e;
+  --panel: #131a23;
+  --raised: #18212c;
+  --line: #253041;
+  --fg: #e6edf3;
+  --dim: #8b949e;
+  --faint: #5b6673;
+  --hot: #f2a541;
+  --focus: #9ecbff;
+  --add: #56d364;
+  --del: #f85149;
+  --warn: #ff7b72;
+  /* item kinds */
+  --k-system: #6e7681;
+  --k-tools: #6e7681;
+  --k-injected: #bc8cff;
+  --k-prompt: #f2a541;
+  --k-summary: #e3b341;
+  --k-text: #9ecbff;
+  --k-thinking: #79c0ff;
+  --k-action: #56d364;
+  --k-result: #39c5cf;
+  --k-missing: #f85149;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+html, body { background: var(--bg); color: var(--fg); margin: 0; }
+body {
+  font: 14px/1.5 var(--sans);
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 16px 24px;
+}
+.app { max-width: 1680px; margin: 0 auto; display: grid; gap: 12px; }
+.window {
+  display: grid; grid-template-rows: auto 1fr auto auto;
+  height: clamp(620px, calc(100vh - 80px), 1100px);
+  background: var(--win); border: 1px solid var(--line); border-radius: 8px; overflow: hidden;
+}
+.bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font: 600 14px var(--mono); color: var(--fg); }
+.brand span { color: var(--dim); font-weight: 400; }
+select, input[type=search] {
+  font: 12.5px var(--mono); color: var(--fg); background: var(--raised); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; max-width: 360px;
+}
+.stats { display: flex; flex-wrap: wrap; gap: 4px 14px; font: 12.5px var(--mono); color: var(--dim); margin-left: auto; align-items: center; }
+.stats b { color: var(--fg); font-weight: 600; }
+.stats .meter { display: inline-block; width: 90px; height: 7px; border-radius: 2px; background: var(--bg); border: 1px solid var(--line); vertical-align: 0; overflow: hidden; }
+.stats .meter i { display: block; height: 100%; background: var(--hot); }
+.badge { font: 600 10.5px var(--mono); letter-spacing: .05em; text-transform: uppercase; border: 1px solid var(--hot); color: var(--hot); border-radius: 3px; padding: 0 5px; }
+.bar button, .strip button, .side button.mini {
+  font: 12px var(--mono); color: var(--dim); background: var(--raised); border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; cursor: pointer;
+}
+.bar button:hover, .strip button:hover { color: var(--fg); }
+button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+.body { display: grid; grid-template-columns: minmax(0, 1fr) 330px; min-height: 0; }
+.stage { position: relative; contain: strict; min-width: 0; min-height: 0; overflow: hidden; cursor: grab; background:
+  radial-gradient(circle at 50% 50%, #121a25 0, var(--bg) 70%); touch-action: none; }
+.stage.panning { cursor: grabbing; }
+body.nosel, body.nosel * { user-select: none !important; } /* while a drag, resize or pan is in progress; windows' text is selectable otherwise */
+#world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+#links { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+#links path { fill: none; stroke: var(--hot); stroke-width: 1.6; stroke-dasharray: 5 4; opacity: .9; }
+#links text { font: 11px var(--mono); fill: var(--hot); paint-order: stroke; stroke: var(--bg); stroke-width: 4px; }
+.agent { position: absolute; left: -70px; top: -70px; width: 140px; height: 140px; border-radius: 50%; display: grid; place-items: center; text-align: center;
+  background: radial-gradient(circle, #1d2a3a, #121a24 70%); border: 1px solid var(--line); box-shadow: 0 0 40px #0008; pointer-events: none; }
+.agent svg { position: absolute; inset: -8px; width: 156px; height: 156px; }
+.agent .nm { font: 600 13px var(--mono); color: var(--fg); max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent .sub { font: 11px var(--mono); color: var(--dim); }
+.win { position: absolute; left: 0; top: 0; contain: layout paint style; display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid var(--kc, var(--line)); border-radius: 6px; box-shadow: 0 4px 18px #0007; overflow: hidden; cursor: default;
+  transform-origin: 50% 50%; transition: transform .45s cubic-bezier(.2,.7,.2,1), opacity .45s, filter .45s; }
+.win.notrans, .win.dragging { transition: none; }
+.win.dragging { box-shadow: 0 8px 30px #000a; z-index: 5; }
+.win.chip { border-radius: 4px; box-shadow: none; background: var(--raised); }
+.win.resp { border-style: dashed; border-left-style: solid; background: #111a16; }
+.win.linked { outline: 2px solid var(--hot); outline-offset: 1px; }
+.win.sel { outline: 2px solid var(--fg); outline-offset: 1px; }
+.win.stale-warn .hd .ttl::after { content: " ⚠"; color: var(--warn); }
+.win.dropped { opacity: .35; filter: grayscale(1); }
+.win.leaving { opacity: 0 !important; pointer-events: none; }
+.win.fade-think { filter: blur(3px); }
+.win .hd { display: flex; align-items: center; gap: 6px; padding: 3px 6px 2px 7px; cursor: move; user-select: none; min-height: 20px; }
+.win.chip .hd { padding: 2px 6px; cursor: pointer; }
+.win .kind { flex: none; font: 600 9.5px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--kc); }
+.win .ttl { flex: 1; min-width: 0; font: 12px var(--mono); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.win .tk { flex: none; font: 11px var(--mono); color: var(--dim); }
+.win .hd button { flex: none; font: 11px var(--mono); color: var(--dim); background: none; border: 1px solid transparent; border-radius: 3px; padding: 0 4px; cursor: pointer; line-height: 16px; }
+.win .hd button:hover { color: var(--fg); border-color: var(--line); }
+.win .hd button.why { color: var(--hot); border-color: #f2a54155; }
+.win .meta { display: flex; flex-wrap: wrap; gap: 0 10px; padding: 0 7px 3px; font: 10.5px var(--mono); color: var(--faint); border-bottom: 1px solid var(--line); }
+.win .meta b { color: var(--dim); font-weight: 400; }
+.win .meta .c-read { color: var(--add); } .win .meta .c-written { color: var(--hot); } .win .meta .c-new { color: var(--warn); }
+.win .meta .stale { color: var(--warn); } .win .meta .stale.known { color: var(--dim); }
+.win .content { flex: 1; min-height: 0; overflow: auto; font: 12px/1.45 var(--mono); color: #c9d1d9; overscroll-behavior: contain; cursor: auto; }
+.win .content pre { margin: 0; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.win .content .prose { padding: 6px 9px; font: 12.5px/1.5 var(--sans); white-space: normal; overflow-wrap: anywhere; }
+.win .content .prose p { margin: 0 0 6px; }
+.win .content .prose h1, .win .content .prose h2, .win .content .prose h3, .win .content .prose h4 { font: 600 12.5px var(--sans); margin: 8px 0 4px; color: var(--fg); }
+.win .content .prose ul { margin: 0 0 6px; padding-left: 18px; }
+.win .content .prose code { font: 11.5px var(--mono); color: #d2a8ff; }
+.win .content .prose pre { background: var(--bg); border: 1px solid var(--line); border-radius: 4px; margin: 4px 0 6px; font: 11.5px var(--mono); white-space: pre; overflow: auto; }
+.win .content .think { color: var(--dim); font-style: italic; }
+.win .content .note { padding: 6px 9px; color: var(--faint); font: 12px var(--sans); }
+.win .code { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+.win .code .gut { color: var(--faint); text-align: right; user-select: none; border-right: 1px solid var(--line); padding: 6px 6px; position: sticky; left: 0; background: var(--panel); white-space: pre; }
+.win .code pre { white-space: pre; overflow-wrap: normal; }
+.win .more { display: block; margin: 4px 8px 8px; font: 11.5px var(--mono); color: var(--focus); background: none; border: 1px solid var(--line); border-radius: 4px; cursor: pointer; padding: 2px 8px; }
+.win .diff .d { color: var(--del); } .win .diff .a { color: var(--add); } .win .diff .h { color: var(--faint); }
+.win .grip { position: absolute; right: 0; bottom: 0; width: 14px; height: 14px; cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--faint) 50%, var(--faint) 60%, transparent 60%, transparent 72%, var(--faint) 72%, var(--faint) 82%, transparent 82%); }
+.win.chip .grip, .win.chip .meta, .win.chip .content { display: none; }
+.win details { padding: 2px 8px; } .win summary { cursor: pointer; color: var(--fg); }
+.side { contain: layout paint style; border-left: 1px solid var(--line); background: var(--panel); display: grid; grid-template-rows: auto auto auto 1fr; min-height: 0; }
+.side h3 { margin: 0; font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.side .sec { padding: 10px 12px; border-bottom: 1px solid var(--line); display: grid; gap: 6px; }
+.side .sec[hidden] { display: block; height: 0; padding: 0; border: 0; overflow: hidden; } /* [hidden] lost to display: grid; the empty row keeps the others in their rows */
+.stack { display: flex; height: 10px; border-radius: 3px; overflow: hidden; background: var(--bg); }
+.stack i { display: block; height: 100%; }
+.legend { display: grid; grid-template-columns: 1fr 1fr; gap: 1px 10px; font: 11.5px var(--mono); color: var(--dim); }
+.legend span { display: flex; gap: 6px; align-items: center; white-space: nowrap; overflow: hidden; }
+.legend i { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.legend em { margin-left: auto; font-style: normal; color: var(--faint); }
+.why-box { font: 12px var(--sans); color: var(--dim); display: grid; gap: 3px; }
+.why-box b { color: var(--fg); font: 500 12px var(--mono); }
+.why-box div { display: grid; grid-template-columns: auto 1fr; gap: 6px; cursor: pointer; }
+.why-box div:hover { color: var(--fg); }
+.why-box .r { color: var(--hot); font: 11px var(--mono); white-space: nowrap; }
+.why-box .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11.5px var(--mono); }
+.actions { contain: strict; overflow-y: auto; min-height: 0; padding: 4px 6px 10px; }
+.actions button { content-visibility: auto; contain-intrinsic-size: auto 20px; }
+.actions button { display: grid; grid-template-columns: 38px 1fr; gap: 6px; width: 100%; text-align: left; font: 12px var(--mono); color: var(--fg); background: none; border: 0; border-radius: 4px; padding: 2px 6px; cursor: pointer; }
+.actions button:hover { background: var(--raised); }
+.actions button[aria-pressed="true"] { background: var(--raised); outline: 1px solid var(--hot); }
+.actions button.here { color: var(--add); }
+.actions button span:first-child { color: var(--faint); text-align: right; }
+.actions button span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strip { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border-top: 1px solid var(--line); background: var(--panel); min-width: 0; }
+.strip .lbl { font: 600 11px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.strip svg { flex: 1; height: 54px; min-width: 0; cursor: ew-resize; display: block; touch-action: none; }
+.strip .cur { font: 12px var(--mono); color: var(--dim); width: 290px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.strip .cur b { color: var(--fg); font-weight: 500; }
+.hint { display: flex; gap: 16px; flex-wrap: wrap; padding: 6px 12px; border-top: 1px solid var(--line); font: 12px var(--mono); color: var(--faint); align-items: center; }
+.hint b { color: var(--dim); font-weight: 600; }
+.about { font-size: 13px; color: var(--dim); max-width: 110ch; margin: 0; }
+.about code { font: 12px var(--mono); color: #d2a8ff; }
+#tip { position: fixed; z-index: 20; pointer-events: none; background: #0b0f15; border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; font: 12px var(--mono); color: var(--dim); max-width: 520px; white-space: pre-wrap; }
+#tip b { color: var(--fg); }
+/* GitHub-dark syntax colors, as in aigource's detail window */
+.hljs-keyword, .hljs-meta .hljs-keyword, .hljs-type.hljs-keyword { color: #ff7b72; }
+.hljs-string, .hljs-meta .hljs-string { color: #a5d6ff; }
+.hljs-comment { color: #8b949e; font-style: italic; }
+.hljs-title, .hljs-title.function_ { color: #d2a8ff; }
+.hljs-type, .hljs-built_in, .hljs-title.class_ { color: #ffa657; }
+.hljs-number, .hljs-literal { color: #79c0ff; }
+.hljs-meta { color: #ff7b72; }
+.hljs-params { color: #e6edf3; }
+.hljs-attr, .hljs-variable, .hljs-property { color: #79c0ff; }
+@media (max-width: 900px) {
+  .window { height: auto; }
+  .body { grid-template-columns: 1fr; }
+  .stage { height: 520px; }
+  .side { border-left: 0; border-top: 1px solid var(--line); max-height: 420px; }
+  .stats { margin-left: 0; }
+  .strip .cur { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="app">
+  <div class="window">
+    <div class="bar">
+      <div class="brand">aigource <span>· context</span></div>
+      <select id="sess" aria-label="Session"></select>
+      <select id="agentSel" aria-label="Agent"></select>
+      <span class="badge" id="estBadge" hidden title="This transcript has no request records: the messages come from the conversation records, the system prompt and tools from the first call's usage">estimated</span>
+      <button type="button" id="fitRecent" title="Zoom to the open windows (f)">recent</button>
+      <button type="button" id="fitAll" title="Zoom to every window (a)">all</button>
+      <div class="stats" id="stats"></div>
+    </div>
+    <div class="body">
+      <div class="stage" id="stage">
+        <div id="world">
+          <svg id="links" width="1" height="1"></svg>
+          <div class="agent" id="agent"><svg viewBox="-78 -78 156 156"><circle r="74" fill="none" stroke="#253041" stroke-width="4"/><path id="ring" fill="none" stroke="#f2a541" stroke-width="4"/></svg><div><div class="nm" id="agentName"></div><div class="sub" id="agentSub"></div></div></div>
+        </div>
+      </div>
+      <aside class="side">
+        <div class="sec"><h3 id="ctxHead">Context</h3><div class="stack" id="stack"></div><div class="legend" id="legend"></div></div>
+        <div class="sec" id="whySec" hidden><h3>Why it decided · likely</h3><div class="why-box" id="why"></div></div>
+        <div class="sec"><h3>Actions</h3><input type="search" id="filter" placeholder="filter: Edit, make, path…" aria-label="Filter actions"></div>
+        <div class="actions" id="actions" role="list"></div>
+      </aside>
+    </div>
+    <div class="strip">
+      <span class="lbl" title="One bar per API call; height: context size; red: a compaction; hollow: no response recorded">Calls</span>
+      <button type="button" id="prev" title="Previous call (←)">‹</button>
+      <button type="button" id="play" title="Play (space)">▶</button>
+      <button type="button" id="next" title="Next call (→)">›</button>
+      <svg id="strip" aria-label="Calls in time order: drag to scrub"></svg>
+      <span class="cur" id="cur"></span>
+    </div>
+    <div class="hint">
+      <span><b>drag</b> background pans, a title moves a window</span><span><b>wheel</b> zoom</span><span><b>corner</b> resize</span><span><b>chip</b> opens</span><span><b>← → space</b> calls, play</span><span><b>Esc</b> clear</span>
+    </div>
+  </div>
+  <p class="about" id="about"></p>
+</div>
+<div id="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+const RAW = __DATA__;
+const S = RAW.S, META = RAW.meta;
+const KINDS = ["system", "tools", "injected", "prompt", "summary", "text", "thinking", "action", "result", "missing"];
+const KIND_LABEL = { system: "system", tools: "tools", injected: "injected", prompt: "prompt", summary: "summary", text: "text", thinking: "thinking", action: "action", result: "result", missing: "missing" };
+const kc = k => getComputedStyle(document.documentElement).getPropertyValue("--k-" + k).trim() || "#888";
+const KC = Object.fromEntries(KINDS.map(k => [k, kc(k)]));
+const fmtK = n => n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(n >= 1e4 ? 0 : 1) + "k" : String(Math.round(n));
+const fmtUsd = x => x >= 1 ? "$" + x.toFixed(2) : x >= 0.01 ? "$" + x.toFixed(3) : x > 0 ? "$" + x.toFixed(4) : "$0";
+const fmtMin = s => s < 90 ? Math.round(s) + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h";
+const clock = t => { const d = new Date((META.t0 + t) * 1000); return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+const dateOf = t => new Date((META.t0 + t) * 1000).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const $ = id => document.getElementById(id);
+
+/* ---- one agent's calls, rebuilt the way the requests were: base call's first `keep` messages + tail ---- */
+function prepare(A) {
+  if (A._ready) return A;
+  const n = A.calls.length, items = A.items;
+  const insts = new Array(n), orders = new Array(n), f = new Float64Array(n), total = new Float64Array(n), noresp = new Uint8Array(n);
+  const states = new Array(n), cum = new Array(n), madeAt = Array.from({ length: n }, () => []);
+  for (let c = 0; c < n; c++) {
+    const C = A.calls[c];
+    const prev = C.b != null ? insts[C.b] : [];
+    const cur = prev.slice(0, C.k).concat(C.tl);
+    insts[c] = cur;
+    const ord = C.sh.slice();
+    for (const ii of cur) for (const it of A.inst[ii]) ord.push(it);
+    orders[c] = Int32Array.from(ord);
+    C._drop = new Set(C.drop || []);
+    let w = 0; for (const it of ord) if (!C._drop.has(it)) w += items[it].w;
+    C._w = w;
+    if (C.u) { total[c] = C.u[0] + C.u[1] + C.u[2] + C.u[3]; f[c] = w ? total[c] / w : 0; } else noresp[c] = 1;
+  }
+  /* calls without a response (interrupted, failed): the nearest call's tokens per estimated unit */
+  for (let c = 0; c < n; c++) if (noresp[c]) {
+    let g = 0; for (let d = 1; d < n && !g; d++) { if (c - d >= 0 && !noresp[c - d]) g = f[c - d]; else if (c + d < n && !noresp[c + d]) g = f[c + d]; }
+    f[c] = g || 1.3; total[c] = A.calls[c]._w * f[c];
+  }
+  /* cache state of each item at each call (its middle falls in the read, written or new part of the prompt:
+   * tools, system, messages in that order) and what holding it has cost up to then */
+  const acc = new Float64Array(items.length);
+  for (let c = 0; c < n; c++) {
+    const C = A.calls[c], ord = orders[c], st = new Uint8Array(ord.length), cs = new Float32Array(ord.length);
+    const p = META.prices[C.m];
+    const R = C.u ? C.u[1] : 0, W = C.u ? C.u[2] + C.u[3] : 0;
+    const wRate = p && W ? (C.u[2] * p.w5 + C.u[3] * p.w1h) / W : 0;
+    let x = 0;
+    for (let i = 0; i < ord.length; i++) {
+      const it = ord[i], t = C._drop.has(it) ? 0 : items[it].w * f[c], mid = x + t / 2;
+      x += t;
+      st[i] = !C.u ? 3 : mid <= R ? 0 : mid <= R + W ? 1 : 2;
+      if (p && C.u) acc[it] += t * (st[i] === 0 ? p.read : st[i] === 1 ? wRate : p.in) / 1e6;
+      cs[i] = acc[it];
+    }
+    states[c] = st; cum[c] = cs;
+  }
+  items.forEach((it, i) => { it.id = i; if (it.m != null && it.m < n) madeAt[it.m].push(i); });
+  Object.assign(A, { _ready: true, orders, f, total, noresp, states, cum, madeAt,
+    actions: items.filter(it => it.k === "action" && it.m != null).sort((a, b) => a.m - b.m || a.id - b.id) });
+  return A;
+}
+
+const PROF = { sim: 0, settle: 0, show: 0, dom: 0, hs: "" }; /* layout timings, reported by #bench */
+/* ---- state ---- */
+let SESS = null, AG = null, C = 0, SEL = null, playing = null;
+const UI = { nodes: new Map(), open: new Map(), pinned: new Map(), size: new Map(), zoom: null, k: 1 };
+const params = new URLSearchParams(location.hash.slice(1));
+
+/* ---- pickers ---- */
+const sessSel = $("sess"), agentSel = $("agentSel");
+RAW.sessions.forEach((s, i) => {
+  const o = document.createElement("option");
+  const calls = s.agents.reduce((a, g) => a + g.calls.length, 0);
+  o.value = i; o.textContent = `${dateOf(s.start)} · ${s.title || s.id.slice(0, 8)} · ${calls} calls`;
+  sessSel.appendChild(o);
+});
+function fillAgents() {
+  agentSel.innerHTML = "";
+  SESS.agents.forEach((a, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = a.kind === "main" ? `main agent · ${a.calls.length} calls` : `${a.name.replace(/^.*:/, "")} · ${a.desc} · ${a.calls.length} calls`;
+    agentSel.appendChild(o);
+  });
+}
+sessSel.onchange = () => { SESS = RAW.sessions[+sessSel.value]; fillAgents(); openAgent(0); };
+agentSel.onchange = () => openAgent(+agentSel.value);
+
+function openAgent(i, call, sel) {
+  AG = prepare(SESS.agents[i]);
+  agentSel.value = i;
+  for (const n of UI.nodes.values()) n.el.remove();
+  UI.nodes.clear(); UI.open.clear(); UI.pinned.clear(); UI.size.clear();
+  try { const saved = JSON.parse(localStorage.getItem("ctx-pos-" + SESS.id + "-" + i) || "{}");
+    for (const [id, v] of Object.entries(saved)) { if (v.p) UI.pinned.set(+id, v.p); if (v.s) UI.size.set(+id, v.s); } } catch (e) {}
+  $("estBadge").hidden = !AG.est;
+  $("agentName").textContent = AG.kind === "main" ? "agent" : AG.name.replace(/^.*:/, "");
+  stop(); hideTip();
+  SEL = null; /* an action of the previous agent means nothing here */
+  const c = Math.max(0, Math.min(AG.calls.length - 1, call != null ? call : AG.calls.length - 1));
+  C = c; /* fillActions draws the side panel before show() runs: C must be a call of this agent */
+  drawStrip();
+  fillActions();
+  if (sel != null && AG.items[sel]) select(sel, true); else show(c, true);
+  fit("recent", false);
+}
+function savePos() {
+  const out = {};
+  for (const [id, p] of UI.pinned) out[id] = { p };
+  for (const [id, s] of UI.size) (out[id] ||= {}).s = s;
+  try { localStorage.setItem("ctx-pos-" + SESS.id + "-" + agentSel.value, JSON.stringify(out)); } catch (e) {}
+}
+
+/* ---- item text ---- */
+const textOf = it => it.x != null ? S[it.x] : "";
+function header(it) {
+  return it.k === "result" ? (it.err ? "error · " : "") + it.s : it.s;
+}
+function isOpenDefault(it, c, linked) {
+  if (linked.has(it.id)) return true;
+  if (it.k === "system" || it.k === "tools") return false;
+  if (it.m === c) return true; /* this call's response */
+  if (linked.size) return false; /* an action is selected: its causes are what opens */
+  return it.e != null && it.e >= c - 1 && it.e <= c;
+}
+function sizeOf(it, open) {
+  if (!open) return [Math.min(300, 64 + header(it).length * 6.6 + 44), 24];
+  if (UI.size.has(it.id)) return UI.size.get(it.id);
+  if (it.k === "result" && (it.tool === "Read" || it.tool === "Bash" || it.tool === "Grep")) return [460, 270];
+  if (it.k === "action" && (it.tool === "Edit" || it.tool === "Write")) return [440, 240];
+  if (it.k === "prompt" || it.k === "summary" || it.k === "text") return [380, 210];
+  if (it.k === "thinking") return [340, 150];
+  return [360, 180];
+}
+
+/* light markdown: headings, lists, fences, inline code, bold */
+function md(src) {
+  const out = [], lines = src.split("\n");
+  let i = 0, list = false;
+  const inline = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) {
+      const buf = []; i++;
+      while (i < lines.length && !/^```/.test(lines[i])) buf.push(lines[i++]);
+      i++; if (list) { out.push("</ul>"); list = false; }
+      out.push("<pre>" + esc(buf.join("\n")) + "</pre>"); continue;
+    }
+    const h = l.match(/^(#{1,4})\s+(.*)/), li = l.match(/^\s*(?:[-*]|\d+\.)\s+(.*)/);
+    if (li) { if (!list) { out.push("<ul>"); list = true; } out.push("<li>" + inline(li[1]) + "</li>"); }
+    else {
+      if (list) { out.push("</ul>"); list = false; }
+      if (h) out.push(`<h${h[1].length + 1}>${inline(h[2])}</h${h[1].length + 1}>`);
+      else if (l.trim()) out.push("<p>" + inline(l) + "</p>");
+    }
+    i++;
+  }
+  if (list) out.push("</ul>");
+  return out.join("");
+}
+const LANGS = { c: "c", h: "c", py: "python", js: "javascript", mjs: "javascript", ts: "typescript", sh: "bash", md: "markdown", json: "json", html: "xml", xml: "xml", css: "css", lua: "lua", yaml: "yaml", yml: "yaml", toml: "ini", rs: "rust", go: "go", vim: "vim", cpp: "cpp" };
+const langOf = p => { const b = (p || "").split("/").pop(); if (/^makefile$/i.test(b)) return "makefile"; return LANGS[(b.split(".").pop() || "").toLowerCase()] || ""; };
+const LIMIT = 400;
+function hl(code, lang) {
+  if (lang && window.hljs && hljs.getLanguage(lang)) { try { return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value; } catch (e) {} }
+  return esc(code);
+}
+function codeBlock(lines, nums, lang, all) {
+  const n = all ? lines.length : Math.min(lines.length, LIMIT);
+  const g = nums.slice(0, n).join("\n"), html = hl(lines.slice(0, n).join("\n"), lang);
+  return `<div class="code"><div class="gut">${g}</div><pre>${html}</pre></div>` + (n < lines.length ? `<button type="button" class="more" data-all="1">show all ${lines.length} lines</button>` : "");
+}
+function preBlock(text, all) {
+  const lines = text.split("\n"), n = all ? lines.length : Math.min(lines.length, LIMIT);
+  return `<pre>${esc(lines.slice(0, n).join("\n"))}</pre>` + (n < lines.length ? `<button type="button" class="more" data-all="1">show all ${lines.length} lines</button>` : "");
+}
+function body(it, all) {
+  const t = textOf(it);
+  switch (it.k) {
+    case "result": {
+      if (it.tool === "Read") {
+        const L = t.split("\n"), nums = [], code = [], rest = [];
+        for (const l of L) { const m = l.match(/^\s*(\d+)[\t→](.*)$/); if (m && !rest.length) { nums.push(m[1]); code.push(m[2]); } else rest.push(l); }
+        if (code.length >= Math.max(1, L.length * 0.5)) return codeBlock(code, nums, langOf(it.p), all) + (rest.join("").trim() ? preBlock(rest.join("\n"), all) : "");
+      }
+      return t.trim() ? preBlock(t, all) : `<div class="note">(empty result)</div>`;
+    }
+    case "action": {
+      let inp = {}; try { inp = JSON.parse(t); } catch (e) {}
+      if (it.tool === "Bash") return `<pre>$ ${esc(inp.command || "")}</pre>` + (inp.description ? `<div class="note">${esc(inp.description)}</div>` : "");
+      if (it.tool === "Edit") return `<pre class="diff"><span class="h">${esc(it.p || "")}</span>\n${(inp.old_string || "").split("\n").map(l => `<span class="d">- ${esc(l)}</span>`).join("\n")}\n${(inp.new_string || "").split("\n").map(l => `<span class="a">+ ${esc(l)}</span>`).join("\n")}</pre>`;
+      if (it.tool === "Write") { const L = (inp.content || "").split("\n"); return codeBlock(L, L.map((_, i) => i + 1), langOf(it.p), all); }
+      return preBlock(t, all);
+    }
+    case "thinking":
+      return t ? `<div class="prose think">${md(t)}</div>` : `<div class="note">The thinking text was not returned (only its signature is in the transcript): ${fmtK(it.w)} tokens of it ride in the context.</div>`;
+    case "prompt": case "text": case "summary":
+      return `<div class="prose">${md(t)}</div>`;
+    case "tools":
+      return `<div class="note">${it.names.length} tool definitions, in this order:</div>` + it.tx.map((x, i) => `<details><summary>${esc(it.names[i])}</summary><pre>${esc(S[x])}</pre></details>`).join("");
+    default:
+      return preBlock(t, all);
+  }
+}
+
+/* ---- the header row: kind and source, tokens and share, entered, age, cache state, carrying cost, stale ---- */
+const STATE = ["read", "written", "new", "?"];
+function facts(it, c, pos) {
+  const A = AG, tok = pos >= 0 ? (A.calls[c]._drop.has(it.id) ? 0 : it.w * A.f[c]) : it.w;
+  const r = { tok, share: pos >= 0 ? tok / A.total[c] : null };
+  if (pos >= 0) {
+    r.state = STATE[A.states[c][pos]];
+    r.cost = META.prices[A.calls[c].m] ? A.cum[c][pos] : null;
+  }
+  if (it.e != null && pos >= 0) { r.e = it.e; r.ageCalls = c - it.e; r.ageS = (A.calls[c].t || 0) - (A.calls[it.e].t || 0); }
+  if (it.st && pos >= 0) {
+    const T = A.calls[c].t, ev = it.st.filter(e => e[0] <= T);
+    if (ev.length) {
+      r.stale = ev; r.staleKnown = ev.every(e => (e[1] === 0 || e[1] === 1) && e[2] >= 0 && posMap.has(e[2]));
+    }
+  }
+  return r;
+}
+const STALE_BY = ["its own edit", "its own command", "another agent of this session", "another session", "the user or a program (Claude Code noticed)"];
+function metaHtml(it, F) {
+  const parts = [];
+  if (F.share != null) parts.push(`<b>${fmtK(F.tok)} tok</b> · ${(F.share * 100).toFixed(F.share < 0.01 ? 2 : 1)}%`);
+  else parts.push(`<b>${fmtK(F.tok)} tok</b> out · this call's response`);
+  if (F.e != null) parts.push(`in #${F.e} ${clock(AG.calls[F.e].t || 0)}`);
+  if (F.ageCalls != null) parts.push(`age ${F.ageCalls} calls · ${fmtMin(F.ageS)}`);
+  if (F.state) parts.push(`cache <span class="c-${F.state}">${F.state}</span>`);
+  if (F.cost != null) parts.push(`${fmtUsd(F.cost)} carried`);
+  if (F.stale) parts.push(`<span class="stale${F.staleKnown ? " known" : ""}" title="${esc(F.stale.map(e => `${clock(e[0])} ${e[3]} (${STALE_BY[e[1]]})`).join("\n"))}">stale ${F.staleKnown ? "· known" : "⚠"}</span>`);
+  if (AG.calls[C]._drop.has(it.id)) parts.push(`<span class="stale">dropped by the API at this call</span>`);
+  return parts.join(" · ");
+}
+
+/* ---- windows ---- */
+const world = $("world"), stage = $("stage");
+function makeNode(it) {
+  const el = document.createElement("div");
+  el.className = "win notrans";
+  el.style.setProperty("--kc", KC[it.k] || "#888");
+  el.dataset.id = it.id;
+  el.innerHTML = `<div class="hd"><span class="kind">${KIND_LABEL[it.k] || it.k}</span><span class="ttl"></span><span class="tk"></span></div><div class="meta"></div><div class="content"></div><div class="grip"></div>`;
+  el.querySelector(".ttl").textContent = header(it);
+  world.appendChild(el);
+  const n = { id: it.id, it, el, x: 0, y: 0, w: 0, h: 0, open: false, rendered: false }; /* sized by setOpen */
+  hookNode(n);
+  return n;
+}
+function setOpen(n, open) {
+  n.open = open;
+  n.el.classList.toggle("chip", !open);
+  const hd = n.el.querySelector(".hd");
+  hd.querySelectorAll("button").forEach(b => b.remove());
+  if (open) {
+    if (n.it.k === "action") hd.insertAdjacentHTML("beforeend", `<button type="button" class="why" title="Why it decided: jump to the call that made it and show its likely causes">why</button>`);
+    hd.insertAdjacentHTML("beforeend", `<button type="button" class="min" title="Fold to a chip">–</button>`);
+    if (!n.rendered) { n.el.querySelector(".content").innerHTML = body(n.it, false); n.rendered = true; }
+  }
+  [n.w, n.h] = sizeOf(n.it, open);
+  n.el.style.width = n.w + "px"; n.el.style.height = n.h + "px";
+  n.hdrC = -1;
+  if (n.vis) updateHeader(n);
+}
+function place(n, scale) {
+  const t = `translate(${Math.round(n.x - n.w / 2)}px, ${Math.round(n.y - n.h / 2)}px)` + (scale != null ? ` scale(${scale})` : "");
+  if (t !== n._t) { n.el.style.transform = t; n._t = t; }
+}
+/* a drag, resize or pan must not select text: the mousedown that starts it is cancelled, and nothing is selectable until the pointer is up */
+function noSelect(on) { document.body.classList.toggle("nosel", on); if (on) getSelection().removeAllRanges(); }
+addEventListener("pointerup", () => noSelect(false), true); addEventListener("pointercancel", () => noSelect(false), true); /* never left stuck */
+const startDrag = e => { e.preventDefault(); if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur(); };
+function hookNode(n) {
+  const el = n.el;
+  el.addEventListener("click", e => {
+    if (e.target.closest(".more")) { e.target.closest(".content").innerHTML = body(n.it, true); return; }
+    if (e.target.closest(".why")) { select(n.id); return; }
+    if (e.target.closest(".min")) { UI.open.set(n.id, false); setOpen(n, false); relayout(40); return; }
+    if (!n.open && !n.dragged) { UI.open.set(n.id, true); setOpen(n, true); relayout(60); }
+  });
+  /* drag by the header; the window stays where it is put */
+  el.querySelector(".hd").addEventListener("mousedown", e => { if (e.button === 0 && !e.target.closest("button")) startDrag(e); });
+  el.querySelector(".grip").addEventListener("mousedown", e => { if (e.button === 0) startDrag(e); });
+  el.querySelector(".hd").addEventListener("pointerdown", e => {
+    if (e.button !== 0 || e.target.closest("button")) return;
+    e.stopPropagation();
+    noSelect(true);
+    const sx = e.clientX, sy = e.clientY, x0 = n.x, y0 = n.y;
+    n.dragged = false;
+    el.setPointerCapture(e.pointerId);
+    el.classList.add("dragging");
+    const move = ev => {
+      const dx = (ev.clientX - sx) / UI.k, dy = (ev.clientY - sy) / UI.k;
+      if (Math.abs(dx) + Math.abs(dy) > 3) n.dragged = true;
+      n.x = x0 + dx; n.y = y0 + dy; place(n); drawLinks();
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up);
+      el.classList.remove("dragging"); noSelect(false);
+      if (n.dragged) { UI.pinned.set(n.id, [n.x, n.y]); n.fx = n.x; n.fy = n.y; savePos(); }
+      setTimeout(() => { n.dragged = false; }, 0);
+    };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+  });
+  el.querySelector(".grip").addEventListener("pointerdown", e => {
+    e.stopPropagation();
+    noSelect(true);
+    const sx = e.clientX, sy = e.clientY, w0 = n.w, h0 = n.h, x0 = n.x - n.w / 2, y0 = n.y - n.h / 2;
+    el.setPointerCapture(e.pointerId); el.classList.add("dragging");
+    const move = ev => {
+      n.w = Math.max(160, w0 + (ev.clientX - sx) / UI.k); n.h = Math.max(60, h0 + (ev.clientY - sy) / UI.k);
+      n.x = x0 + n.w / 2; n.y = y0 + n.h / 2; /* the top-left corner stays */
+      el.style.width = n.w + "px"; el.style.height = n.h + "px"; place(n);
+    };
+    const up = () => {
+      el.removeEventListener("pointermove", move); el.removeEventListener("pointerup", up); el.classList.remove("dragging"); noSelect(false);
+      UI.size.set(n.id, [n.w, n.h]); UI.pinned.set(n.id, [n.x, n.y]); n.fx = n.x; n.fy = n.y; savePos(); drawLinks();
+    };
+    el.addEventListener("pointermove", move); el.addEventListener("pointerup", up);
+  });
+  el.addEventListener("pointerenter", () => { if (!n.open) showTip(n); });
+  el.addEventListener("pointerleave", hideTip);
+}
+const tip = $("tip");
+function showTip(n) {
+  const pos = posIn(n.id), F = facts(n.it, C, pos);
+  tip.innerHTML = `<b>${esc(header(n.it))}</b>\n${metaHtml(n.it, F).replace(/<[^>]+>/g, "")}`;
+  const r = n.el.getBoundingClientRect();
+  tip.hidden = false;
+  tip.style.left = Math.min(innerWidth - 540, r.left) + "px"; tip.style.top = (r.bottom + 6) + "px";
+}
+function hideTip() { tip.hidden = true; }
+
+/* ---- layout: distance follows age (newest closest), collide on each window's rect ---- */
+const hash = i => { let x = (i + 1) * 2654435761 % 4294967296; return (x / 4294967296) * Math.PI * 2; };
+function rectCollide(ranked) {
+  /* ranked: the newer window of a pair stays and the older one moves (settling: converges outward) */
+  let nodes;
+  const PAD = 10;
+  function force(alpha) {
+    let hits = 0;
+    const s = nodes.slice().sort((a, b) => (a.x - a.w / 2) - (b.x - b.w / 2));
+    for (let i = 0; i < s.length; i++) {
+      const a = s[i], ar = a.x + a.w / 2 + PAD;
+      for (let j = i + 1; j < s.length; j++) {
+        const b = s[j];
+        if (b.x - b.w / 2 > ar) break;
+        const dx = b.x - a.x, dy = b.y - a.y;
+        const ox = (a.w + b.w) / 2 + PAD - Math.abs(dx), oy = (a.h + b.h) / 2 + PAD - Math.abs(dy);
+        if (ox <= 0.5 || oy <= 0.5) continue; /* touching is fine */
+        hits++;
+        if (ranked && a.fx == null && b.fx == null || ranked && (a.fx == null) !== (b.fx == null)) {
+          /* the older (or unpinned) one moves outward, on whichever outward axis needs less */
+          const [m, o] = (a.fx != null || (b.fx == null && b.rank > a.rank)) ? [b, a] : [a, b];
+          const sx = m.x >= 0 ? 1 : -1, sy = m.y >= 0 ? 1 : -1;
+          const nx = o.x + sx * ((m.w + o.w) / 2 + PAD + 1), ny = o.y + sy * ((m.h + o.h) / 2 + PAD + 1);
+          const dx2 = (nx - m.x) * sx, dy2 = (ny - m.y) * sy;
+          if (dx2 >= 0 && (dx2 <= dy2 || dy2 < 0)) m.x = nx; else if (dy2 >= 0) m.y = ny; else m.x = nx;
+          continue;
+        }
+        const fa = a.fx != null ? 0 : b.fx != null ? 1 : ranked ? (a.rank > b.rank ? 1 : 0) : 0.5, fb = 1 - fa, k = Math.min(1, 0.5 + alpha);
+        if (ox < oy) { const m = (ox + 1) * k * (dx < 0 ? -1 : 1); a.x -= m * fa; b.x += m * fb; }
+        else { const m = (oy + 1) * k * (dy < 0 ? -1 : 1); a.y -= m * fa; b.y += m * fb; }
+      }
+    }
+    return hits;
+  }
+  force.initialize = ns => { nodes = ns; };
+  return force;
+}
+function targets(list) {
+  /* rank by age: this call's response (and, while an action is selected, its likely causes), then the newest items;
+   * each ring holds the area of everything newer */
+  const r0 = 92, linked = linkedSet();
+  list.sort((a, b) => (b.it.m === C) - (a.it.m === C) || linked.has(b.id) - linked.has(a.id) || (b.it.e ?? -1) - (a.it.e ?? -1) || a.ord - b.ord);
+  let area = 0, rank = 0;
+  AGENT_NODE.rank = -1;
+  for (const n of list) {
+    n.rank = rank++;
+    const a = (n.w + 14) * (n.h + 14);
+    n.tr = Math.sqrt(r0 * r0 + (area + a / 2) / (Math.PI * 0.4)) + n.h / 4;
+    area += a;
+  }
+}
+const AGENT_NODE = { id: -1, x: 0, y: 0, w: 170, h: 170, fx: 0, fy: 0 };
+let sim = null;
+/* a new window starts at a free spot near its target radius (angle from its id), so the forces only fine-tune */
+function seed(list) {
+  const PAD = 12, G = 256, grid = new Map();
+  const cells = (x, y, w, h, f) => {
+    for (let i = Math.floor((x - w / 2 - PAD) / G); i <= Math.floor((x + w / 2 + PAD) / G); i++)
+      for (let j = Math.floor((y - h / 2 - PAD) / G); j <= Math.floor((y + h / 2 + PAD) / G); j++) if (f(i + "," + j) === false) return false;
+    return true;
+  };
+  const add = m => cells(m.x, m.y, m.w, m.h, k => { let a = grid.get(k); if (!a) grid.set(k, a = []); a.push(m); });
+  const free = (x, y, n) => cells(x, y, n.w, n.h, k => (grid.get(k) || []).every(m => Math.abs(m.x - x) * 2 >= m.w + n.w + PAD * 2 || Math.abs(m.y - y) * 2 >= m.h + n.h + PAD * 2));
+  const placed = { push: add };
+  list.filter(n => !n.fresh).concat([AGENT_NODE]).forEach(add);
+  for (const n of list) {
+    if (!n.fresh) continue;
+    n.fresh = false;
+    if (n.fx != null) { placed.push(n); continue; }
+    const th0 = hash(n.id);
+    let done = false;
+    for (let r = n.tr; r < n.tr + 4000 && !done; r += 24) {
+      const steps = Math.max(12, Math.floor(2 * Math.PI * r / 40));
+      for (let k = 0; k < steps; k++) {
+        const th = th0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 2 * Math.PI / steps, x = r * Math.cos(th), y = r * Math.sin(th);
+        if (free(x, y, n)) { n.x = x; n.y = y; done = true; break; }
+      }
+    }
+    placed.push(n);
+  }
+}
+function simulate(list, ticks, passes = 120) {
+  for (const n of list) { const p = UI.pinned.get(n.id); if (p) { n.fx = n.x = p[0]; n.fy = n.y = p[1]; } else { n.fx = n.fy = null; } }
+  targets(list);
+  seed(list);
+  const nodes = list.concat([AGENT_NODE]);
+  sim = d3.forceSimulation(nodes).stop().alpha(0.35).alphaDecay(1 - Math.pow(0.001, 1 / ticks)).velocityDecay(0.5)
+    .force("r", d3.forceRadial(d => d.tr || 0).strength(d => d.id < 0 ? 0 : 0.12))
+    .force("c", rectCollide());
+  for (const n of nodes) n.vx = n.vy = 0;
+  const t0 = performance.now();
+  for (let i = 0; i < ticks; i++) sim.tick();
+  const t1 = performance.now(), hs = [];
+  const settle = rectCollide(true); settle.initialize(nodes);
+  for (let i = 0; i < passes; i++) { const h = settle(0.5); hs.push(h); if (!h) break; } /* settle until no two rects overlap */
+  PROF.sim += t1 - t0; PROF.settle += performance.now() - t1; PROF.hs = hs.filter((_, i) => i % 12 === 0 || i === hs.length - 1).join(",");
+}
+
+/* ---- one call on the stage ---- */
+let shownList = [], posMap = new Map();
+const posIn = id => posMap.has(id) ? posMap.get(id) : -1;
+function linkedSet() {
+  return SEL != null && AG.items[SEL].m === C ? new Set((AG.items[SEL].lk || []).map(l => l[0]).concat([SEL])) : new Set();
+}
+let lastShow = 0, restTimer = null;
+function show(c, instant) {
+  const A = AG, now = performance.now();
+  if (now - lastShow < 150) instant = true; /* scrubbing fast: no animation */
+  c = Math.max(0, Math.min(A.calls.length - 1, c));
+  const prevC = C, forward = c > prevC;
+  C = c;
+  const ord = A.orders[c];
+  posMap = new Map(); ord.forEach((id, i) => posMap.set(id, i));
+  const ids = Array.from(ord).concat(A.madeAt[c].filter(id => !posMap.has(id)));
+  const want = new Set(ids), linked = linkedSet();
+  /* leaving windows: folded into the compaction summary, cleared thinking fades, the rest fade out */
+  const summary = c > 0 && A.calls[c].cmp ? ids.map(id => A.items[id]).find(it => it.k === "summary") : null;
+  const folding = [];
+  for (const [id, n] of UI.nodes) {
+    if (want.has(id)) continue;
+    UI.nodes.delete(id);
+    const el = n.el;
+    el.classList.remove("notrans");
+    if (instant) { el.remove(); continue; }
+    if (forward && summary && n.it.l === c) folding.push(n); /* placed once the summary has its spot, below */
+    else if (n.it.k === "thinking") el.classList.add("fade-think");
+    el.classList.add("leaving");
+    setTimeout(() => el.remove(), 500);
+  }
+  const list = [], fresh = [];
+  ids.forEach((id, i) => {
+    let n = UI.nodes.get(id);
+    const it = A.items[id];
+    if (!n) {
+      n = makeNode(it); UI.nodes.set(id, n); fresh.push(n);
+      n.fresh = true;
+    }
+    n.ord = i;
+    const open = UI.open.has(id) ? UI.open.get(id) : isOpenDefault(it, c, linked);
+    if (open !== n.open || !n.w) setOpen(n, open);
+    n.el.classList.toggle("resp", !posMap.has(id));
+    n.el.classList.toggle("linked", linked.has(id) && id !== SEL);
+    n.el.classList.toggle("sel", id === SEL);
+    n.el.classList.toggle("dropped", A.calls[c]._drop.has(id));
+    list.push(n);
+  });
+  /* cap the default-open windows so a busy call stays readable: keep the newest and the linked ones */
+  const opened = list.filter(n => n.open && !UI.open.has(n.id) && !linked.has(n.id));
+  if (opened.length > 10) opened.sort((a, b) => (b.it.m === c) - (a.it.m === c) || (b.it.e ?? -1) - (a.it.e ?? -1)).slice(10).forEach(n => setOpen(n, false));
+  shownList = list;
+  /* scrubbing fast: a short pass now, the full one when the scrub rests */
+  const rapid = instant && fresh.length !== list.length;
+  if (rapid) { simulate(list, 6, 12); clearTimeout(restTimer); restTimer = setTimeout(() => relayout(24), 180); }
+  else simulate(list, fresh.length === list.length ? 120 : 24);
+  for (const n of fresh) { n.el.classList.add("notrans"); n._fx = n.x; n._fy = n.y; const x = n.x, y = n.y; n.x = 0; n.y = 0; place(n, instant ? 1 : 0.15); n.el.style.opacity = instant ? 1 : 0; n.x = x; n.y = y; }
+  if (fresh.length && !instant) void world.offsetWidth; /* start the fly-out from the agent */
+  for (const n of list) { n.el.classList.toggle("notrans", !!instant); n.el.style.opacity = ""; place(n); }
+  const sn = summary && UI.nodes.get(summary.id);
+  for (const n of folding) { n.x = sn ? sn.x : 0; n.y = sn ? sn.y : 0; place(n, 0.08); } /* a compaction folds them into its summary */
+  cull();
+  drawLinks();
+  drawAgent();
+  drawSide();
+  drawStripCursor();
+  writeHash();
+  lastShow = performance.now();
+}
+/* the header row of a window: what changes from call to call */
+function updateHeader(n) {
+  const F = facts(n.it, C, posIn(n.id));
+  n.el.querySelector(".tk").textContent = fmtK(F.tok);
+  n.el.classList.toggle("stale-warn", !!F.stale && !F.staleKnown);
+  if (n.open) n.el.querySelector(".meta").innerHTML = metaHtml(n.it, F);
+  n.hdrC = C;
+}
+/* only the windows in view (and a margin) are displayed and kept up to date; the layout still places them all */
+function cull() {
+  const t = UI.t || d3.zoomIdentity, W = UI.W ||= stage.clientWidth, Hh = UI.H ||= stage.clientHeight, m = 300 / t.k; /* sizes cached: reading them would force layout */
+  const x0 = -t.x / t.k - m, y0 = -t.y / t.k - m, x1 = (W - t.x) / t.k + m, y1 = (Hh - t.y) / t.k + m;
+  for (const n of shownList) {
+    const vis = n.x + n.w / 2 > x0 && n.x - n.w / 2 < x1 && n.y + n.h / 2 > y0 && n.y - n.h / 2 < y1;
+    if (vis !== n.vis) { n.el.style.display = vis ? "" : "none"; n.vis = vis; }
+    if (vis && n.hdrC !== C) updateHeader(n);
+  }
+}
+function relayout(ticks) { simulate(shownList, ticks); for (const n of shownList) { n.el.classList.remove("notrans"); place(n); } cull(); drawLinks(); }
+
+/* links from the agent to the likely causes of the selected action */
+function drawLinks() {
+  const svg = d3.select("#links");
+  const lk = SEL != null && AG.items[SEL].m === C ? (AG.items[SEL].lk || []) : [];
+  const data = lk.map(([id, why]) => ({ n: UI.nodes.get(id), why })).filter(d => d.n);
+  const sel = UI.nodes.get(SEL);
+  if (sel) data.push({ n: sel, why: "the action", self: 1 });
+  const g = svg.selectAll("g").data(data, d => d.n.id + d.why).join(e => { const g = e.append("g"); g.append("path"); g.append("text"); return g; });
+  g.select("path").attr("d", d => { const x = d.n.x, y = d.n.y, mx = x / 2 - y * 0.15, my = y / 2 + x * 0.15; return `M0,0 Q${mx},${my} ${x},${y}`; })
+    .style("stroke", d => d.self ? "var(--fg)" : null);
+  g.select("text").attr("x", d => d.n.x * 0.55 - d.n.y * 0.08).attr("y", d => d.n.y * 0.55 + d.n.x * 0.08).text(d => d.self ? "action" : "likely · " + d.why);
+}
+
+function drawAgent() {
+  const A = AG, call = A.calls[C], win = META.windows[call.m] || 1e6, share = Math.min(1, A.total[C] / win);
+  const a = share * Math.PI * 2 - 1e-6, r = 74;
+  d3.select("#ring").attr("d", share > 0 ? `M0,${-r} A${r},${r} 0 ${a > Math.PI ? 1 : 0} 1 ${r * Math.sin(a)},${-r * Math.cos(a)}` : "");
+  $("agentSub").innerHTML = `${esc((call.m || "").replace(/^claude-/, ""))}<br>${fmtK(A.total[C])} / ${fmtK(win)}`;
+  /* top stats: context against the window, cache hit at this call and over the agent's calls so far */
+  let rd = 0, tot = 0; for (let c = 0; c <= C; c++) if (A.calls[c].u) { rd += A.calls[c].u[1]; tot += A.total[c]; }
+  const hit = call.u ? call.u[1] / A.total[C] : null;
+  const items = A.orders[C].length;
+  $("stats").innerHTML = `<span>context <b>${fmtK(A.total[C])}</b> / ${fmtK(win)} <span class="meter"><i style="width:${(share * 100).toFixed(1)}%"></i></span> ${(share * 100).toFixed(1)}%</span>` +
+    `<span>cache hit <b>${hit == null ? "—" : (hit * 100).toFixed(0) + "%"}</b> · ${tot ? (rd / tot * 100).toFixed(0) : "—"}% so far</span>` +
+    `<span><b>${items}</b> items</span><span>call <b>${C}</b> / ${A.calls.length - 1}</span>` + (A.noresp[C] ? `<span class="badge" title="No response was recorded for this request (interrupted or failed): tokens estimated">no response</span>` : "");
+}
+
+/* side: what the context is made of, why the selected action, the actions list */
+function drawSide() {
+  const A = AG, by = {};
+  A.orders[C].forEach((id, i) => { const it = A.items[id]; by[it.k] = (by[it.k] || 0) + (A.calls[C]._drop.has(id) ? 0 : it.w * A.f[C]); });
+  $("ctxHead").textContent = `Context at call ${C} · ${dateOf(A.calls[C].t || 0)}`;
+  $("stack").innerHTML = KINDS.filter(k => by[k]).map(k => `<i style="width:${by[k] / A.total[C] * 100}%;background:${KC[k]}" title="${k} ${fmtK(by[k])}"></i>`).join("");
+  $("legend").innerHTML = KINDS.filter(k => by[k]).map(k => `<span><i style="background:${KC[k]}"></i>${k}<em>${fmtK(by[k])}</em></span>`).join("");
+  const sec = $("whySec");
+  if (SEL != null) {
+    const it = A.items[SEL];
+    sec.hidden = false;
+    $("why").innerHTML = `<b>${esc(it.s)}</b>` + ((it.lk || []).map(([id, why]) => `<div data-id="${id}"><span class="r">${esc(why)}</span><span class="t">${esc(header(A.items[id]))}</span></div>`).join("") || `<span>no likely causes found in its context</span>`);
+  } else sec.hidden = true;
+  for (const b of ACT_LIT) { b.classList.remove("here"); b.setAttribute("aria-pressed", "false"); }
+  ACT_LIT = [...document.querySelectorAll(`#actions button[data-m="${C}"]`)];
+  if (SEL != null) { const b = document.querySelector(`#actions button[data-id="${SEL}"]`); if (b) { b.setAttribute("aria-pressed", "true"); ACT_LIT.push(b); } }
+  for (const b of ACT_LIT) b.classList.toggle("here", +b.dataset.m === C);
+}
+$("why").addEventListener("click", e => { const d = e.target.closest("[data-id]"); if (!d) return; const n = UI.nodes.get(+d.dataset.id); if (n) { if (!n.open) { UI.open.set(n.id, true); setOpen(n, true); relayout(40); } centerOn(n); } });
+let ACT_LIT = [];
+function fillActions() {
+  ACT_LIT = [];
+  const q = $("filter").value.trim().toLowerCase();
+  const list = AG.actions.filter(a => !q || a.s.toLowerCase().includes(q));
+  $("actions").innerHTML = list.slice(0, 2000).map(a => `<button type="button" role="listitem" data-id="${a.id}" data-m="${a.m}"><span>#${a.m}</span><span>${esc(a.s)}</span></button>`).join("");
+  drawSide();
+}
+$("filter").addEventListener("input", fillActions);
+$("actions").addEventListener("click", e => { const b = e.target.closest("button"); if (b) select(+b.dataset.id); });
+
+function select(id, instant) {
+  const it = AG.items[id];
+  if (!it || it.m == null) return;
+  SEL = id;
+  for (const l of it.lk || []) UI.open.delete(l[0]);
+  show(it.m, instant);
+  const n = UI.nodes.get(id);
+  if (n && !instant) setTimeout(() => fit("links"), 50);
+}
+
+/* ---- pan and zoom ---- */
+UI.zoom = d3.zoom().scaleExtent([0.05, 2.5])
+  .filter(e => e.type === "wheel" ? !e.target.closest(".win .content") : !e.target.closest(".win") && !e.button)
+  .on("start", e => { stage.classList.add("panning"); if (e.sourceEvent && e.sourceEvent.type === "mousedown") noSelect(true); })
+  .on("end", () => { stage.classList.remove("panning"); if (!document.querySelector(".win.dragging")) noSelect(false); })
+  .on("zoom", e => {
+    UI.k = e.transform.k; UI.t = e.transform;
+    world.style.transform = `translate(${e.transform.x}px,${e.transform.y}px) scale(${e.transform.k})`;
+    if (!UI.cullPending) UI.cullPending = requestAnimationFrame(() => { UI.cullPending = 0; cull(); });
+  });
+stage.addEventListener("mousedown", e => { if (e.button === 0 && !e.target.closest(".win")) startDrag(e); }, true); /* before d3-zoom's own mousedown */
+d3.select(stage).call(UI.zoom).on("dblclick.zoom", null);
+function fit(what, animate = true) {
+  let ns = shownList;
+  if (what === "recent") ns = shownList.filter(n => n.open);
+  if (what === "links") { const ids = new Set(linkedSet()); ns = shownList.filter(n => ids.has(n.id)); }
+  if (!ns.length) ns = shownList;
+  let x0 = -90, y0 = -90, x1 = 90, y1 = 90;
+  for (const n of ns) { x0 = Math.min(x0, n.x - n.w / 2); x1 = Math.max(x1, n.x + n.w / 2); y0 = Math.min(y0, n.y - n.h / 2); y1 = Math.max(y1, n.y + n.h / 2); }
+  const W = stage.clientWidth, Hh = stage.clientHeight;
+  const k = Math.min(1.1, Math.max(what === "all" ? 0.05 : 0.5, 0.92 * Math.min(W / (x1 - x0), Hh / (y1 - y0))));
+  const t = d3.zoomIdentity.translate(W / 2 - k * (x0 + x1) / 2, Hh / 2 - k * (y0 + y1) / 2).scale(k);
+  (animate ? d3.select(stage).transition().duration(450) : d3.select(stage)).call(UI.zoom.transform, t);
+}
+function centerOn(n) {
+  const W = stage.clientWidth, Hh = stage.clientHeight, k = Math.max(UI.k, 0.8);
+  d3.select(stage).transition().duration(400).call(UI.zoom.transform, d3.zoomIdentity.translate(W / 2 - k * n.x, Hh / 2 - k * n.y).scale(k));
+}
+$("fitRecent").onclick = () => fit("recent");
+$("fitAll").onclick = () => fit("all");
+
+/* ---- the calls strip: bar height = context size; compactions marked; scrub and play ---- */
+const strip = d3.select("#strip");
+let stripX = null;
+function drawStrip() {
+  const A = AG, n = A.calls.length, W = $("strip").clientWidth || 800, Hh = 54;
+  stripX = d3.scaleBand().domain(d3.range(n)).range([0, W]).paddingInner(n > 300 ? 0 : 0.15);
+  const max = d3.max(A.total) || 1, y = v => Hh - 4 - (Hh - 12) * v / max;
+  strip.attr("viewBox", `0 0 ${W} ${Hh}`).attr("preserveAspectRatio", "none").selectAll("*").remove();
+  strip.append("g").selectAll("rect").data(d3.range(n)).join("rect")
+    .attr("x", i => stripX(i)).attr("width", Math.max(1, stripX.bandwidth())).attr("y", i => y(A.total[i])).attr("height", i => Hh - 4 - y(A.total[i]))
+    .attr("fill", i => A.noresp[i] ? "none" : "#3b5a7a").attr("stroke", i => A.noresp[i] ? "#5b6673" : "none").attr("stroke-width", 0.8);
+  const comp = d3.range(n).filter(i => A.calls[i].cmp);
+  strip.append("g").selectAll("line").data(comp).join("line").attr("x1", i => stripX(i)).attr("x2", i => stripX(i)).attr("y1", 2).attr("y2", Hh - 2).attr("stroke", "var(--del)").attr("stroke-width", 2)
+    .append("title").text(i => `call ${i}: a compaction`);
+  strip.append("rect").attr("id", "selMark").attr("height", 3).attr("y", Hh - 3).attr("fill", "var(--hot)").attr("width", 0);
+  strip.append("rect").attr("id", "cursor").attr("y", 0).attr("height", Hh).attr("fill", "#f2a54133").attr("stroke", "var(--hot)").attr("stroke-width", 1);
+}
+function drawStripCursor() {
+  if (!stripX) return;
+  const bw = Math.max(2, stripX.bandwidth());
+  strip.select("#cursor").attr("x", stripX(C) - (bw < 3 ? 1 : 0)).attr("width", bw);
+  const s = SEL != null ? AG.items[SEL].m : null;
+  strip.select("#selMark").attr("x", s != null ? stripX(s) : 0).attr("width", s != null ? bw : 0);
+  const call = AG.calls[C], prev = call.b != null ? AG.orders[call.b] : C > 0 ? AG.orders[C - 1] : new Int32Array(); /* no base: against the call before */
+  const ps = new Set(prev), cs = new Set(AG.orders[C]);
+  let inn = 0, out = 0; for (const id of cs) if (!ps.has(id)) inn++; for (const id of ps) if (!cs.has(id)) out++;
+  $("cur").innerHTML = `<b>#${C}</b> ${clock(call.t || 0)} · ${fmtK(AG.total[C])} tok · +${inn} −${out}${call.cmp ? " · <b>compaction</b>" : ""}`;
+}
+let scrubPending = null;
+function scrubAt(ev) {
+  const r = $("strip").getBoundingClientRect(), x = (ev.clientX - r.left) / r.width * (stripX.range()[1]);
+  const i = Math.max(0, Math.min(AG.calls.length - 1, Math.floor(x / stripX.step())));
+  if (i !== C && scrubPending == null) scrubPending = requestAnimationFrame(() => { scrubPending = null; show(i); });
+  else if (scrubPending != null) { cancelAnimationFrame(scrubPending); scrubPending = requestAnimationFrame(() => { scrubPending = null; show(i); }); }
+}
+$("strip").addEventListener("pointerdown", e => { $("strip").setPointerCapture(e.pointerId); stop(); scrubAt(e); const mv = ev => scrubAt(ev); $("strip").addEventListener("pointermove", mv); $("strip").addEventListener("pointerup", () => $("strip").removeEventListener("pointermove", mv), { once: true }); });
+function stop() { if (playing) { clearInterval(playing); playing = null; $("play").textContent = "▶"; } }
+function play() {
+  if (playing) return stop();
+  if (C >= AG.calls.length - 1) show(0);
+  $("play").textContent = "❚❚";
+  playing = setInterval(() => { if (C >= AG.calls.length - 1) stop(); else show(C + 1); }, 650);
+}
+$("play").onclick = play;
+$("prev").onclick = () => { stop(); show(C - 1); };
+$("next").onclick = () => { stop(); show(C + 1); };
+addEventListener("keydown", e => {
+  if (e.target.closest("input, select")) return;
+  if (e.key === "ArrowLeft") { stop(); show(C - 1); }
+  else if (e.key === "ArrowRight") { stop(); show(C + 1); }
+  else if (e.key === " ") { e.preventDefault(); play(); }
+  else if (e.key === "Escape") { SEL = null; show(C); }
+  else if (e.key === "f") fit("recent");
+  else if (e.key === "a") fit("all");
+});
+addEventListener("resize", () => { UI.W = UI.H = 0; drawStrip(); drawStripCursor(); cull(); });
+
+function writeHash() {
+  const p = new URLSearchParams();
+  p.set("s", SESS.id.slice(0, 8)); p.set("a", agentSel.value); p.set("c", C);
+  if (SEL != null) p.set("sel", SEL);
+  for (const k of ["bench", "z", "dx", "dy", "next"]) if (params.has(k)) p.set(k, params.get(k));
+  history.replaceState(null, "", "#" + p.toString());
+}
+
+/* ---- about ---- */
+const st = META.stats;
+$("about").innerHTML = `Draft on real data: what one agent had in its context window at every API call, rebuilt from the request records in this repo's Claude Code transcripts (a call's messages are its base call's first <code>keep</code> messages + <code>tail</code>; blobs by hash, ${st.missing} not found). ` +
+  `Every content block is a window; injected text (system reminders, hook output, CLAUDE.md, memory) is split out of the message it rides in. <b>Tokens</b>: each block's size (characters / 4; a response's own blocks from its output and thinking tokens; images w×h/750) scaled per call so the call's blocks add up to its real usage, input + cache read + cache write. ` +
+  `<b>Cache state</b>: where the block falls in the prompt (tools, system, messages) against the call's cache-read and cache-write counts. <b>Carried</b>: what holding the block has cost up to this call, at the rate of its cache state at each call. ` +
+  `<b>Stale</b>: the file changed after this Read, while it stayed in context: <i>known</i> when the change is the agent's own Edit, Write or command and that call is still in its context, ⚠ otherwise (another agent, another session, a command, or a change Claude Code noticed). Command writes are matched by pattern (redirects, <code>sed -i</code>, <code>mv</code>, <code>git checkout</code>…). ` +
+  `<b>Why</b>: an action's likely causes in the context of the call that made it: reads of the file it acts on, the prompt of the turn, its text and thinking just before in the same response, and results that mention names in its input (rarest names first). ` +
+  `<b>Estimated</b> sessions have no request records: their messages come from the conversation records and the system prompt and tools from the first call's usage. Images are not embedded. ` +
+  `Prices (per million tokens, tokens only for other models): ${Object.entries(META.prices).map(([m, p]) => `<code>${m}</code> input $${p.in}, cache read $${p.read}, cache write $${p.w5} (5 min) / $${p.w1h} (1 h)`).join("; ")}. Source: ${esc(META.price_source)}. Built ${esc(META.built)}.`;
+
+/* ---- start ---- */
+function start() {
+  let si = RAW.sessions.length - 1;
+  if (params.get("s")) { const j = RAW.sessions.findIndex(s => s.id.startsWith(params.get("s"))); if (j >= 0) si = j; }
+  SESS = RAW.sessions[si]; sessSel.value = si; fillAgents();
+  const ai = Math.min(+(params.get("a") || 0), SESS.agents.length - 1);
+  openAgent(ai, params.has("c") ? +params.get("c") : null, params.has("sel") ? +params.get("sel") : null);
+  if (params.has("z")) { /* a fixed zoom on the agent, for shots */
+    const k = +params.get("z"), W = stage.clientWidth, Hh = stage.clientHeight;
+    d3.select(stage).call(UI.zoom.transform, d3.zoomIdentity.translate(W / 2 + (+params.get("dx") || 0) * k, Hh / 2 + (+params.get("dy") || 0) * k).scale(k));
+  }
+  if (params.has("next")) setTimeout(() => { lastShow = 0; show(C + 1); }, +params.get("next")); /* one animated step, for shots */
+  if (params.has("bench")) bench(); /* synchronous: headless --dump-dom reads it after load */
+}
+
+/* ---- frame time while scrubbing: each step is one show() (rebuild, layout, DOM) plus forced style and layout ---- */
+function bench() {
+  const n = AG.calls.length, steps = Math.min(+params.get("bench") || 120, n), times = [];
+  const from = Math.max(0, n - steps);
+  for (let c = from; c < n; c++) {
+    const t0 = performance.now();
+    show(c);
+    const t1 = performance.now();
+    void world.getBoundingClientRect(); document.body.offsetHeight;
+    PROF.show += t1 - t0; PROF.dom += performance.now() - t1;
+    times.push(performance.now() - t0);
+  }
+  clearTimeout(restTimer);
+  const r0 = performance.now(); relayout(24); void world.getBoundingClientRect(); const rest = performance.now() - r0;
+  times.sort((a, b) => a - b);
+  const q = p => times[Math.min(times.length - 1, Math.floor(p * times.length))].toFixed(1);
+  const over = rectCollide(); over.initialize(shownList.map(n => ({ ...n }))); const hits = over(0);
+  const nan = shownList.filter(n => !isFinite(n.x) || !isFinite(n.y) || !isFinite(n.w) || !isFinite(n.h)).length;
+  const prof = ` | show() ${(PROF.show / steps).toFixed(1)} (sim ${(PROF.sim / steps).toFixed(1)} settle ${(PROF.settle / steps).toFixed(1)}) style+layout ${(PROF.dom / steps).toFixed(1)} ms/step, settle hits ${PROF.hs}`;
+  const out = prof + ` bench: ${times.length} steps over calls ${from}-${n - 1}, ${shownList.length} windows at the end (${shownList.filter(n => n.open).length} open, overlapping pairs ${hits}, bad ${nan}); ms per step median ${q(0.5)} p90 ${q(0.9)} max ${q(1)}; the full layout when the scrub rests ${rest.toFixed(0)} ms`;
+  const el = document.createElement("pre"); el.id = "bench"; el.textContent = out; document.body.appendChild(el);
+  document.title = out;
+}
+start();
+</script>
