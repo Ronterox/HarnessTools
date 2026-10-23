@@ -210,20 +210,26 @@ kind and source and the tokens; under it, its share of the context, the call
 it entered and its age, its cache state at this call (read, written, new),
 what holding it has cost so far, and whether its file went stale (`stale ·
 known` when the change is the agent's own, `⚠` when not). Older items are
-title-bar chips (a click opens one); the last calls' items and the call's own
-response (dashed) start open, ten at most. Drag a window by its title (it
-stays there), resize it from its corner, scroll its body with the wheel; drag
-the background to pan, wheel on it to zoom.
+title-bar chips (a click opens one, the title bar's fold button folds it
+again); the last calls' items and the call's own response (dashed) start
+open, ten at most. Drag a window by its title (it
+stays there), resize it from its corner, scroll its body with the wheel
+(`Shift`+wheel sideways); drag the background to pan, wheel on it to zoom.
 
 The strip at the bottom has a bar per call (height: context size; red: a
 compaction; hollow: no response recorded): click or drag to scrub, `←` `→`
-step, `space` plays (new items fly out of the agent, a compaction folds the
-windows into its summary). The right panel shows what the context is made of
-by kind, and the agent's actions (a filter box, `/`): pick one to go to the
-call that made it, with dashed links from the agent to the items likely
+(or its ‹ ›) step, `space` plays (from the first call when at the last; new
+items fly out of the agent, a compaction folds the windows into its summary).
+The right panel shows what the context is made of by kind, and the agent's
+actions (a filter box, `/`): pick one (or an action window's **why**) to go to
+the call that made it, with dashed links from the agent to the items likely
 behind it ("likely · read of a.c", "the prompt of this turn", …), listed
-under **why it decided**. The bar's picker switches to another agent of the
-session (at the call of the same moment, or its last when at the end).
+under **why it decided** (a click there opens that window and centres it). The
+wheel scrolls the actions and the picker; the bar's **recent** and **all** fit
+the view as `f` and `a` do. The bar's picker switches to another agent of the
+session (following the stage, at the stage's call; else at the call of the same
+moment, or its last when at the end). Before the agent's first call the screen
+says so.
 
 It follows the stage's clock (the last call at or before it; live: the
 newest), "following the stage" in the bar, until you scrub, step, play or pick
@@ -232,7 +238,8 @@ the agent's transcript is watched: once it stops growing for 3 s (15 s at
 most) it is read again in the background, and the windows, sizes, what you
 opened or folded, scroll, the selected action, the filter and the view stay
 as they were, new items flying in. `Esc` clears the filter's focus, then the
-selection, then the filter, then goes back to the stage (as does `X`).
+agent picker, the selection, the filter, then goes back to the stage (as does
+`X`).
 
 ## Open in Neovim
 
@@ -327,7 +334,8 @@ DVR: unpausing replays from 2 s before the pause at x1, idle stretches squeezed,
 the agent under the mouse (or the turn window's), `Q` quit.
 In the structure screen: `1` `2` `3` views, `[` `]` turns, `/` or `Ctrl+F` search (`Enter` go, `n` `N` next, previous), `Esc`/`Backspace` up, `R` rebuild, wheel scrolls the inspector.
 In the context screen: `←` `→` calls, `space` play, `L` follow the stage, `f` fit the open windows, `a` fit all, `/` or
-`Ctrl+F` filter the actions (`Enter` leaves the box), `Esc` clear (filter box, selection, filter) then back, `X` back.
+`Ctrl+F` filter the actions (`Enter` leaves the box; reopened with `/` or `Ctrl+F`, typing replaces the filter and `Backspace` clears it; `Backspace`, `Ctrl+W` a word), `Esc` clear
+(filter box, agent picker, selection, filter) then back, `X` back.
 
 ## Where the data comes from
 
@@ -381,7 +389,12 @@ JavaScript; part of `make test`, needs node and the d3 that
 leak-checked, that `draft/context/build_ctx.py` must agree on too, unit tests
 for sha256, Python's `json.dumps` and the API (`tests/test_context.c`), and
 `tests/context_parity.py` (`--context-dump` against `build_ctx.py` on every
-agent of this repo's sessions; run by hand). The context screen's rules
+agent of this repo's sessions; run by hand). Reloads (`tests/ctx_reload.c`,
+driven by `tests/context_reload.py`, plain and leak-checked): a reload after
+every line, inside every line and at random cuts of each fixture transcript
+equals a fresh load field by field, and fixed cases (files edited between
+reloads) each take the full-load fallbacks they must; `--transcript PATH` does
+the same on a copy of a real one, by hand. The context screen's rules
 (`tests/test_clay.c`, plain and leak-checked): which windows start open and the
 cap, ranks and target distances, the calls strip's hit test, the header's words
 on the fixture, a reload keeping the user's choices by item key (the fixture

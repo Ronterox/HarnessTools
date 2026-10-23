@@ -445,8 +445,9 @@ retried (a cancelled reload: the transcript still counts as changed), or a
 failure. While another agent loads the screen says so (no bar of the old
 one); a failed load, or a transcript with no API calls yet, shows "No context
 to show: …" (and a `--shot` takes that); a failed reload keeps the agent.
-`--context AGENT[:CALL[:ACTION]]` opens it for shots (the numbers taken from
-the end; without CALL the last call), not following the stage.
+`--context AGENT[:CALL[:ACTION]]` opens it for shots (CALL counted from the
+end when negative; without CALL the last call; an ACTION that isn't an action
+item is reported on stderr and the call shown), not following the stage.
 
 **What a call shows** (`show`, the page's `show()`): its order, then what its
 response made that isn't in it (`cl_shown`; drawn dashed, "this call's
@@ -593,8 +594,9 @@ start.
 - Messages found nowhere make every reload of that agent a full load
   (another file may hold them since).
 - A reload trusts that the transcript only grows: a file rewritten with the
-  same inode, as long, and the same last 256 bytes before the end taken is
-  taken as grown.
+  same inode, as long, with the same window and the same last 256 bytes
+  before the end taken is taken as grown (an edit before the window isn't
+  seen).
 - Transcripts are assumed compact JSON for the change scan's line filter
   (`"name":"Bash"`, `"tool_use_id":"..."`), as Claude Code writes them.
 - Tokens are estimates scaled to each call's real total: the split between

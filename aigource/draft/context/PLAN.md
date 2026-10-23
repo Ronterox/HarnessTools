@@ -144,6 +144,13 @@ live agent grows, all equal, 55 incremental (median 50 ms).
 `docs/CONTEXT.md` is the spec (the draft README's rules, mapped to C
 functions, known limits); README section, keys, options.
 
+Done (2026-10-23): checked against the code (every function and path the spec
+names, every option and `AIG_` variable, the screen's constants, keys and
+mouse actions); the README gained the reload tests, `Shift`+wheel, the filter
+box's editing, the fold, why and strip buttons, the picker at the stage's call
+when following; the spec's `--context` numbers and the reload's trust in a
+grown file (the window is compared now) were corrected.
+
 Each phase: an executor implements, `make && make test && make asan` pass, a
 reviewer checks it, fixes land before the next phase. Same constraints as the
 structure port (no staging, no whole-repo git commands, sandbox display only,
