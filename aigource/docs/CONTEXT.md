@@ -369,14 +369,19 @@ file's text but a window of it):
   `old_only` (store entries from before the window), `tail_seen` (hashes calls
   looked up, with how each message was written: `rep`, the hash of its
   objects' key order), `unresolved` and `found_else` (and the files those were
-  found in, `srcs`), the block keys a lookup missed, the responses items took
-  weights from (`used`).
+  found in, `srcs`), the block keys and request shapes (`shape:` + its hash)
+  a lookup missed (`block_missed`), the responses items took weights from
+  (`used`), the window's responses with their record counts (`settled`: one
+  with the same count is the one the calls were built with, as the window's
+  bytes are checked unchanged).
 
 **A reload** (`restore`, `read_new`, then the same build as a load):
 `restore` copies the previous agent's items, texts, instances and calls into a
 new build (every string taken into the new agent's pools; the previous agent
 is not touched, and may still be shown or reloaded again) and its loader;
-`read_new` reads the window and the appended bytes; the store is built over
+`read_new` reads the window back from the file (it must equal the kept
+one) and the appended bytes (`restore` reset each result item's link label:
+`post` links it again); the store is built over
 them, with the earlier responses' metadata first; `build_calls` takes the
 requests after the last one taken; every call's usage, model and dropped
 thinking, then enter and leave, stale reads, links and the derived values are
@@ -388,24 +393,32 @@ behind into `old_only` and `old`.
 **A full load instead** when the appended data can't be applied to what was
 built, as the draft would then build it otherwise (`b->fail`, printed by
 `AIG_DEBUG=1`): the file replaced (inode), shorter, or rewritten before the
-end taken (`chk`); another root, home or config; a last line without its
+end taken (`chk`), or inside the window; another root, home or config; a last line without its
 newline that parses; the agent had messages found nowhere (another file may
 hold them now), or a file a message was found in shrank or was replaced; a
 request needs a message only records before the window hold (`old_only`); a
-request id seen before; a request shape defined again with other content; a
-blob written again for a hash a call looked up, written differently (key
+request id seen before; a request shape defined again with other content, or
+written after a call that needed it; a message written again in or after the
+window, written differently from the earlier one (`rep`), when an earlier
+load had it before the window; a blob written again for a hash a call looked up, written differently (key
 order: `rep`), or for a store entry before the window; an appended response
 that grows one items took their weights from, or whose hash or block keys a
 call looked up and missed before; an appended message a call found nowhere or
 in another file; a record of a response from before the window. Estimated
 agents (no request records) always load in full.
 
-**Equivalence**: after any sequence of appends a reload's `ctx_json` (with
-every call's derived values) and item keys equal a fresh load's
-(`tests/ctx_reload.c`, driven by `tests/context_reload.py`): in `make test`
-at every line, inside every line and at seeded random cuts of each fixture
-transcript (a response's records arriving across reloads), plain and under
-ASan; by hand, `tests/context_reload.py --transcript PATH` at random cuts of a
+**Equivalence**: after any sequence of appends a reload equals a fresh load:
+its `ctx_json` (with every call's derived values), every field of every item,
+call, instance and of the agent the UI reads, and the item of every key
+(`tests/ctx_reload.c`, driven by `tests/context_reload.py`). In `make test`,
+plain and under ASan: at every line, inside every line and at seeded random
+cuts of each fixture transcript (a response's records arriving across
+reloads), none falling back but for a last line without its newline; then
+fixed cases, files edited between reloads, each pinned to the fallbacks it
+must take in order (none for a case that must stay incremental), one or more
+per guard. Two guards have no case: the file failing to open after `load`
+found it, and the window's records short of the kept count, which only a
+cancel reaches now that the window's bytes are compared. By hand, `tests/context_reload.py --transcript PATH` at random cuts of a
 copy of a real transcript.
 
 ## 7. The screen

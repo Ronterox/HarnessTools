@@ -129,23 +129,16 @@ would, it loads in full. Every reload equals a fresh load (JSON and keys):
 of the fixtures (`make test`), and at random cuts of a real 80 MB transcript
 by hand. docs/CONTEXT.md, "Reloads".
 
-Pending (review of the incremental reload, 2026-10-23; fixes started, not
-committed: usage limits stopped the work). None of these showed in real
-transcripts (52 reloads of the 81 MB one equal, median 43 ms):
-- the fixture reloads never fall back to a full load, so all 17 fallback
-  guards survive mutation: fixed cases per guard (replace, shrink and regrow,
-  tail rewrite, a late blob, a redefined shape, a blob written again, ...),
-  the runner failing when none falls back;
-- a shape written after the request that needed it is no fallback (record
-  the missed shape hash, fall back when it appears);
-- `restore` keeps a result's link label after it stops being linked (reset
-  it so `post()` links again);
-- an edit inside the kept window goes unseen (read the window back from the
-  file and compare);
-- the equivalence check compares `ctx_json` only, not every field the UI
-  reads;
-- a message written again with other key order, after an earlier load had
-  it (`old_only`), may differ from a fresh load.
+Done (review of the incremental reload, 2026-10-23): a request shape written
+after the call that needed it, an edit inside the window (read back from the
+file and compared), a message written again differently after an earlier load
+had it, each fall back now; `restore` resets a result's link label; the check
+compares every field the UI reads, not only `ctx_json`; 28 fixed cases cover 19
+of the 21 guards (the other two: the file failing to open after `load` found
+it, and a short window only a cancel reaches), each pinned to its fallbacks,
+and the split plans fail on any fallback but a last line without its newline.
+9 mutants of the guards, all caught. A real 82 MB transcript: 56 reloads as a
+live agent grows, all equal, 55 incremental (median 50 ms).
 
 ### C4. Docs
 `docs/CONTEXT.md` is the spec (the draft README's rules, mapped to C
