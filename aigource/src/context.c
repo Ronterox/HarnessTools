@@ -754,8 +754,9 @@ typedef struct Loader {
                                 * depend on that, not only on its hash */
     uint8_t (*rep)[32];
     int nrep;
-    StrMap block_missed;       /* block keys a changed response's lookup missed */
+    StrMap block_missed;       /* block keys a changed response's lookup missed; "shape:" + a shape hash a call missed */
     StrMap used;               /* responses items took their weights from: message id -> its records then */
+    StrMap settled;            /* the window's responses: message id -> their records at the last load (as unchanged as that) */
     StrMap rt_ix, cwd_ix;      /* tool_use id -> its result's time; -> its record's cwd (stale reads) */
     double *rt;
     char **cwd;
@@ -834,7 +835,7 @@ static void loader_free(Loader *l) {
     dmap_free(&l->old_only), dmap_free(&l->unresolved), dmap_free(&l->found_else), dmap_free(&l->tail_seen);
     dmap_free(&l->rep_ix);
     free(l->rep);
-    strmap_free(&l->block_missed), strmap_free(&l->used), strmap_free(&l->rt_ix), strmap_free(&l->cwd_ix);
+    strmap_free(&l->block_missed), strmap_free(&l->used), strmap_free(&l->settled), strmap_free(&l->rt_ix), strmap_free(&l->cwd_ix);
     free(l->rt);
     strv_free(l->cwd, l->ncwd);
     free(l->ai_title), free(l->first_prompt);
@@ -871,6 +872,7 @@ static Loader *loader_copy(const Loader *f) {
     dmap_copy(&l->rep_ix, &f->rep_ix);
     l->rep = mem_copy(f->rep, (size_t)f->nrep * sizeof *f->rep);
     strmap_copy(&l->block_missed, &f->block_missed), strmap_copy(&l->used, &f->used);
+    strmap_copy(&l->settled, &f->settled);
     strmap_copy(&l->rt_ix, &f->rt_ix), strmap_copy(&l->cwd_ix, &f->cwd_ix);
     l->rt = mem_copy(f->rt, (size_t)f->nrt * sizeof *f->rt);
     l->cwd = strv_copy(f->cwd, f->ncwd);
@@ -1222,10 +1224,14 @@ static void store_free(Store *s) {
     free(s->path);
 }
 
+static void msg_rep(Build *b, const Msg *m, uint8_t out[32]);
+
 /* resolve(h): the own file, else the project's other files in order. A
  * message found elsewhere is remembered in the own store (in found_else
  * across reloads, so it counts once). Resuming, a message only an earlier
- * load's records had (old_only) can't be rebuilt: a full load. */
+ * load's records had (old_only) can't be rebuilt: a full load; one written
+ * again in the window or after it must be written as it was (msg_rep), or a
+ * fresh load, which takes the first, would differ. */
 static const Msg *resolve(Build *b, const char *h) {
     uint8_t d[32];
     if (!hex_digest(h, d)) {
@@ -1233,7 +1239,18 @@ static const Msg *resolve(Build *b, const char *h) {
         return NULL;
     }
     int k = dmap_get(&b->own.map, d);
-    if (k >= 0) return &b->own.msgs[k];
+    if (k >= 0) {
+        if (b->resuming && dset_has(&b->ld->old_only, d)) { /* written again: a fresh load takes the first, gone from here */
+            uint8_t rp[32];
+            int r = dmap_get(&b->ld->rep_ix, d);
+            msg_rep(b, &b->own.msgs[k], rp);
+            if (r < 0 || memcmp(b->ld->rep[r], rp, 32)) {
+                b->fail = "a message written again, differently";
+                return NULL;
+            }
+        }
+        return &b->own.msgs[k];
+    }
     if (b->resuming && dset_has(&b->ld->old_only, d)) {
         b->fail = "a message only an earlier part of the transcript holds";
         return NULL;
@@ -2156,10 +2173,11 @@ static void build_calls(Build *b) {
             Resp *rr = &own->resps[k];
             if (rr->old) continue;
             int was = strmap_get(&ld->used, rr->mid), same = was == rr->nrec;
+            int steady = same || strmap_get(&ld->settled, rr->mid) == rr->nrec; /* the calls built had it so */
             if (was >= 0 && !same) b->fail = "a response items were weighed by grew";
-            else if (!same && !rr->bad && dset_has(&ld->tail_seen, rr->d))
+            else if (!steady && !rr->bad && dset_has(&ld->tail_seen, rr->d))
                 b->fail = "a response a call looked up appeared";
-            for (int i = 0; i < rr->nkeys && !same && !b->fail; i++)
+            for (int i = 0; i < rr->nkeys && !steady && !b->fail; i++)
                 if (strmap_get(&ld->block_missed, rr->keys[i]) >= 0) b->fail = "a block a call looked up appeared";
         }
         for (size_t i = 0; i < own->map.cap && !b->fail; i++) {
@@ -2186,6 +2204,11 @@ static void build_calls(Build *b) {
             const char *sh = gets(r->r, "shapeHash");
             if (!sh) continue;
             int k = strmap_get(&ld->shape_ix, sh);
+            if (b->resuming) { /* a call that looked this hash up and missed took no shape */
+                char mk[200];
+                snprintf(mk, sizeof mk, "shape:%.180s", sh);
+                if (strmap_get(&ld->block_missed, mk) >= 0) b->fail = "a request shape a call looked up appeared";
+            }
             yyjson_val *shv = get(r->r, "shape");
             char *raw = shv ? yyjson_val_write(shv, 0, NULL) : NULL; /* read back as the same values */
             if (!raw) raw = xstrdup("null");
@@ -2352,6 +2375,11 @@ static void build_calls(Build *b) {
             ids = rc->shape, nids = rc->nshape; /* shared with the call it came from */
         } else { /* new or changed: unchanged system blocks keep their item, the rest are new */
             int sk = sh ? strmap_get(&ld->shape_ix, sh) : -1;
+            if (sh && sk < 0) {
+                char mk[200];
+                snprintf(mk, sizeof mk, "shape:%.180s", sh);
+                strmap_put(&ld->block_missed, mk, 1);
+            }
             if (sk >= 0 && !shape_doc[sk])
                 shape_doc[sk] = yyjson_read_opts(ld->shape_raw[sk], strlen(ld->shape_raw[sk]), PYJ_READ, NULL, NULL);
             yyjson_val *shape = sk >= 0 ? yyjson_doc_get_root(shape_doc[sk]) : NULL;
@@ -4369,6 +4397,7 @@ static void restore(Build *b, const CtxAgent *prev) {
         CtxItem *d = &b->items[i];
         *d = *o;
         d->src = RE(o->src), d->tool = RE(o->tool), d->tuid = RE(o->tuid), d->path = RE(o->path);
+        if (o->kind == CK_RESULT) d->src = L_(b, "result"), d->tool = NULL, d->path = NULL; /* post links them again */
         d->text = NULL, d->len = 0, d->lang = NULL, d->line0 = d->line1 = 0;
         d->cmd = d->old_str = d->new_str = d->content = d->desc = NULL;
         d->tx = o->ntx ? mem_copy(o->tx, (size_t)o->ntx * sizeof *o->tx) : NULL;
@@ -4440,7 +4469,8 @@ static void restore(Build *b, const CtxAgent *prev) {
 
 /* A reload's records: the window again, then what was appended since. The
  * file must be the one the window came from: the same inode, not shorter,
- * the same bytes just before the end taken. */
+ * the same bytes just before the end taken, and the window's bytes as they
+ * were (read again from the file). An edit before the window isn't seen. */
 static void read_new(Build *b, const char *path) {
     Loader *ld = b->ld;
     int fd = open(path, O_RDONLY);
@@ -4460,16 +4490,20 @@ static void read_new(Build *b, const char *path) {
         close(fd);
         return;
     }
-    size_t nnew = (size_t)(st.st_size - ld->off), got = 0;
-    char *buf = xmalloc(ld->nwin + nnew + 1);
-    if (ld->nwin) memcpy(buf, ld->win, ld->nwin);
-    while (got < nnew) {
-        ssize_t r = pread(fd, buf + ld->nwin + got, nnew - got, ld->off + (off_t)got);
+    size_t want = ld->nwin + (size_t)(st.st_size - ld->off), got = 0;
+    char *buf = xmalloc(want + 1);
+    while (got < want) { /* the window from the file, not from memory: an edit in it shows */
+        ssize_t r = pread(fd, buf + got, want - got, ld->woff + (off_t)got);
         if (r <= 0) break;
         got += (size_t)r;
     }
     close(fd);
-    size_t n = ld->nwin + got, pos = 0;
+    if (got < ld->nwin || memcmp(buf, ld->win, ld->nwin)) {
+        free(buf);
+        b->fail = "the transcript was rewritten inside the window";
+        return;
+    }
+    size_t n = got, pos = 0;
     long abs = ld->wabs;
     for (long k = 0; pos < n; k++) {
         if (b->cancel && !(k & 1023) && atomic_load(b->cancel)) break;
@@ -4551,6 +4585,9 @@ static void save_loader(Build *b, const char *path) {
         resp_copy(&ld->old[ld->nold], rr);
         ld->old[ld->nold++].old = 1;
     }
+    strmap_free(&ld->settled);
+    for (int k = 0; k < b->own.nresps; k++)
+        if (!b->own.resps[k].old && b->own.resps[k].first >= W) strmap_put(&ld->settled, b->own.resps[k].mid, b->own.resps[k].nrec);
     free(ld->win);
     ld->nwin = (size_t)(b->new_off - woff);
     ld->win = xmalloc(ld->nwin + 1);
