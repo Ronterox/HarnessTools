@@ -80,7 +80,8 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 
 Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCompile`,
 `:AicChat <text>`, `:AicPrevUnseen`, `:AicRefresh`, `:AicCompact compile|ask|worker`,
-`:AicReset compile|ask`. `<Plug>(aic-open)`,
+`:AicReset compile|ask`, `:AicSkill` (install the `aic-prompts` skill: run
+`/aic-prompts` in the worker to turn requests you repeat into templates). `<Plug>(aic-open)`,
 `(aic-compile)` and `(aic-prev-unseen)` also exist.
 
 `<leader>a` is never mapped.
@@ -137,8 +138,6 @@ buffer, else the last doc you entered: submit, ask, `:AicCompile`,
   summary is shown. Each doc has its own diagnostics.
 - Anchors are highlighted, `gd` follows them and `<C-x><C-o>` completes them
   (see [Anchors](#anchors)).
-- The first time a project gets a docs dir, `aic docs` runs first so the old
-  per-session `spec.md` is migrated to doc `spec`.
 
 **Questions** (`aic://questions`): shows `chat.md` followed by a `## You` line. Type
 below it and press `<CR>` in normal mode to send with `aic ask`. The plugin never
@@ -234,9 +233,9 @@ pick which ones aic applies to your buffer. The compiler sees your unsaved text.
   - its alternative N is applied
 - `doc:N` and `@@ line N` show where the text is now, not where it was when
   the compiler proposed it.
-- Applied fixes stay marked, also after you edit their text. If you undo
-  their apply (`u`, even if you edit more afterwards), they can be picked
-  again.
+- Applied fixes stay marked, also after you edit their text or undo them
+  (`u`): a fix is never applied twice. To get an undone one back, run
+  `:AicFix` again.
 - The diagnostics a fix resolved are hidden (inline and in the quickfix list)
   until the next compile, which reports them again if they still hold.
   Undoing doesn't bring them back.
@@ -417,8 +416,8 @@ changed buffers re-applied), human-edit hunks, the
 statusline, hold/continue, submit (picker order, broken templates, input,
 preview header flag, `:w` sends the edited text with its receipt, leaving
 cancels, render errors, `:AicPrompts` copy/new), docs (new doc with/without the compile
-marker, per-doc diagnostics and statusline, picker, `--doc` on submit/ask,
-migration before the first docs dir), compile on `:w` (and queued compiles),
+marker, per-doc diagnostics and statusline, picker, `--doc` on submit/ask),
+compile on `:w` (and queued compiles),
 ask/what-if floats (`P` `F` `S` `Y` `gd`), chat, and usage: the three
 winbars (plus null ctx window, null quota, gone with the view, back with it), the 80% hint, the `:AicUsage` float and its `c`/`R`/`w` actions
 (including a refused worker compact and `:AicReset worker` being rejected). The project is a git repo

@@ -291,10 +291,9 @@ def compile_spec(root, sid, doc=docs.DEFAULT):
                 try:
                     res = _compile_once(root, sid, d)
                 except Exception as e:  # one doc's failure never costs the others their run
+                    _record_error(sdir, d, e)
                     if d == doc:
                         last, err = None, e
-                    elif not isinstance(e, CompilerError):  # (CompilerError is already recorded)
-                        _record_error(sdir, d, e)
                     continue
                 if d == doc:
                     last, err = res, None
@@ -325,9 +324,6 @@ def _template(root, name, task):
         return compiler_prompts.find(root, name, task)
     except prompts.PromptError as e:
         raise CompilerError(str(e))
-
-
-_tag = compiler_prompts.tag
 
 
 def _template_info(t):
@@ -362,36 +358,36 @@ def compile_prompt(root, sid, doc=docs.DEFAULT):
     }
     return {"prompt": compiler_prompts.render(t, values), "model": compiler_prompts.model(t, COMPILE_MODEL),
             "add_dirs": anchors.add_dirs([text], root) + own_dirs,
-            "note": "compile " + doc + _tag(t, "compile"), "template": t,
+            "note": "compile " + doc + compiler_prompts.tag(t, "compile"), "template": t,
             "seq": trace[-1]["seq"] if trace else 0}
+
+
+def structured(out):
+    """A run's structured output (else its result as JSON): a dict, or None."""
+    res = out.get("structured_output")
+    if not isinstance(res, dict):
+        try:
+            res = json.loads(out.get("result") or "")
+        except ValueError:
+            return None
+    return res if isinstance(res, dict) else None
 
 
 def _compile_once(root, sid, doc=docs.DEFAULT):
     sdir = paths.session_dir(root, sid)
-    dpath = docs.diag_path(sdir, doc)
-    try:
-        c = compile_prompt(root, sid, doc)
-        out = run_claude(root, sdir, "compile", c["model"], c["prompt"], schema=SCHEMA,
-                         add_dirs=c["add_dirs"], note=c["note"])
-        res = out.get("structured_output")
-        if not isinstance(res, dict):
-            try:
-                res = json.loads(out.get("result") or "")
-            except ValueError:
-                raise CompilerError("compiler returned no diagnostics")
-        t = c["template"]
-        diag = {"doc": doc, "compiled_at": paths.now(), "upto_seq": c["seq"],
-                "summary": res.get("summary", ""), "items": res.get("items") or [],
-                "template": _template_info(t),
-                "cost_usd": out.get("total_cost_usd")}
-        paths.write_json(dpath, diag)
-        _set_state(sdir, compile_upto_seq=c["seq"])
-        return diag
-    except CompilerError as e:
-        prev = paths.read_json(dpath, {}) or {}
-        prev.update({"doc": doc, "error": str(e), "compiled_at": paths.now()})
-        paths.write_json(dpath, prev)
-        raise
+    c = compile_prompt(root, sid, doc)
+    out = run_claude(root, sdir, "compile", c["model"], c["prompt"], schema=SCHEMA,
+                     add_dirs=c["add_dirs"], note=c["note"])
+    res = structured(out)
+    if res is None:
+        raise CompilerError("compiler returned no diagnostics")
+    diag = {"doc": doc, "compiled_at": paths.now(), "upto_seq": c["seq"],
+            "summary": res.get("summary", ""), "items": res.get("items") or [],
+            "template": _template_info(c["template"]),
+            "cost_usd": out.get("total_cost_usd")}
+    paths.write_json(docs.diag_path(sdir, doc), diag)
+    _set_state(sdir, compile_upto_seq=c["seq"])
+    return diag
 
 
 def _where(ctx):
@@ -445,7 +441,7 @@ def ask_prompt(root, sid, question, ctx=None, whatif=False, doc=docs.DEFAULT, te
     }
     note = "what-if" if whatif else ("ask " + _where(ctx)).strip() if ctx else "chat"
     return {"prompt": compiler_prompts.render(t, values), "model": compiler_prompts.model(t, ASK_MODEL),
-            "add_dirs": anchors.add_dirs([question], root) + own_dirs, "note": note + _tag(t, task),
+            "add_dirs": anchors.add_dirs([question], root) + own_dirs, "note": note + compiler_prompts.tag(t, task),
             "template": t, "seq": trace[-1]["seq"] if trace else 0}
 
 
@@ -457,7 +453,7 @@ def ask(root, sid, question, ctx=None, whatif=False, doc=docs.DEFAULT, template=
 
     _set_state(sdir, ask_upto_seq=a["seq"])
     head = "## You%s%s%s" % (" (what-if)" if whatif else "", (" — " + _where(ctx)) if ctx else "",
-                             _tag(a["template"], "whatif" if whatif else "ask"))
+                             compiler_prompts.tag(a["template"], "whatif" if whatif else "ask"))
     with open(os.path.join(sdir, "chat.md"), "a", encoding="utf-8") as f:
         f.write("%s\n%s\n\n## Compiler\n%s\n\n" % (head, question.strip(), answer))
     return answer

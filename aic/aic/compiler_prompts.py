@@ -16,8 +16,8 @@ Other names are extra templates: `task: ask` ones are offered when asking,
 `task: compile` ones are picked per doc (`<!-- aic: compile=NAME -->`).
 
 Trust: a template is instructions, so it can always talk the compiler into
-ignoring something; what aic guarantees is narrower. The project dir is the
-worker's reach (its file tools are refused there, its Bash only roughly), so:
+ignoring something; what aic guarantees is narrower. Project templates are
+the worker's to write too (the aic-prompts skill drafts them), so:
 - a template places the data but can't drop it from the prompt: every data
   variable it does not emit is appended after it;
 - a project template shapes instructions only: its `model:` is ignored and its
@@ -32,7 +32,7 @@ import os
 import re
 import unicodedata
 
-from . import anchors, docs, paths, prompts
+from . import anchors, paths, prompts
 
 KEYS = {"description", "task", "model"}
 MODEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -61,26 +61,7 @@ def dirs(root):
 
 def parse(text, name="?"):
     """-> (meta, body). Raises PromptError."""
-    text = text.replace("\r\n", "\n")
-    meta, body = {}, text
-    if text.startswith("---\n"):
-        end = text.find("\n---", 3)
-        if end < 0:
-            raise prompts.PromptError("template %s: front matter is not closed with ---" % name)
-        for i, line in enumerate(text[4:end].split("\n")):
-            if not line.strip() or line.lstrip().startswith("#"):
-                continue
-            k, sep, v = line.partition(":")
-            k = k.strip()
-            if not sep or k not in KEYS:
-                raise prompts.PromptError("template %s: front matter line %d: unknown key %r (known: %s)"
-                                          % (name, i + 2, k, ", ".join(sorted(KEYS))))
-            try:
-                meta[k] = prompts._value(v)
-            except prompts.PromptError as e:
-                raise prompts.PromptError("template %s: front matter line %d: %s" % (name, i + 2, e))
-        body = text[end + 4:]
-        body = body[1:] if body.startswith("\n") else body
+    meta, body = prompts.front_matter(text, name, KEYS)
     task = meta.get("task") or (name if name in TASKS else None)
     if not isinstance(task, str) or task not in TASKS:
         raise prompts.PromptError("template %s: needs `task:` one of %s" % (name, ", ".join(TASKS)))
@@ -91,8 +72,8 @@ def parse(text, name="?"):
     if not isinstance(meta.get("description", ""), str):
         raise prompts.PromptError("template %s: description must be text" % name)
     # hidden text would make the file say something else than it shows
-    hidden = sorted({"U+%04X" % ord(c) for c in body + meta.get("description", "")
-                     if c not in "\t\n" and unicodedata.category(c) in ("Cc", "Cf", "Co", "Cs")})
+    text = body + meta.get("description", "")
+    hidden = sorted(set(prompts.hidden(text)) | {"U+%04X" % ord(c) for c in text if unicodedata.category(c) == "Co"})
     if hidden:
         raise prompts.PromptError("template %s: invisible or direction-changing characters (%s): remove them"
                                   % (name, " ".join(hidden)))
@@ -103,9 +84,7 @@ def parse(text, name="?"):
 def find(root, name, task=None):
     """-> {name, source, path, meta, body} for compiler template `name`;
     task: it must be for that task."""
-    prompts._check_name(name)
-    found = [(source, os.path.join(d, name + ".md")) for source, d in dirs(root)
-             if os.path.isfile(os.path.join(d, name + ".md"))]
+    found = prompts.locate(dirs(root), name)
     if found:
         source, p = found[0]
         meta, body = parse(paths.read_text(p), name)
@@ -118,34 +97,18 @@ def find(root, name, task=None):
 
 
 def listing(root):
-    """Every compiler template name once (the winning one), sorted; broken ones carry `error`."""
-    seen, out = {}, []
-    for source, d in dirs(root):
+    """Every compiler template once (see prompts.templates()); broken ones carry `error`."""
+    out = prompts.templates(dirs(root))
+    for item in out:
+        builtin = os.path.join(dirs(root)[-1][1], item["name"] + ".md")
+        if os.path.isfile(builtin):
+            item["builtin"] = builtin  # (new templates start from it, never from a project file)
         try:
-            files = sorted(os.listdir(d)) if os.path.isdir(d) else []
-        except OSError:
-            continue
-        for f in files:
-            name, ext = os.path.splitext(f)
-            if ext != ".md" or not docs.NAME.match(name) or ".." in name:
-                continue
-            if name in seen:
-                seen[name]["overrides"].append(source)
-                continue
-            p = os.path.join(d, f)
-            item = {"name": name, "source": source, "path": p, "overrides": []}
-            builtin = os.path.join(dirs(root)[-1][1], f)
-            if os.path.isfile(builtin):
-                item["builtin"] = builtin  # (new templates start from it, never from a project file)
-            seen[name] = item
-            try:
-                meta, _ = parse(paths.read_text(p), name)
-                item.update(description=meta.get("description") or "", task=meta["task"], model=model(
-                    dict(item, meta=meta), None))
-            except Exception as e:  # one broken file never hides the others
-                item["error"] = str(e)
-            out.append(item)
-    out.sort(key=lambda x: x["name"])
+            meta, _ = parse(paths.read_text(item["path"]), item["name"])
+            item.update(description=meta.get("description") or "", task=meta["task"], model=model(
+                dict(item, meta=meta), None))
+        except Exception as e:  # one broken file never hides the others
+            item["error"] = str(e)
     return out
 
 

@@ -79,54 +79,13 @@ local function hl(g, s)
   return '%#' .. g .. '#' .. s .. '%*'
 end
 
--- Seconds -> "3h30m" / "6d7h" / "12m" / "40s".
-function M.duration(s)
-  s = math.max(0, math.floor(tonumber(s) or 0))
-  if s >= 86400 then
-    return ('%dd%dh'):format(math.floor(s / 86400), math.floor(s % 86400 / 3600))
-  elseif s >= 3600 then
-    return ('%dh%dm'):format(math.floor(s / 3600), math.floor(s % 3600 / 60))
-  elseif s >= 60 then
-    return ('%dm'):format(math.floor(s / 60))
-  end
-  return s .. 's'
-end
-
-local function days_from_civil(y, m, d)
-  y = m <= 2 and y - 1 or y
-  local era = math.floor(y / 400)
-  local yoe = y - era * 400
-  local doy = math.floor((153 * ((m + 9) % 12) + 2) / 5) + d - 1
-  return era * 146097 + yoe * 365 + math.floor(yoe / 4) - math.floor(yoe / 100) + doy - 719468
-end
-
--- ISO 8601 (UTC "Z" or ±hh:mm offset; no zone = UTC) or epoch number -> epoch.
-function M.parse_time(v)
-  if type(v) == 'number' then
-    return v > 1e11 and v / 1000 or v
-  end
-  if type(v) ~= 'string' then
-    return nil
-  end
-  local y, mo, d, h, mi, s = v:match('^(%d+)-(%d+)-(%d+)[T ](%d+):(%d+):(%d+)')
-  if not y then
-    return nil
-  end
-  local t = days_from_civil(tonumber(y), tonumber(mo), tonumber(d)) * 86400 + h * 3600 + mi * 60 + s
-  local sign, oh, om = v:match('([+-])(%d%d):?(%d%d)$')
-  if sign then
-    t = t - (sign == '+' and 1 or -1) * (oh * 3600 + om * 60)
-  end
-  return t
-end
-
-local function resets(v)
-  local t = M.parse_time(v)
-  if not t then
+-- `resets_in` seconds (as of the last fetch) -> "resets in 3h30m".
+local function resets(s)
+  s = tonumber(s)
+  if not s then
     return ''
   end
-  local d = t - os.time()
-  return d > 0 and ('resets in ' .. M.duration(d)) or 'reset due'
+  return s > 0 and ('resets in ' .. util.duration(s)) or 'reset due'
 end
 
 ---------------------------------------------------------------------------
@@ -145,9 +104,7 @@ local function session_part(name, e, narrow)
   elseif tonumber(e.ctx_tokens) then
     table.insert(parts, 'ctx ' .. M.k(e.ctx_tokens) .. ' (?%%)') -- window learned on its next call
   end
-  if e.backfilled then
-    table.insert(parts, '(earlier)') -- from its transcript: no turn/cost history
-  elseif name == 'worker' then
+  if name == 'worker' then
     if e.turn then
       table.insert(parts, 'turn ' .. esc(e.turn))
     end
@@ -331,9 +288,7 @@ local function block(name, e)
   else
     table.insert(out, ('- ctx %s / ? (?%%): the window size is learned on its next call'):format(M.k(e.ctx_tokens)))
   end
-  if e.backfilled then
-    table.insert(out, '- read from its transcript (it predates usage tracking): no turn/cost history')
-  elseif name == 'worker' then
+  if name == 'worker' then
     table.insert(out, '- turn ' .. tostring(e.turn or '?'))
   else
     local n = tonumber(e.turns) or 0
@@ -352,17 +307,17 @@ local function quota_block(q)
     return { '## account quota', '', '(unavailable)', '' }
   end
   local age = tonumber(q.age_s)
-  local out = { '## account quota' .. (age and ('  (updated ' .. M.duration(age) .. ' ago)') or ''), '' }
+  local out = { '## account quota' .. (age and ('  (updated ' .. util.duration(age) .. ' ago)') or ''), '' }
   local function line(label, p, at)
     if tonumber(p) then
       table.insert(out, ('- %s: %d%%  %s'):format(label, math.floor(p + 0.5), resets(at)))
     end
   end
-  line('5h', q.five_hour, q.five_hour_resets_at)
-  line('week', q.weekly, q.weekly_resets_at)
+  line('5h', q.five_hour, q.five_hour_resets_in)
+  line('week', q.weekly, q.weekly_resets_in)
   for _, b in ipairs(type(q.buckets) == 'table' and q.buckets or {}) do
     if type(b) == 'table' then
-      line(tostring(b.label or b.id or '?'), b.percent, b.resets_at)
+      line(tostring(b.label or b.id or '?'), b.percent, b.resets_in)
     end
   end
   table.insert(out, '')

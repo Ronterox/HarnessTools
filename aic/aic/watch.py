@@ -222,8 +222,7 @@ class Watcher:
 
     def resume(self):
         st = paths.read_json(self._state_path())
-        trace = paths.read_jsonl(self.trace_path)
-        last = trace[-1].get("seq", 0) if trace else 0
+        last = paths.last_seq(self.dir)
         if not (isinstance(st, dict) and st.get("session_id") == self.sid and st.get("seq") == last
                 and isinstance(st.get("offsets"), dict)):
             return False

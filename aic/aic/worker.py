@@ -14,6 +14,7 @@ import time
 
 from . import docs, paths, prompts
 
+SKILLS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "skills")
 HOOK_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
                "Stop", "Notification", "SessionEnd"]
 
@@ -58,6 +59,17 @@ def init(root, bin_path):
         hooks[ev] = groups
     paths.write_text(settings_path, json.dumps(settings, indent=2) + "\n")
     return settings_path
+
+
+def install_skill(root, bin_path, name="aic-prompts"):
+    """Copy aic's skill `name` into the project's .claude/skills/ (where the
+    worker finds it as /<name>), with `{AIC}` = the aic executable."""
+    text = paths.read_text(os.path.join(SKILLS, name, "SKILL.md"))
+    if not text:
+        raise WorkerError("no skill %r in %s" % (name, SKILLS))
+    dst = os.path.join(root, ".claude", "skills", name, "SKILL.md")
+    paths.write_text(dst, text.replace("{AIC}", bin_path))
+    return dst
 
 
 # -- sessions -----------------------------------------------------------------
@@ -135,16 +147,6 @@ def _tmux(*args, input=None, socket=None):
     return p.stdout
 
 
-def _stat(pid):
-    """(pgrp, tpgid) from /proc/<pid>/stat, or None."""
-    try:
-        with open("/proc/%d/stat" % int(pid)) as f:
-            fields = f.read().rsplit(")", 1)[1].split()
-        return int(fields[2]), int(fields[5])
-    except (OSError, ValueError, IndexError, TypeError):
-        return None
-
-
 def verify_pane(w):
     """The pane must still be the live Claude Code TUI of this session: its
     process alive, owning the pane's terminal, and in the foreground. Anything
@@ -159,16 +161,12 @@ def verify_pane(w):
     except WorkerError:
         raise WorkerError("worker pane %s is gone" % pane)
     pid = w.get("pid")
-    st = _stat(pid) if pid else None
+    st = paths.proc_stat(pid) if pid else None
     if not st:
         raise WorkerError("worker process not found (it exited?); refusing to type into %s" % pane)
-    try:
-        tty = os.readlink("/proc/%d/fd/0" % int(pid))
-    except OSError:
-        tty = None
-    if tty != pane_tty:
+    if paths.tty(pid) != pane_tty:
         raise WorkerError("worker (pid %s) does not own pane %s's terminal; refusing to type" % (pid, pane))
-    if st[0] != st[1]:
+    if st[2] != st[5]:  # pgrp != the terminal's foreground pgrp
         raise WorkerError("worker (pid %s) is not in the foreground of %s; refusing to type" % (pid, pane))
     return pane
 
@@ -255,12 +253,6 @@ def _confirm(transcript, offset, header, timeout=5.0):
     return False
 
 
-def control(root, sid, kind, **extra):
-    ev = {"ts": paths.now(), "kind": kind}
-    ev.update(extra)
-    paths.append_jsonl(os.path.join(paths.session_dir(root, sid), "control.jsonl"), ev)
-
-
 # -- submit / hold / continue -------------------------------------------------
 def _human_edits_since(sdir, seq):
     """Where the human's edits are *now* (touched.json follows later shifts),
@@ -279,21 +271,6 @@ def _human_edits_since(sdir, seq):
                 end = h["start"] + max(h.get("count") or 1, 1) - 1
                 out.append("%s:%d-%d" % (e.get("file"), h["start"], end))
     return out
-
-
-def build_submit(root, sid, line_from=None, line_to=None, doc=docs.DEFAULT, prompt=None, input_text=None,
-                 builtin_only=False):
-    """Render prompt template `prompt` (default: `selection` for a line range,
-    else `spec`) for doc `doc` -> dict(header=typed line, body=pasted text,
-    spec=doc text that counts as sent or None, seq=trace position covered,
-    receipt=what a send records). Line numbers are file lines."""
-    prompt = prompt or ("selection" if line_from else "spec")
-    try:
-        r = prompts.render(root, sid, prompt, doc, line_from, line_to, input_text, builtin_only)
-    except prompts.PromptError as e:
-        raise WorkerError(str(e))
-    rc = r["receipt"]
-    return {"header": r["header"], "body": r["body"], "spec": rc["sent"], "seq": rc["seq"], "receipt": rc}
 
 
 def send_rendered(root, sid, header, body, receipt, now=False):
@@ -321,7 +298,7 @@ def send_rendered(root, sid, header, body, receipt, now=False):
             st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
             cur = st.get("submit_seq") if isinstance(st.get("submit_seq"), int) else 0
             paths.update_json(os.path.join(sdir, "state.json"), submit_seq=max(cur, receipt["seq"]))
-        control(root, sid, "submit", text=header + "\n" + body, now=bool(now),
+        paths.control(root, sid, "submit", text=header + "\n" + body, now=bool(now),
                 prompt=receipt.get("prompt"), doc=receipt.get("doc"))
     if not busy:
         state = "sent"
@@ -333,17 +310,19 @@ def send_rendered(root, sid, header, body, receipt, now=False):
 
 
 def submit(root, sid, line_from=None, line_to=None, now=False, doc=docs.DEFAULT, prompt=None, input_text=None):
-    """Render and send without a preview: built-in templates only (a project
-    or user template, possibly written by the worker, must be seen first:
-    render it and send with send_rendered)."""
-    msg = build_submit(root, sid, line_from, line_to, doc, prompt, input_text, builtin_only=True)
-    return send_rendered(root, sid, msg["header"], msg["body"], msg["receipt"], now)
+    """Render prompt template `prompt` (default: `selection` for a line range,
+    else `spec`) and send it without a preview: built-in templates only (a
+    project or user template, possibly written by the worker, must be seen
+    first: render it and send with send_rendered)."""
+    r = prompts.render(root, sid, prompt or ("selection" if line_from else "spec"), doc, line_from, line_to,
+                       input_text, builtin_only=True)
+    return send_rendered(root, sid, r["header"], r["body"], r["receipt"], now)
 
 
 def hold(root, sid):
     sdir = paths.session_dir(root, sid)
     paths.write_text(os.path.join(sdir, "hold"), str(paths.now()))
-    control(root, sid, "hold")
+    paths.control(root, sid, "hold")
     w = paths.worker(root, sid) or {}
     if w.get("state") != "busy":
         return "hold armed (worker is %s; it will stop at its next tool call)" % (w.get("state") or "unknown")
@@ -359,5 +338,5 @@ def cont(root, sid, message=None):
     h = os.path.join(sdir, "hold")
     if os.path.exists(h):
         os.unlink(h)
-    control(root, sid, "release")
+    paths.control(root, sid, "release")
     return "released; sent to %s" % pane

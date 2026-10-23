@@ -6,12 +6,10 @@ the editor applies them to its own buffer. Proposals are kept per session in
 fixes.<doc>.json (the latest only).
 """
 import hashlib
-import json
 import os
 import re
-import unicodedata
 
-from . import compiler, compiler_prompts, docs, paths
+from . import compiler, compiler_prompts, docs, paths, prompts
 
 FIX_MODEL = os.environ.get("AIC_FIX_MODEL", compiler.COMPILE_MODEL)
 
@@ -44,9 +42,6 @@ FIX_SCHEMA = {
 }
 
 NUMBERED = re.compile(r"^ *\d+\| ?")
-# shown as nothing (or nothing distinct) in a diff, yet changes the doc
-INVISIBLE = {"Cc", "Cf", "Cs", "Zl", "Zp", "Zs"}  # (Zs: every space but " ")
-INVISIBLE_EXTRA = {"\u034f", "\u115f", "\u1160", "\u3164", "\uffa0"}
 
 
 def fixes_path(sdir, name):
@@ -55,8 +50,7 @@ def fixes_path(sdir, name):
 
 def doc_line(it):
     """The doc line an item is about, or None."""
-    on_doc = it.get("file") in ("doc", "spec")
-    n = it.get("line") if on_doc else None
+    n = it.get("line") if it.get("file") == "doc" else None
     n = n if isinstance(n, int) else it.get("spec_line")
     return n if isinstance(n, int) else None
 
@@ -68,11 +62,6 @@ def _count(text, s):
         n += 1
         i = text.find(s, i + 1)
     return n
-
-
-def _invisible(s):
-    return sorted({"U+%04X" % ord(c) for c in s if c not in "\t\n " and (
-        unicodedata.category(c) in INVISIBLE or c in INVISIBLE_EXTRA)})
 
 
 def _unnumber(s):
@@ -138,7 +127,7 @@ def check(text, proposed):
             if start <= protect:
                 err = "it changes the aic marker line"
                 break
-            bad = _invisible(new)
+            bad = prompts.hidden(new)
             if bad:
                 err = "its new text has invisible characters (%s)" % " ".join(bad)
                 break
@@ -187,8 +176,8 @@ def propose(root, sid, doc, text=None, line_from=None, line_to=None, dry=False):
         raise compiler.CompilerError("no diagnostics to fix in %s%s (compile it first)" % (
             doc, " lines %s-%s" % (line_from, line_to or line_from) if line_from is not None else ""))
     listing = "\n".join("#%d [%s/%s] %s:%s %s" % (
-        i, it.get("kind"), it.get("severity"), "doc" if it.get("file") in ("doc", "spec") else it.get("file"),
-        it.get("line"), it.get("message")) + ("" if it.get("file") in ("doc", "spec") or not it.get("spec_line")
+        i, it.get("kind"), it.get("severity"), it.get("file"),
+        it.get("line"), it.get("message")) + ("" if it.get("file") == "doc" or not it.get("spec_line")
                                              else " (doc line %s)" % it["spec_line"]) for i, it in picked)
     t = compiler._template(root, "fix", "fix")
     values = {"doc.name": doc,
@@ -200,14 +189,9 @@ def propose(root, sid, doc, text=None, line_from=None, line_to=None, dry=False):
     if dry:
         return {"prompt": prompt, "model": model}
     out = compiler.run_claude(root, sdir, "compile", model, prompt, schema=FIX_SCHEMA,
-                              note="fix " + doc + compiler._tag(t, "fix"))
-    res = out.get("structured_output")
-    if not isinstance(res, dict):
-        try:
-            res = json.loads(out.get("result") or "")
-        except ValueError:
-            res = None
-    if not isinstance(res, dict):
+                              note="fix " + doc + compiler_prompts.tag(t, "fix"))
+    res = compiler.structured(out)
+    if res is None:
         raise compiler.CompilerError("compiler returned no fixes")
     fixes, rejected = check(text, res.get("fixes"))
     by_index = dict(picked)

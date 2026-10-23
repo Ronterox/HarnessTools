@@ -121,13 +121,10 @@ local function usage_json(ask_tokens)
   })
 end
 write(dir .. '/usage.json', usage_json())
-local function iso(t)
-  return os.date('!%Y-%m-%dT%H:%M:%SZ', t)
-end
 local quota_json = vim.json.encode({ sessions = {}, quota = {
-  five_hour = 57, five_hour_resets_at = iso(now + 3 * 3600 + 30 * 60 + 40),
-  weekly = 15, weekly_resets_at = iso(now + 6 * 86400 + 7 * 3600 + 30 * 60),
-  buckets = { { id = 'fable', label = 'Fable', percent = 0, resets_at = iso(now + 86400), isActive = false } },
+  five_hour = 57, five_hour_resets_in = 3 * 3600 + 30 * 60 + 40,
+  weekly = 15, weekly_resets_in = 6 * 86400 + 7 * 3600 + 30 * 60,
+  buckets = { { id = 'fable', label = 'Fable', percent = 0, resets_in = 86400, isActive = false } },
   age_s = 30,
 } })
 write(root .. '/quota.json', quota_json)
@@ -289,7 +286,7 @@ write(
     upto_seq = 5,
     summary = 'Two problems',
     items = {
-      { kind = 'mismatch', severity = 'error', file = 'spec', line = 3, spec_line = 3, message = 'not done' },
+      { kind = 'mismatch', severity = 'error', file = 'doc', line = 3, spec_line = 3, message = 'not done' },
       { kind = 'unspecified', severity = 'warning', file = 'src/app.js', line = 4, message = 'extra' },
     },
   })
@@ -344,10 +341,10 @@ ok(signs.jump(-1) == 3, '[w -> 3')
 
 -- gd on anchor
 vim.cmd.edit(vim.fn.fnameescape(spec_path))
-local p, t = spec.anchor_at('- helper @src/app.js:hello', 12)
-ok(p == 'src/app.js' and t == 'hello', 'anchor parse symbol')
-p, t = spec.anchor_at('- greet users @src/app.js:4.', 16)
-ok(p == 'src/app.js' and t == 4, 'anchor parse line')
+local an = require('aic.anchors').anchor_at('- helper @src/app.js:hello', 12)
+ok(an and an.path == 'src/app.js' and an.symbol == 'hello', 'anchor parse symbol')
+an = require('aic.anchors').anchor_at('- greet users @src/app.js:4.', 16)
+ok(an and an.path == 'src/app.js' and an.line == 4, 'anchor parse line')
 vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
 
 -- human edit -> human.jsonl
@@ -384,13 +381,14 @@ ok(vim.api.nvim_get_current_buf() == require('aic.chat').buf, 'toggle returns to
 vim.cmd([[execute "normal! \<C-^>"]])
 ok(vim.api.nvim_get_current_buf() == cbuf and vim.deep_equal(opts_now(), wo0), '<C-^> from questions -> code, options intact')
 
--- hold / continue reach the backend
+-- hold / continue / skill reach the backend
 aic.hold()
 aic.continue('go on')
+vim.cmd('AicSkill')
 ok(wait(3000, function()
   local s = read(log) or ''
-  return s:find('hold', 1, true) and s:find('continue -- go on', 1, true)
-end), 'hold/continue invoked backend')
+  return s:find('hold', 1, true) and s:find('continue -- go on', 1, true) and s:find('\nskill', 1, true)
+end), 'hold/continue/skill invoked backend')
 
 -- submit: template picker -> preview (current window) -> edit -> :w sends exactly that
 local pick_name = 'review'
@@ -1435,14 +1433,11 @@ do
   vim.cmd.edit(vim.fn.fnameescape(link .. '/.aic/docs/plan.md'))
   ok(doc.name_of(0) == 'plan', 'a doc opened through a symlink is a doc: ' .. tostring(doc.name_of(0)))
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
-  -- the docs dir is created only after `aic docs` had the chance to migrate
+  -- the first doc of a project makes the docs dir
   local docs_dir = root .. '/.aic/docs'
-  vim.cmd.edit(vim.fn.fnameescape(root .. '/src/app.js'))
   os.rename(docs_dir, docs_dir .. '.away')
-  local n_docs = count(read(log), 'docs %-%-json')
   doc.ensure_file('fresh', false)
-  ok(count(read(log), 'docs %-%-json') == n_docs + 1 and read(docs_dir .. '/fresh.md') == '# fresh\n\n',
-    'first doc in a project: `aic docs` (migration) runs before the docs dir is made')
+  ok(read(docs_dir .. '/fresh.md') == '# fresh\n\n', 'first doc in a project: the docs dir is made')
   vim.fn.delete(docs_dir, 'rf')
   os.rename(docs_dir .. '.away', docs_dir)
 end
@@ -1551,7 +1546,8 @@ do
   local f3 = io.open(dir .. '/trace.jsonl', 'ab')
   f3:write(jl({ id = 'e22', seq = 22, ts = now + 32, kind = 'tool', turn = 9, tool = 'Bash', why = '', hunks = {},
     title = 'Bash: cd /home/someone/project && cat Mak…', file = vim.NIL, error = false,
-    input = '{"command": "cd /home/someone/project && cat Makefile; ls vendor && echo \\"done\\" FULLCMD', }))
+    input = '{"command": "cd /home/someone/project && cat Makefile; ls vendor && echo \\"done\\" FULLCMD',
+    detail = '$ cd /home/someone/project && cat Makefile; ls vendor && echo "done" FULLCMD' }))
   f3:write(jl({ id = 'e23', seq = 23, ts = now + 33, kind = 'tool', turn = 9, tool = 'Bash', why = '', hunks = {},
     title = 'Bash: Run the tests', file = vim.NIL, error = false, input = '{}',
     detail = 'Run the tests\n$ python3 -m unittest discover tests  # DETAILCMD' }))
@@ -1569,7 +1565,7 @@ do
   local fl = line_with('FULLCMD')
   local full = fl and table.concat(vim.tbl_map(vim.trim, vim.api.nvim_buf_get_lines(trace.buf, cl, fl, false)), ' ')
   ok(full and full:find('$ cd /home/someone/project && cat Makefile; ls vendor && echo "done" FULLCMD', 1, true) ~= nil,
-    '... <CR> shows the command from its input, wrapped: ' .. tostring(full))
+    '... <CR> shows its full command, wrapped: ' .. tostring(full))
   ok(state.seen.e22 == true, '... and marks it read')
   local dl = line_with('Bash: Run the tests')
   vim.api.nvim_win_set_cursor(tw, { dl, 0 })
@@ -1658,10 +1654,17 @@ do
   vim.cmd('silent undo')
   ok(vim.deep_equal(vim.api.nvim_buf_get_lines(nb, 0, -1, false), { '# notes', '', '- idea @src/app.js:3', '- unsaved' }),
     'one u undoes every applied fix')
-  -- :AicFix! shows the last proposal; undone fixes can be picked again; an edit through the last line
+  -- :AicFix! shows the last proposal: undone fixes stay applied (never twice)
   vim.api.nvim_buf_set_lines(nb, 3, 4, false, {})
   vim.cmd('AicFix!')
-  ok(line_of('( ) 1. Name the idea') ~= nil and not line_of('(✓)'), ':AicFix! reopens; undone fixes are offered again')
+  ok(line_of('(✓) 1. Name the idea') ~= nil and line_of('2. Drop the idea  doc:3  its alternative 1 is applied') ~= nil,
+    ':AicFix! reopens; undone fixes stay applied, their alternatives blocked')
+  vim.cmd('close')
+  -- :AicFix asks again: a fresh proposal; an edit through the last line
+  vim.cmd('AicFix')
+  ok(wait(3000, function()
+    return line_of('( ) 1. Name the idea') ~= nil
+  end), ':AicFix again offers the undone fixes')
   press_on('2. Drop the idea', '<Space>')
   vim.api.nvim_feedkeys(vim.keycode('<CR>'), 'x', false)
   ok(vim.deep_equal(vim.api.nvim_buf_get_lines(nb, 0, -1, false), { '# notes', '' }), 'an edit through the last line applies')
@@ -1749,12 +1752,11 @@ do
   vim.cmd('AicFix!')
   ok(line_of('(✓) 1. Count') ~= nil and lines_now()[2] == '- retry 4 times', 'undo + redo: the fix is applied again')
   vim.cmd('close')
-  -- undone, then edited elsewhere: offered again
+  -- undone: still applied (never offered twice; :AicFix asks again)
   vim.cmd('silent undo')
   vim.cmd('silent undo')
-  vim.api.nvim_buf_set_lines(eb, 0, 1, false, { '# title' })
   vim.cmd('AicFix!')
-  ok(line_of('( ) 1. Count') ~= nil, 'undone and then edited elsewhere: offered again')
+  ok(line_of('(✓) 1. Count') ~= nil, 'undone: the fix stays applied')
   vim.cmd('close')
   -- the apply trimmed from the undo history: still applied
   run({ '# t', '- retry' }, { { title = 'Count', edits = { { old = '- retry', new = '- retry 3 times' } } } }, { 1 })

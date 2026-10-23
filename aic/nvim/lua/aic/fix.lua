@@ -2,7 +2,8 @@
 -- diagnostics (`aic fix`). A float lists them: <Space> picks (fixes that touch
 -- the same text act like radio buttons: picking one unpicks the others), <Tab>
 -- shows the edits, <CR> applies the picked ones to the doc buffer in one undo
--- step. Nothing is saved: review, then :w (or u).
+-- step. Nothing is saved: review, then :w (or u). An applied fix stays marked
+-- applied, even when undone (it is never applied twice): :AicFix asks again.
 local backend = require('aic.backend')
 local state = require('aic.state')
 local util = require('aic.util')
@@ -83,74 +84,13 @@ local function splice(text, edits)
   return text
 end
 
-local function undotree(buf)
-  return api.nvim_buf_call(buf, function()
-    return vim.fn.undotree()
-  end)
-end
-
--- Is undo change `seq` part of `buf`'s current state, i.e. on the undo-tree
--- path to it? (Undone, or undone and then edited on a new branch: no.)
-local function in_effect(buf, seq)
-  local tree = undotree(buf)
-  local cur = tree.seq_cur
-  local function upto(list, i)
-    for j = 1, i do
-      if list[j].seq == seq then
-        return true
-      end
-    end
-    return false
-  end
-  -- true/false once `cur` is found in this branch; an `alt` replaces its entry
-  local function walk(list)
-    for i, e in ipairs(list) do
-      for _, alt in ipairs(e.alt or {}) do
-        local r = walk(alt)
-        if r ~= nil then
-          return r or upto(list, i - 1)
-        end
-      end
-      if e.seq == cur then
-        return upto(list, i)
-      end
-    end
-  end
-  local ul = vim.bo[buf].undolevels
-  if ul == -123456 then -- (unset: the global value)
-    ul = vim.go.undolevels
-  end
-  local oldest = math.huge -- (what 'undolevels' trimmed is not in the tree)
-  local function scan(list)
-    for _, e in ipairs(list) do
-      oldest = math.min(oldest, e.seq)
-      for _, alt in ipairs(e.alt or {}) do
-        scan(alt)
-      end
-    end
-  end
-  scan(tree.entries)
-  if tree.seq_last < seq or ul < 0 or seq < oldest then
-    return true -- the history that had it is gone: assume it still is (never apply twice)
-  end
-  return cur > 0 and walk(tree.entries) == true
-end
-
 ---------------------------------------------------------------------------
 -- the float
 
--- Applied fixes follow the undo tree of their buffer: undone, they can be
--- picked again; redone, they are applied again; edited after the apply, they
--- stay applied.
--- Then what can't be picked: stale, already in the doc, or an alternative of
--- an applied fix. f.ranges = where its edits are now.
+-- What can't be picked: applied, stale, already in the doc, or an
+-- alternative of an applied fix. f.ranges = where its edits are now.
 local function refresh_stale(entry)
   local text, lines = doc_text(entry.doc)
-  for _, f in ipairs(entry.fixes) do
-    if f.seq and f.buf and api.nvim_buf_is_loaded(f.buf) then -- (undo and redo)
-      f.applied = in_effect(f.buf, f.seq)
-    end
-  end
   for _, f in ipairs(entry.fixes) do
     f.stale, f.ranges = nil, nil
     if not f.applied then
@@ -369,9 +309,8 @@ function M.apply(entry)
     util.notify('aic: applying failed: ' .. tostring(err), vim.log.levels.ERROR)
     return
   end
-  local seq = undotree(b).seq_cur
   for _, f in ipairs(picked) do
-    f.applied, f.picked, f.buf, f.seq = true, false, b, seq
+    f.applied, f.picked = true, false
   end
   if entry.win and api.nvim_win_is_valid(entry.win) then
     api.nvim_win_close(entry.win, true)

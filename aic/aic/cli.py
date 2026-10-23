@@ -2,9 +2,10 @@
 import argparse
 import json
 import os
+import signal
 import sys
 
-from . import anchors, compiler, compiler_prompts, docs, fixes, hook, paths, prompts, usage, watch, worker
+from . import anchors, compiler, compiler_prompts, docs, fixes, history, hook, paths, prompts, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -36,7 +37,7 @@ def main(argv=None):
     p = sub.add_parser("status")
     p.add_argument("--json", action="store_true")
     sub.add_parser("watch", help="tail worker transcript into the trace")
-    p = sub.add_parser("docs", help="list docs (migrates the old spec.md once)")
+    p = sub.add_parser("docs", help="list docs")
     p.add_argument("--json", action="store_true")
     p = sub.add_parser("compile", help="compile a doc against worker activity")
     p.add_argument("--doc", default=docs.DEFAULT)
@@ -85,6 +86,9 @@ def main(argv=None):
     p = sub.add_parser("anchor", help="resolve @anchors in TEXT")
     p.add_argument("--json", action="store_true")
     p.add_argument("text", nargs="+")
+    sub.add_parser("skill", help="install the aic-prompts skill for the worker (/aic-prompts)")
+    p = sub.add_parser("history", help="what the human asked: worker prompts and compiler questions")
+    p.add_argument("--json", action="store_true")
     sub.add_parser("hook", help="(internal) Claude Code hook entry point")
     a = ap.parse_args(argv)
 
@@ -94,7 +98,6 @@ def main(argv=None):
         if a.cmd == "init":  # (WorkerError on a broken settings file is reported below)
             root = paths.init_root()
             sp = worker.init(root, BIN)
-            docs.migrate(root, paths.attached(root))
             print("aic initialized in %s/.aic (hooks: %s). Restart running claude sessions there "
                   "so they load the hooks." % (root, os.path.relpath(sp, root)))
             return 0
@@ -125,7 +128,6 @@ def main(argv=None):
             else:
                 print(anchors.blocks(text, root, paths.attached(root)) or "(no anchors)")
         elif a.cmd == "docs":
-            docs.migrate(root, paths.attached(root))
             ds = docs.listing(root)
             if a.json:
                 print(json.dumps(ds))
@@ -136,7 +138,7 @@ def main(argv=None):
             return watch.main(root)
         elif a.cmd == "compile":
             sid = _sid(root)
-            docs.resolve(root, sid, a.doc)
+            docs.resolve(root, a.doc)
             if a.dry:
                 c = compiler.compile_prompt(root, sid, a.doc)
                 print("(model %s)\n%s" % (c["model"], c["prompt"]))
@@ -154,7 +156,6 @@ def main(argv=None):
             sid = _sid(root)
             ctx = paths.read_json(a.context_file) if a.context_file else None
             docs.check_name(a.doc)  # a question needs no doc file: it may not exist yet
-            docs.migrate(root, sid)
             if a.dry:
                 q = compiler.ask_prompt(root, sid, " ".join(a.question), ctx, a.whatif, a.doc, a.template)
                 print("(model %s)\n%s" % (q["model"], q["prompt"]))
@@ -162,7 +163,7 @@ def main(argv=None):
             print(compiler.ask(root, sid, " ".join(a.question), ctx, a.whatif, a.doc, a.template))
         elif a.cmd == "fix":
             sid = _sid(root)
-            docs.resolve(root, sid, a.doc)
+            docs.resolve(root, a.doc)
             content = None
             if a.content_file:
                 try:
@@ -183,7 +184,7 @@ def main(argv=None):
                     raise worker.WorkerError("%s is not a rendered prompt (aic render --json)" % a.rendered)
                 print(worker.send_rendered(root, sid, r.get("header") or "", r.get("body") or "", r["receipt"], a.now))
             else:
-                docs.resolve(root, sid, a.doc)
+                docs.resolve(root, a.doc)
                 print(worker.submit(root, sid, a.line_from, a.line_to, a.now, a.doc, a.prompt, a.input_text))
         elif a.cmd == "prompts":
             ps = compiler_prompts.listing(root) if a.compiler else prompts.listing(root)
@@ -195,9 +196,17 @@ def main(argv=None):
                                                   t.get("error") or t.get("description", "")))
         elif a.cmd == "render":
             sid = _sid(root)
-            docs.resolve(root, sid, a.doc)
+            docs.resolve(root, a.doc)
             r = prompts.render(root, sid, a.prompt, a.doc, a.line_from, a.line_to, a.input_text)
             print(json.dumps(r) if a.json else "%s\n----\n%s" % (r["header"], r["body"]))
+        elif a.cmd == "skill":
+            sp = worker.install_skill(root, BIN)
+            print("installed %s: run /aic-prompts in the worker (restart it if /aic-prompts isn't listed)"
+                  % os.path.relpath(sp, root))
+        elif a.cmd == "history":
+            signal.signal(signal.SIGPIPE, signal.SIG_DFL)  # `aic history | head` just stops
+            items = history.prompts(root) + history.questions(root)
+            print(json.dumps(items) if a.json else history.text(items))
         elif a.cmd == "hold":
             print(worker.hold(root, _sid(root)))
         elif a.cmd == "continue":
