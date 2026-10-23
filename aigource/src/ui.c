@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "model.h"
 #include "rlgl.h"
@@ -16,18 +15,32 @@
 Font ui_font, ui_font_bold, ui_mono, ui_mono_bold;
 static bool font_ok;
 
-static bool load_sans(Font *f, const char *const *paths) {
-    /* ASCII, Latin-1 + Extended-A, punctuation (— “ ” • …), arrows, math, checks: the
-     * agents' comments are prose. */
-    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2030, 0x203A},
+/* A DejaVu face (file) from the first font dir that has it. Sans: ASCII,
+ * Latin-1 + Extended-A, punctuation (— “ ” • …), arrows, math, checks: the
+ * agents' comments are prose. Mono, for the detail view (code, diffs, command
+ * output), adds box drawing and ⚠; bold keeps its cell width, so columns stay
+ * aligned. */
+static bool load_face(Font *f, const char *file, bool mono) {
+    static const char *const dirs[] = {"/usr/share/fonts/truetype/dejavu", "/usr/share/fonts/TTF",
+                                       "/usr/share/fonts/dejavu"};
+    static const int sans_r[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2030, 0x203A},
                                     {0x2190, 0x21FF}, {0x2212, 0x2212}, {0x2260, 0x2265}, {0x25B6, 0x25B6},
                                     {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
-    int cps[620], n = 0;
-    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
+    static const int mono_r[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2030, 0x203A},
+                                    {0x2190, 0x21FF}, {0x2212, 0x2212}, {0x2260, 0x2265}, {0x2500, 0x25FF},
+                                    {0x26A0, 0x26A0}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
+    const int(*ranges)[2] = mono ? mono_r : sans_r;
+    size_t nr = mono ? sizeof mono_r / sizeof *mono_r : sizeof sans_r / sizeof *sans_r;
+    int cps[1220], n = 0;
+    for (size_t r = 0; r < nr; r++)
         for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
-    for (int i = 0; paths[i]; i++) {
-        if (!FileExists(paths[i])) continue;
-        *f = LoadFontEx(paths[i], 64, cps, n);
+    for (size_t i = 0; i < sizeof dirs / sizeof *dirs; i++) {
+        char path[256];
+        snprintf(path, sizeof path, "%s/%s", dirs[i], file);
+        if (!FileExists(path)) continue;
+        if (mono) SetTraceLogLevel(LOG_ERROR); /* box-drawing glyphs overflow the cell: harmless warnings */
+        *f = LoadFontEx(path, mono ? 32 : 64, cps, n);
+        if (mono) SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
         SetTextureFilter(f->texture, TEXTURE_FILTER_BILINEAR);
         return true;
     }
@@ -35,59 +48,14 @@ static bool load_sans(Font *f, const char *const *paths) {
 }
 
 static void load_font(void) {
-    static const char *const regular[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans.ttf",
-        NULL,
-    };
-    static const char *const bold[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSans-Bold.ttf",
-        NULL,
-    };
-    font_ok = load_sans(&ui_font, regular);
+    font_ok = load_face(&ui_font, "DejaVuSans.ttf", false);
     if (!font_ok) ui_font = GetFontDefault();
-    if (!load_sans(&ui_font_bold, bold)) ui_font_bold = ui_font;
-}
-
-/* Monospace for the detail view: code, diffs, command output. Bold for what
- * should stand out in it; the same cell width, so columns stay aligned. */
-
-static bool load_mono_face(Font *f, const char *const *paths) {
-    static const int ranges[][2] = {{32, 126},       {160, 383},       {0x2010, 0x2027}, {0x2030, 0x203A},
-                                    {0x2190, 0x21FF}, {0x2212, 0x2212}, {0x2260, 0x2265}, {0x2500, 0x25FF},
-                                    {0x26A0, 0x26A0}, {0x2713, 0x2717}, {0xFFFD, 0xFFFD}};
-    int cps[1220], n = 0;
-    for (size_t r = 0; r < sizeof ranges / sizeof *ranges; r++)
-        for (int c = ranges[r][0]; c <= ranges[r][1]; c++) cps[n++] = c;
-    for (int i = 0; paths[i]; i++) {
-        if (!FileExists(paths[i])) continue;
-        SetTraceLogLevel(LOG_ERROR); /* box-drawing glyphs overflow the cell: harmless warnings */
-        *f = LoadFontEx(paths[i], 32, cps, n);
-        SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
-        SetTextureFilter(f->texture, TEXTURE_FILTER_BILINEAR);
-        return true;
-    }
-    return false;
+    if (!load_face(&ui_font_bold, "DejaVuSans-Bold.ttf", false)) ui_font_bold = ui_font;
 }
 
 static void load_mono(void) {
-    static const char *const regular[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSansMono.ttf",
-        NULL,
-    };
-    static const char *const bold[] = {
-        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/TTF/DejaVuSansMono-Bold.ttf",
-        "/usr/share/fonts/dejavu/DejaVuSansMono-Bold.ttf",
-        NULL,
-    };
-    if (!load_mono_face(&ui_mono, regular)) ui_mono = ui_font;
-    if (!load_mono_face(&ui_mono_bold, bold)) ui_mono_bold = ui_mono;
+    if (!load_face(&ui_mono, "DejaVuSansMono.ttf", true)) ui_mono = ui_font;
+    if (!load_face(&ui_mono_bold, "DejaVuSansMono-Bold.ttf", true)) ui_mono_bold = ui_mono;
 }
 
 /* raylib's DrawTextEx and MeasureTextEx, but finding ASCII glyphs directly
@@ -170,6 +138,47 @@ void ui_hand(bool on) {
     cur = on;
 }
 
+static bool word_sep(char c) { return strchr(" /._-:,()", c) != NULL; }
+
+bool ui_edit_line(char *q, size_t cap, int maxchars, bool *all, bool ctrl) {
+    size_t n = strlen(q);
+    bool changed = false;
+    for (int c; (c = GetCharPressed());) {
+        int len;
+        if (ctrl || c < 0x20 || c == 0x7F) continue;
+        const char *u = CodepointToUTF8(c, &len);
+        if (*all) n = 0, *all = false;
+        if (n + (size_t)len >= cap || (int)utf8_count(q, n) >= maxchars) continue;
+        memcpy(q + n, u, (size_t)len);
+        q[n += (size_t)len] = 0;
+        changed = true;
+    }
+    if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE) || (ctrl && IsKeyPressed(KEY_W))) && n) {
+        if (*all) n = 0;
+        else if (ctrl) {
+            while (n && word_sep(q[n - 1])) n--;
+            while (n && !word_sep(q[n - 1])) n--;
+        } else {
+            n--;
+            while (n && UTF8_CONT(q[n])) n--;
+        }
+        q[n] = 0;
+        *all = false;
+        changed = true;
+    }
+    return changed;
+}
+
+void ui_box(Rectangle r, float roundness, Color fill, float thick, Color line) {
+    DrawRectangleRounded(r, roundness, 6, fill);
+    DrawRectangleRoundedLinesEx(r, roundness, 6, thick, line);
+}
+
+void ui_thumb(float x, float y, float w, float len, float view, float full, float scroll, float maxs, float minh, Color c) {
+    float bh = fmaxf(minh, len * view / full);
+    DrawRectangleRounded((Rectangle){x, y + (len - bh) * scroll / maxs, w, bh}, 1, 4, c);
+}
+
 static bool is_mono(Font f) { return f.texture.id && (f.texture.id == ui_mono.texture.id || f.texture.id == ui_mono_bold.texture.id); }
 
 float ui_spacing(Font f, float size) { return is_mono(f) ? 0 : size * (font_ok ? 0.02f : 0.1f); }
@@ -180,7 +189,7 @@ void ui_fit_font(Font f, char *out, size_t n, const char *s, float size, float s
     if (ui_measure_text(f, out, size, spacing) <= maxw) return;
     size_t len = strlen(out);
     while (len > 0) {
-        do len--; while (len > 0 && ((unsigned char)out[len] & 0xC0) == 0x80);
+        do len--; while (len > 0 && UTF8_CONT(out[len]));
         if (len + 4 > n) continue;
         memcpy(out + len, "\xE2\x80\xA6", 4);
         if (ui_measure_text(f, out, size, spacing) <= maxw) return;
@@ -273,8 +282,7 @@ int ui_wrap(Font f, Font fb, const char *s, const unsigned char *st, int n, floa
     int nr = 0;
 #define ROW(a, b)                                                                                                      \
     do {                                                                                                               \
-        if (nr == *cap) *cap = *cap ? *cap * 2 : 32, *rows = xrealloc(*rows, sizeof **rows * (size_t)*cap);            \
-        (*rows)[nr++] = (UiSpan){(a), (b) - (a)};                                                                      \
+        PUSH(*rows, nr, *cap, ((UiSpan){(a), (b) - (a)}));                                                             \
     } while (0)
 #define FITS(a, b) (ui_rich_w(f, fb, s + (a), st ? st + (a) : NULL, (b) - (a), size) <= w - (nr ? 0 : indent))
     for (int k = 0;;) {
@@ -293,7 +301,7 @@ int ui_wrap(Font f, Font fb, const char *s, const unsigned char *st, int n, floa
                 int c = start;
                 while (c < end) {
                     int nx = c + 1;
-                    while (nx < end && ((unsigned char)s[nx] & 0xC0) == 0x80) nx++;
+                    while (nx < end && UTF8_CONT(s[nx])) nx++;
                     if (c > start && !FITS(start, nx)) break;
                     c = nx;
                 }
@@ -328,13 +336,6 @@ void ui_fmt_ago(char *buf, size_t n, double secs) {
     else if (secs < 3600) snprintf(buf, n, "%dm %02ds ago", (int)secs / 60, (int)secs % 60);
     else if (secs < 86400) snprintf(buf, n, "%dh %02dm ago", (int)secs / 3600, (int)secs % 3600 / 60);
     else snprintf(buf, n, "%dd ago", (int)(secs / 86400));
-}
-
-void ui_fmt_clock(char *buf, size_t n, double ts, const char *fmt) {
-    time_t t = (time_t)ts;
-    struct tm tm;
-    localtime_r(&t, &tm);
-    strftime(buf, n, fmt, &tm);
 }
 
 /* ---- comments: an agent's text before a step, as message boxes ---------- */
@@ -399,11 +400,7 @@ static void nv_wrap(NoteView *nv, float w, float size) {
     for (int i = 0; i < nv->ns.n; i++) {
         int n = ui_wrap(ui_font, ui_font_bold, nv->ns.s[i], nv->st[i], (int)strlen(nv->ns.s[i]), size, w, 0, &sp, &cap);
         for (int k = 0; k < n; k++) {
-            if (nv->nrows == nv->cap) {
-                nv->cap = nv->cap ? nv->cap * 2 : 64;
-                nv->rows = xrealloc(nv->rows, (size_t)nv->cap * sizeof *nv->rows);
-            }
-            nv->rows[nv->nrows++] = (struct NoteRow){i, sp[k].start, sp[k].len};
+            PUSH(nv->rows, nv->nrows, nv->cap, ((struct NoteRow){i, sp[k].start, sp[k].len}));
         }
     }
     free(sp);
@@ -876,7 +873,7 @@ void ui_draw_row(const DetailLine *dl, const unsigned char *st, const DetRow *ro
         run = st[k];
         int cp = 0; /* one whole codepoint; invalid UTF-8 can run on, so at most 4 bytes */
         do buf[n++] = s[k++];
-        while (k < end && ((unsigned char)s[k] & 0xC0) == 0x80 && ++cp < 4);
+        while (k < end && UTF8_CONT(s[k]) && ++cp < 4);
         run_cells++;
     }
 }
@@ -939,7 +936,7 @@ void ui_code_row(CodeView *cv, int i, float x, float y, Color base, float alpha,
         if (cell == c0) a = k;
         if (!s[k] || cell >= c1) { b = k; break; }
         k++;
-        while (((unsigned char)s[k] & 0xC0) == 0x80) k++;
+        while (UTF8_CONT(s[k])) k++;
     }
     if (a < 0 || b <= a) return;
     DetRow row = {i, a, b - a};
@@ -949,8 +946,7 @@ void ui_code_row(CodeView *cv, int i, float x, float y, Color base, float alpha,
 int ui_code_cols(const CodeView *cv) {
     int most = 0;
     for (int i = 0; cv->d && i < cv->n; i++) {
-        int c = 0;
-        for (const char *p = cv->d->lines[i].s; *p; p++) c += ((unsigned char)*p & 0xC0) != 0x80;
+        int c = (int)utf8_count(cv->d->lines[i].s, (size_t)-1);
         if (c > most) most = c;
     }
     return most;
@@ -968,9 +964,7 @@ float ui_note_panel_h(NoteView *nv, float w, float maxh) {
  * what doesn't fit fades out. */
 void ui_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool preview) {
     Color bg = {16, 20, 26, 250};
-    float round = 10 / fminf(r.width, r.height);
-    DrawRectangleRounded(r, round, 6, bg);
-    DrawRectangleRoundedLinesEx(r, round, 6, 1.5f, ui_fade(ac, preview ? 0.35f : 0.55f));
+    ui_box(r, 10 / fminf(r.width, r.height), bg, 1.5f, ui_fade(ac, preview ? 0.35f : 0.55f));
     ui_bubble_icon(r.x + 14, r.y + 14, ac);
     char title[64];
     snprintf(title, sizeof title, nv->ns.n == 1 ? "Comment" : "Comments  \xC2\xB7  %d", nv->ns.n);
@@ -992,9 +986,8 @@ void ui_note_panel(NoteView *nv, Rectangle r, float *scroll, Color ac, bool prev
         DrawRectangleGradientV((int)body.x, (int)(body.y + body.height - 28), (int)body.width, 28, ui_fade(bg, 0), bg);
         return;
     }
-    float bh = fmaxf(20, body.height * body.height / nv_height(nv, NULL));
-    float by = body.y + (body.height - bh) * (*scroll / max_scroll);
-    DrawRectangleRounded((Rectangle){r.x + r.width - 7, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
+    ui_thumb(r.x + r.width - 7, body.y, 3, body.height, body.height, nv_height(nv, NULL), *scroll / max_scroll, 1, 20,
+             ui_fade(DIM, 0.6f));
 }
 /* ---- turn bars ------------------------------------------------------------ */
 

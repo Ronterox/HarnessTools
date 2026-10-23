@@ -82,9 +82,9 @@ typedef struct {
     char *root;
     Node *nodes;
     int nnodes, capnodes;
-    StrMap index; /* "d:path" / "f:path" -> node */
+    StrMap dirs, files; /* path -> node */
     Actor *actors;
-    int nactors;
+    int nactors, capactors;
     Fx fx[MAX_FX];
     int fx_head, fx_count;
     long total_add, total_del;

@@ -36,15 +36,14 @@
 #define PAUSE_BACK 2.0     /* pausing while live steps back this far: events still on their way play after the pause */
 #define SEEK_THROTTLE 0.08 /* seconds between rebuilds while dragging the timeline */
 #define WIN_ROW 22.0f      /* turn window row height */
+#define WIN_TOP 68.0f      /* ...and its first row's top, under the header */
 #define DIM_OTHERS 0.15f   /* alpha of everything outside an open turn */
 
 static float dist2d(Vector2 a, Vector2 b) { return hypotf(a.x - b.x, a.y - b.y); }
 
 /* "…" after a prompt transcript.c cut (it keeps TR_PROMPT_MAX characters), "" otherwise. */
 static const char *cut_mark(const char *p) {
-    int n = 0;
-    for (; p && *p; p++) n += ((unsigned char)*p & 0xC0) != 0x80;
-    return n >= TR_PROMPT_MAX ? "\xE2\x80\xA6" : "";
+    return p && utf8_count(p, SIZE_MAX) >= TR_PROMPT_MAX ? "\xE2\x80\xA6" : "";
 }
 
 /* Heat: the hue of the last thing done to the file, brighter the more often it
@@ -179,7 +178,6 @@ static void apply_until(Viz *v, double t, bool effects) {
     }
 }
 
-/* Jump the scene to time t: forward = apply, backward = rebuild keeping layout. */
 /* Labels the files touched just before now, as playing up to it would have
  * (label time counts in real seconds): after a seek, which applies quietly. */
 static void label_recent(Viz *v) {
@@ -191,6 +189,7 @@ static void label_recent(Viz *v) {
     }
 }
 
+/* Jump the scene to time t: forward = apply, backward = rebuild keeping layout. */
 static void seek(Viz *v, double t) {
     double now = now_wall();
     if (v->h.n && t < v->h.ev[0].ts - 1) t = v->h.ev[0].ts - 1;
@@ -241,19 +240,14 @@ static void go_live(Viz *v) {
 
 /* A failed-call marker: flag its command's BASH event (in this batch or the
  * history). The marker itself goes nowhere. */
-static void mark_failed(Viz *v, Event *in, size_t n, const Event *f) {
+static bool flag_failed(Event *ev, size_t n, const char *id) { /* the latest of ev[0, n) */
     for (size_t i = n; i-- > 0;)
-        if (in[i].kind == EV_BASH && in[i].tool_id && f->tool_id && !strcmp(in[i].tool_id, f->tool_id)) {
-            in[i].failed = 1;
-            return;
-        }
-    for (size_t i = v->h.n; i-- > 0;) {
-        Event *e = &v->h.ev[i];
-        if (e->kind == EV_BASH && e->tool_id && f->tool_id && !strcmp(e->tool_id, f->tool_id)) {
-            e->failed = 1;
-            return;
-        }
-    }
+        if (ev[i].kind == EV_BASH && ev[i].tool_id && !strcmp(ev[i].tool_id, id)) return ev[i].failed = 1, true;
+    return false;
+}
+
+static void mark_failed(Viz *v, Event *in, size_t n, const Event *f) {
+    if (f->tool_id && !flag_failed(in, n, f->tool_id)) flag_failed(v->h.ev, v->h.n, f->tool_id);
 }
 
 static void ingest_new_events(Viz *v, EvQueue *q) {
@@ -271,11 +265,7 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
         } else if (!ev_staged(in[i].kind) && v->sv) {
             ev_free(&in[i]);
         } else if (!ev_staged(in[i].kind)) { /* kept for the structure screen, should it open */
-            if (v->naside == v->capaside) {
-                v->capaside = v->capaside ? v->capaside * 2 : 1024;
-                v->aside = xrealloc(v->aside, v->capaside * sizeof *v->aside);
-            }
-            v->aside[v->naside++] = in[i];
+            PUSH(v->aside, v->naside, v->capaside, in[i]);
         } else {
             in[kept++] = in[i];
         }
@@ -324,11 +314,19 @@ static void context_open(Viz *v, const char *id) {
 
 /* ---- turn window: data ------------------------------------------------- */
 
-static int actor_index(Scene *m, const char *id) {
-    for (int i = 0; i < m->nactors; i++)
-        if (!strcmp(m->actors[i].id, id)) return i;
-    return -1;
+static Actor *actor_by_id(Scene *m, const char *id) {
+    for (int i = 0; id && i < m->nactors; i++)
+        if (!strcmp(m->actors[i].id, id)) return &m->actors[i];
+    return NULL;
 }
+
+static Color actor_color(Viz *v, const char *id, Color none) {
+    const Actor *a = actor_by_id(v->m, id);
+    return a ? a->color : none;
+}
+
+/* While a turn is open, the other actors are dimmed. */
+static bool other_actor(const Viz *v, const Actor *a) { return v->turn_open && strcmp(a->id, v->turn_actor); }
 
 static void detail_close(Viz *v);
 
@@ -364,10 +362,10 @@ static void turn_update(Viz *v) {
     if (!v->turn_open) return;
     Scene *m = v->m;
     /* Follow the actor: its turn at the timeline position (live or after a seek). */
-    int ai = actor_index(m, v->turn_actor);
-    if (ai < 0 && v->det_from_turn) detail_close(v); /* sought back before the actor: its step is ahead */
-    if (ai >= 0 && m->actors[ai].turn != v->turn_no) {
-        v->turn_no = m->actors[ai].turn;
+    const Actor *ta = actor_by_id(m, v->turn_actor);
+    if (!ta && v->det_from_turn) detail_close(v); /* sought back before the actor: its step is ahead */
+    if (ta && ta->turn != v->turn_no) {
+        v->turn_no = ta->turn;
         v->turn_scroll = 0;
         v->turn_stick = true;
         if (v->det_from_turn) detail_close(v); /* its step belongs to the old turn */
@@ -382,11 +380,7 @@ static void turn_update(Viz *v) {
     for (size_t i = 0; i < v->h.applied; i++) {
         const Event *e = &v->h.ev[i];
         if (e->turn != v->turn_no || !is_step(e->kind) || strcmp(e->actor, v->turn_actor)) continue;
-        if (v->nsteps == v->capsteps) {
-            v->capsteps = v->capsteps ? v->capsteps * 2 : 64;
-            v->steps = xrealloc(v->steps, v->capsteps * sizeof *v->steps);
-        }
-        v->steps[v->nsteps++] = i;
+        PUSH(v->steps, v->nsteps, v->capsteps, i);
         if (!touches_file(e->kind) || !e->path) continue;
         int ni = model_find(m, false, e->path);
         if (ni < 0) continue;
@@ -407,8 +401,7 @@ static float hl_alpha(Viz *v, int i) {
 /* Soft area around the highlighted files of each folder, in the actor's color. */
 static void draw_turn_areas(Viz *v, float px) {
     Scene *m = v->m;
-    int ai = actor_index(m, v->turn_actor);
-    Color c = ai >= 0 ? m->actors[ai].color : TEXT;
+    Color c = actor_color(v, v->turn_actor, TEXT);
     for (int d = 0; d < m->nnodes; d++) {
         Node *dir = &m->nodes[d];
         if (!dir->is_dir || !v->hl_dir[d]) continue;
@@ -533,7 +526,7 @@ static void draw_scene(Viz *v) {
         if (actor_alpha(a, v->sim) <= 0) continue;
         float t = f->age / f->life;
         float w = (1.0f + 9.0f * f->strength) * px;
-        float dim = v->turn_open && strcmp(a->id, v->turn_actor) ? DIM_OTHERS : 1;
+        float dim = other_actor(v, a) ? DIM_OTHERS : 1;
         DrawLineEx(a->pos, N[f->node].pos, w, ui_fade(f->color, (1 - t) * 0.9f * dim));
     }
     EndBlendMode();
@@ -541,7 +534,7 @@ static void draw_scene(Viz *v) {
     for (int i = 0; i < m->nactors; i++) {
         Actor *a = &m->actors[i];
         float al = actor_alpha(a, v->sim);
-        if (v->turn_open && strcmp(a->id, v->turn_actor)) al *= DIM_OTHERS;
+        if (other_actor(v, a)) al *= DIM_OTHERS;
         if (al <= 0) continue;
         DrawCircleV(a->pos, 9 * px + 3, ui_fade(a->color, al));
         DrawCircleV(a->pos, 5 * px + 1, ui_fade(BG, al));
@@ -607,7 +600,7 @@ static void draw_labels(Viz *v) {
         Vector2 s = GetWorldToScreen2D(a->pos, v->cam);
         float al = actor_alpha(a, v->sim);
         if (al < 1) continue; /* idle actors stay unlabeled */
-        if (v->turn_open && strcmp(a->id, v->turn_actor)) continue;
+        if (other_actor(v, a)) continue;
         ui_text(a->name, s.x + 14, s.y - 9, 16, ui_fade(a->color, al));
         if (a->bubble && a->bubble_t > 0) {
             float ba = fminf(1, a->bubble_t);
@@ -638,7 +631,7 @@ static void draw_counters(Viz *v) {
 
     int W = GetScreenWidth();
     char clock[64];
-    ui_fmt_clock(clock, sizeof clock, v->sim, "%Y-%m-%d %H:%M:%S");
+    fmt_clock(clock, sizeof clock, v->sim, "%Y-%m-%d %H:%M:%S");
     ui_text(clock, (float)W - ui_text_w(clock, 22) - 24, 20, 22, TEXT);
     if (v->paused) snprintf(line, sizeof line, "\xE2\x80\x96 PAUSED");
     else if (v->live) snprintf(line, sizeof line, "LIVE");
@@ -872,8 +865,8 @@ static void detail_open(Viz *v, const Event *e, bool from_turn) {
     v->det_ts = e->ts;
     v->det_src = e->src;
     v->det_off = e->src_off;
-    v->det_id = e->tool_id ? xstrdup(e->tool_id) : NULL;
-    v->det_path = e->path ? xstrdup(e->path) : NULL;
+    v->det_id = dup_or_null(e->tool_id);
+    v->det_path = dup_or_null(e->path);
     v->det_add = e->add;
     v->det_del = e->del;
     v->det_scroll = 0;
@@ -912,13 +905,9 @@ static void detail_wrap(Viz *v, int cols) {
         int start = 0, chars = 0, k = 0;
         for (;; k++) {
             bool end = !s[k];
-            if (!end && ((unsigned char)s[k] & 0xC0) == 0x80) continue; /* continuation byte */
+            if (!end && UTF8_CONT(s[k])) continue;
             if (end || chars == cols) {
-                if (v->det_nrows == v->det_caprows) {
-                    v->det_caprows = v->det_caprows ? v->det_caprows * 2 : 256;
-                    v->det_rows = xrealloc(v->det_rows, (size_t)v->det_caprows * sizeof *v->det_rows);
-                }
-                v->det_rows[v->det_nrows++] = (DetRow){i, start, k - start};
+                PUSH(v->det_rows, v->det_nrows, v->det_caprows, ((DetRow){i, start, k - start}));
                 if (end) break;
                 start = k;
                 chars = 0;
@@ -930,16 +919,14 @@ static void detail_wrap(Viz *v, int cols) {
 
 static void detail_copy(Viz *v) {
     if (!v->det) return;
-    size_t n = strlen(v->det_label) + 2;
-    for (int i = 0; i < v->det->n; i++) n += strlen(v->det->lines[i].s) + 3;
-    char *buf = xmalloc(n), *p = buf;
-    p += sprintf(p, "%s\n", v->det_label);
+    Buf b = {0};
+    buf_puts(&b, v->det_label), buf_puts(&b, "\n");
     for (int i = 0; i < v->det->n; i++) {
         DlKind k = v->det->lines[i].kind;
-        p += sprintf(p, "%s%s\n", k == DL_ADD ? "+" : k == DL_DEL ? "-" : "", v->det->lines[i].s);
+        buf_puts(&b, k == DL_ADD ? "+" : k == DL_DEL ? "-" : ""), buf_puts(&b, v->det->lines[i].s), buf_puts(&b, "\n");
     }
-    SetClipboardText(buf);
-    free(buf);
+    SetClipboardText(b.s);
+    buf_free(&b);
 }
 
 #define DET_TOP 58.0f /* header height */
@@ -955,15 +942,7 @@ static int detail_code_at(Viz *v, Vector2 mouse, char *path, size_t n) {
     if (r < 0 || r >= first + v->det_vis || r >= v->det_nrows) return 0;
     int no = detail_file_line(v->det, v->det_rows[r].line);
     if (!no) return 0;
-    if (*v->det_path == '/') snprintf(path, n, "%s", v->det_path); /* read outside the repo */
-    else snprintf(path, n, "%s/%s", v->o->root, v->det_path);
-    struct stat st;
-    return !stat(path, &st) && S_ISREG(st.st_mode) ? no : 0;
-}
-
-static Color actor_color_by_id(Viz *v, const char *id) {
-    int ai = id ? actor_index(v->m, id) : -1;
-    return ai >= 0 ? v->m->actors[ai].color : TEXT;
+    return file_at(v->o->root, v->det_path, path, n) ? no : 0;
 }
 
 static void draw_detail(Viz *v, Vector2 mouse) {
@@ -979,7 +958,7 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     /* The agent's comments first (it wrote them first), the step beside them;
      * above it when there's no room. */
     if (v->det_nv.ns.n) {
-        Color ac = actor_color_by_id(v, v->det_actor);
+        Color ac = actor_color(v, v->det_actor, TEXT);
         float nw = ui_note_panel_w();
         if (w - nw - 10 >= 420) {
             v->note_win = (Rectangle){x, y, nw, ui_note_panel_h(&v->det_nv, nw, h)};
@@ -998,13 +977,12 @@ static void draw_detail(Viz *v, Vector2 mouse) {
     }
     v->det_win = (Rectangle){x, y, w, h};
     Color kc = step_color(v->det_kind);
-    DrawRectangleRounded(v->det_win, 0.015f, 6, (Color){16, 20, 26, 250});
-    DrawRectangleRoundedLinesEx(v->det_win, 0.015f, 6, 1.5f, ui_fade(kc, 0.55f));
+    ui_box(v->det_win, 0.015f, (Color){16, 20, 26, 250}, 1.5f, ui_fade(kc, 0.55f));
 
     /* Header: what it was, when, and close. */
     char line[512], fitbuf[512], tm[16];
     DrawCircle((int)x + 18, (int)y + 20, 5, kc);
-    ui_fmt_clock(tm, sizeof tm, v->det_ts, "%H:%M:%S");
+    fmt_clock(tm, sizeof tm, v->det_ts, "%H:%M:%S");
     float tw = ui_text_w(tm, 13);
     v->det_close = (Rectangle){x + w - 34, y + 6, 26, 26};
     ui_fit(fitbuf, sizeof fitbuf, v->det_label, 16, w - 70 - tw - 40);
@@ -1064,21 +1042,18 @@ static void draw_detail(Viz *v, Vector2 mouse) {
         ui_draw_row(dl, ui_style_line(&v->det_style, d, row->line), row, tx, ry + 1, cw, c, 1);
     }
     EndScissorMode();
-    if (max_scroll) { /* scrollbar */
-        float track_h = h - DET_TOP - 10;
-        float bh = fmaxf(20, track_h * (float)vis / (float)v->det_nrows);
-        float by = y + DET_TOP + (track_h - bh) * (v->det_scroll / (float)max_scroll);
-        DrawRectangleRounded((Rectangle){x + w - 7, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
-    }
+    if (max_scroll)
+        ui_thumb(x + w - 7, y + DET_TOP, 3, h - DET_TOP - 10, (float)vis, (float)v->det_nrows, v->det_scroll / (float)max_scroll, 1, 20,
+                 ui_fade(DIM, 0.6f));
 }
 
 static void draw_turn_window(Viz *v, Vector2 mouse) {
     if (!v->turn_open) { v->win = (Rectangle){0}; return; }
     Scene *m = v->m;
     int W = GetScreenWidth(), H = GetScreenHeight();
-    int ai = actor_index(m, v->turn_actor);
-    Color ac = ai >= 0 ? m->actors[ai].color : TEXT;
-    const char *aname = ai >= 0 ? m->actors[ai].name : v->turn_actor;
+    const Actor *ta = actor_by_id(m, v->turn_actor);
+    Color ac = ta ? ta->color : TEXT;
+    const char *aname = ta ? ta->name : v->turn_actor;
 
     /* Prompt + totals of the turn. */
     const char *prompt = "";
@@ -1103,8 +1078,7 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     int vis = nrows < rows_fit ? nrows : rows_fit;
     float h = 74 + (float)(vis ? vis : 1) * WIN_ROW + 30;
     v->win = (Rectangle){x, y, w, h};
-    DrawRectangleRounded(v->win, 0.03f, 6, (Color){22, 27, 34, 245});
-    DrawRectangleRoundedLinesEx(v->win, 0.03f, 6, 1.5f, ui_fade(ac, 0.6f));
+    ui_box(v->win, 0.03f, (Color){22, 27, 34, 245}, 1.5f, ui_fade(ac, 0.6f));
 
     char line[512], fitbuf[512];
     v->win_close = (Rectangle){x + w - 34, y + 6, 26, 26};
@@ -1130,7 +1104,7 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     if (v->turn_scroll > max_scroll) v->turn_scroll = (float)max_scroll;
     if (v->turn_scroll < 0) v->turn_scroll = 0;
     int first = (int)v->turn_scroll;
-    float ry = y + 68;
+    float ry = y + WIN_TOP;
     v->win_first = first;
     v->win_vis = vis;
     for (int r = 0; r < vis && first + r < nrows; r++, ry += WIN_ROW) {
@@ -1139,7 +1113,7 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         if (is_detail_of(v, e)) DrawRectangleRec(rr, ui_fade(step_color(e->kind), 0.18f));
         else if (CheckCollisionPointRec(mouse, rr)) DrawRectangleRec(rr, ui_fade(TEXT, 0.06f));
         char tm[16];
-        ui_fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
+        fmt_clock(tm, sizeof tm, e->ts, "%H:%M:%S");
         ui_text(tm, x + 14, ry + 3, 13, DIM);
         float cx = x + 14 + ui_text_w("00:00:00", 13) + 10;
         bool failed = failed_bare(v, e);
@@ -1170,12 +1144,9 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
         }
     }
     if (!nrows) ui_text("no steps yet", x + 14, ry + 3, 14, DIM);
-    if (max_scroll) { /* scrollbar */
-        float track_h = (float)vis * WIN_ROW;
-        float bh = fmaxf(16, track_h * (float)vis / (float)nrows);
-        float by = y + 68 + (track_h - bh) * (v->turn_scroll / (float)max_scroll);
-        DrawRectangleRounded((Rectangle){x + w - 6, by, 3, bh}, 1, 4, ui_fade(DIM, 0.6f));
-    }
+    if (max_scroll)
+        ui_thumb(x + w - 6, y + WIN_TOP, 3, (float)vis * WIN_ROW, (float)vis, (float)nrows, v->turn_scroll / (float)max_scroll, 1, 16,
+                 ui_fade(DIM, 0.6f));
     char sa[32], sd[32];
     ui_fmt_count(sa, sizeof sa, add);
     ui_fmt_count(sd, sizeof sd, del);
@@ -1184,19 +1155,19 @@ static void draw_turn_window(Viz *v, Vector2 mouse) {
     ui_text(line, x + 14, y + h - 24, 13, DIM);
 }
 
-/* The turn step under the mouse, or NULL. */
-static const Event *turn_row_at(Viz *v, Vector2 mouse) {
-    if (!v->turn_open || !CheckCollisionPointRec(mouse, v->win)) return NULL;
-    int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
-    if (r < 0 || r >= v->win_vis || (size_t)(v->win_first + r) >= v->nsteps) return NULL;
-    return &v->h.ev[v->steps[v->win_first + r]];
+/* The turn step under the mouse: its index in steps, -1. */
+static int turn_row_at(Viz *v, Vector2 mouse) {
+    if (!v->turn_open || !CheckCollisionPointRec(mouse, v->win)) return -1;
+    int r = (int)floorf((mouse.y - (v->win.y + WIN_TOP)) / WIN_ROW);
+    return r < 0 || r >= v->win_vis || (size_t)(v->win_first + r) >= v->nsteps ? -1 : v->win_first + r;
 }
 
 /* Hovering a turn step shows its comments beside the row, as the panel will. */
 static void draw_note_preview(Viz *v, Vector2 mouse) {
     if (v->det && (CheckCollisionPointRec(mouse, v->det_win) || CheckCollisionPointRec(mouse, v->note_win)))
         return; /* over the windows covering the turn window, not its rows */
-    const Event *e = v->drag ? NULL : turn_row_at(v, mouse);
+    int k = v->drag ? -1 : turn_row_at(v, mouse);
+    const Event *e = k >= 0 ? &v->h.ev[v->steps[k]] : NULL;
     if (!e || !e->notes || !e->tool_id || is_detail_of(v, e)) return;
     if (v->hov_src != e->src || v->hov_off != e->note_off || v->hov_n != e->notes || !v->hov_id ||
         strcmp(v->hov_id, e->tool_id)) { /* another step: read its comments */
@@ -1212,24 +1183,21 @@ static void draw_note_preview(Viz *v, Vector2 mouse) {
     float pw = ui_note_panel_w(), x = v->win.x + v->win.width + 10;
     if (x + pw > W - 16) x = fmaxf(16, W - 16 - pw);
     float ph = ui_note_panel_h(&v->hov_nv, pw, (H - TL_H - 8 - HUD_TOP) * 0.6f);
-    int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
-    float y = v->win.y + 68 + (float)r * WIN_ROW - 8;
+    float y = v->win.y + WIN_TOP + (float)(k - v->win_first) * WIN_ROW - 8;
     if (y + ph > H - TL_H - 8) y = H - TL_H - 8 - ph;
     if (y < 8) y = 8;
     float scroll = 0;
-    ui_note_panel(&v->hov_nv, (Rectangle){x, y, pw, ph}, &scroll, actor_color_by_id(v, v->turn_actor), true);
+    ui_note_panel(&v->hov_nv, (Rectangle){x, y, pw, ph}, &scroll, actor_color(v, v->turn_actor, TEXT), true);
 }
 
 /* The comments as the agent wrote them (the panel drops markdown markers). */
 static void notes_copy(Viz *v) {
     Notes ns = tr_notes(v->det_src, v->det_note_off, v->det_notes, v->det_id);
-    size_t n = 1;
-    for (int i = 0; i < ns.n; i++) n += strlen(ns.s[i]) + 2;
-    char *buf = xmalloc(n), *p = buf;
-    *p = 0;
-    for (int i = 0; i < ns.n; i++) p += sprintf(p, "%s%s", i ? "\n\n" : "", ns.s[i]);
-    SetClipboardText(buf);
-    free(buf);
+    Buf b = {0};
+    buf_puts(&b, ""); /* "" when there are none */
+    for (int i = 0; i < ns.n; i++) buf_puts(&b, i ? "\n\n" : ""), buf_puts(&b, ns.s[i]);
+    SetClipboardText(b.s);
+    buf_free(&b);
     notes_free(&ns);
 }
 
@@ -1292,12 +1260,6 @@ static void update_bins(Viz *v) {
     }
     v->bins_n = v->h.n;
     v->bins_t = now;
-}
-
-static Color actor_color_of(Viz *v, const char *id) {
-    for (int i = 0; i < v->m->nactors; i++)
-        if (!strcmp(v->m->actors[i].id, id)) return v->m->actors[i].color;
-    return DIM;
 }
 
 /* The turn histogram: the structure strip's bars (ui_turn_bar), each where its
@@ -1374,13 +1336,13 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
         const Event *e = &v->h.ev[i];
         if (e->kind != EV_TURN) continue;
         float x = tr.x0 + (float)(v->h.v[i] / len) * (tr.x1 - tr.x0);
-        DrawRectangle((int)x, (int)(tr.y - th / 2 - 4), 2, (int)th + 8, actor_color_of(v, e->actor));
+        DrawRectangle((int)x, (int)(tr.y - th / 2 - 4), 2, (int)th + 8, actor_color(v, e->actor, DIM));
     }
     DrawCircleV((Vector2){px, tr.y}, hot ? 8 : 6, TEXT);
 
     /* Ends: first event date, and LIVE/now. */
     char buf[64];
-    if (v->h.n) ui_fmt_clock(buf, sizeof buf, v->h.ev[0].ts, "%b %d %H:%M");
+    if (v->h.n) fmt_clock(buf, sizeof buf, v->h.ev[0].ts, "%b %d %H:%M");
     else buf[0] = 0;
     ui_text(buf, tr.x0, tr.y + 10, 13, DIM);
     const char *endlbl = v->live ? "LIVE" : "go live \xE2\x86\x92";
@@ -1391,7 +1353,7 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
         double t = v->drag == 2 ? v->scrub_t : x_to_time(v, mouse.x);
         float hx = v->drag == 2 ? px : mouse.x;
         char l1[64], l2[600] = "", l3[256] = "";
-        ui_fmt_clock(l1, sizeof l1, t, "%a %b %d  %H:%M:%S");
+        fmt_clock(l1, sizeof l1, t, "%a %b %d  %H:%M:%S");
         size_t k = hist_upper(&v->h, t);
         Color c2 = DIM;
         while (k-- > 0) {
@@ -1401,7 +1363,7 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
             snprintf(full, sizeof full, "turn %d \xC2\xB7 %s: %s%s", e->turn, e->actor_name, e->text ? e->text : "",
                      cut_mark(e->text));
             ui_fit(l2, sizeof l2, full, 14, (float)W - 36);
-            c2 = actor_color_of(v, e->actor);
+            c2 = actor_color(v, e->actor, DIM);
             break;
         }
         if (hot_bar >= 0) {
@@ -1410,14 +1372,12 @@ static void draw_timeline(Viz *v, Vector2 mouse) {
             long s = u->secs;
             if (s >= 3600) snprintf(d, sizeof d, "%ldh %02ldm", s / 3600, s / 60 % 60);
             else snprintf(d, sizeof d, "%ldm %02lds", s / 60, s % 60);
-            ui_fmt_clock(l1, sizeof l1, u->ts, "%a %b %d  %H:%M:%S");
+            fmt_clock(l1, sizeof l1, u->ts, "%a %b %d  %H:%M:%S");
             snprintf(l1 + strlen(l1), sizeof l1 - strlen(l1), "  \xC2\xB7  %s", d);
-            const char *name = u->actor;
-            for (int i = 0; i < v->m->nactors; i++)
-                if (!strcmp(v->m->actors[i].id, u->actor)) name = v->m->actors[i].name;
-            snprintf(full, sizeof full, "%s: %s", name, u->title);
+            const Actor *a = actor_by_id(v->m, u->actor);
+            snprintf(full, sizeof full, "%s: %s", a ? a->name : u->actor, u->title);
             ui_fit(l2, sizeof l2, full, 14, (float)W - 36);
-            c2 = actor_color_of(v, u->actor);
+            c2 = a ? a->color : DIM;
             ui_turn_tags(tg, sizeof tg, u->tags);
             snprintf(l3, sizeof l3, "+%d \xE2\x88\x92%d%s%s", u->add, u->del, *tg ? "  \xC2\xB7  " : "", tg);
         }
@@ -1443,9 +1403,9 @@ static void update_hover(Viz *v, Vector2 mouse) {
     if (v->det && (CheckCollisionPointRec(mouse, v->det_win) || CheckCollisionPointRec(mouse, v->note_win))) return;
     if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
         /* A step row: ring its file in the graph (no card over the list). */
-        int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
-        if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps) {
-            const Event *e = &v->h.ev[v->steps[v->win_first + r]];
+        int k = turn_row_at(v, mouse);
+        if (k >= 0) {
+            const Event *e = &v->h.ev[v->steps[k]];
             int ni = e->path && touches_file(e->kind) ? model_find(m, false, e->path) : -1;
             if (ni >= 0) { v->hover = HOVER_NODE; v->hover_i = ni; v->hover_from_win = true; }
         }
@@ -1567,7 +1527,7 @@ again:
     }
     for (int i = 0; i < m->nactors; i++) {
         if (actor_alpha(&m->actors[i], v->sim) <= 0) continue;
-        if (focus && strcmp(m->actors[i].id, v->turn_actor)) continue;
+        if (focus && other_actor(v, &m->actors[i])) continue;
         minx = fminf(minx, m->actors[i].pos.x);
         maxx = fmaxf(maxx, m->actors[i].pos.x);
         miny = fminf(miny, m->actors[i].pos.y);
@@ -1595,8 +1555,7 @@ again:
 
 /* ---- main loop ---------------------------------------------------------- */
 
-static void handle_input(Viz *v, float dt) {
-    (void)dt;
+static void handle_input(Viz *v) {
     Vector2 mouse = GetMousePosition();
     if (IsKeyPressed(KEY_SPACE)) toggle_pause(v);
     if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD) || IsKeyPressed(KEY_UP)) v->speed *= 2, v->dvr = false;
@@ -1655,11 +1614,10 @@ static void handle_input(Viz *v, float dt) {
         } else if (v->det && CheckCollisionPointRec(mouse, v->note_win)) {
             v->drag = 3; /* consumed by the comments panel */
         } else if (v->turn_open && CheckCollisionPointRec(mouse, v->win)) {
-            int r = (int)floorf((mouse.y - (v->win.y + 68)) / WIN_ROW);
+            int k = turn_row_at(v, mouse);
             if (CheckCollisionPointRec(mouse, v->win_close)) turn_close(v);
             else if (CheckCollisionPointRec(mouse, v->win_ctx)) context_open(v, v->turn_actor);
-            else if (r >= 0 && r < v->win_vis && (size_t)(v->win_first + r) < v->nsteps)
-                detail_open(v, &v->h.ev[v->steps[v->win_first + r]], true); /* a step: show it in full */
+            else if (k >= 0) detail_open(v, &v->h.ev[v->steps[k]], true); /* a step: show it in full */
             v->drag = 3; /* consumed by the window */
         } else if (in_timeline(mouse) && mouse.x > tr.x1 - ui_text_w("go live \xE2\x86\x92", 13) && mouse.y > tr.y + 6) {
             go_live(v); /* "go live" label */
@@ -1728,6 +1686,12 @@ static void advance_clock(Viz *v, float dt) {
     apply_until(v, v->sim, true);
 }
 
+static void save_shot(const char *path) {
+    Image img = LoadImageFromScreen(); /* TakeScreenshot drops the directory */
+    ExportImage(img, path);
+    UnloadImage(img);
+}
+
 int viz_run(const VizOpts *o, EvQueue *q) {
     SetConfigFlags(FLAG_MSAA_4X_HINT | FLAG_WINDOW_RESIZABLE | FLAG_VSYNC_HINT);
     SetTraceLogLevel(getenv("AIG_DEBUG") ? LOG_INFO : LOG_WARNING);
@@ -1770,43 +1734,20 @@ int viz_run(const VizOpts *o, EvQueue *q) {
             else if (v.turn_open) context_open(&v, v.turn_actor);
         }
         bool esc_used = (v.sv && sv_keys(v.sv)) || (v.cv && cv_keys(v.cv)); /* before drawing: Esc may close one */
-        if (cv_is_open(v.cv)) { /* the context screen: the stage plays on behind it, undrawn */
+        Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
+        bool ctx = cv_is_open(v.cv);
+        if (ctx || sv_is_open(v.sv)) { /* the context or structure screen: the stage plays on behind it, undrawn */
             ingest_new_events(&v, q);
             advance_clock(&v, dt);
             model_update(v.m, v.paused ? 0 : dt, v.sim);
-            Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
             BeginDrawing();
             ClearBackground(BG);
-            cv_clock(v.cv, v.sim); /* followed until the view is moved on its own */
-            cv_frame(v.cv, mouse, dt);
+            if (ctx) cv_clock(v.cv, v.sim), cv_frame(v.cv, mouse, dt); /* followed until the view is moved on its own */
+            else sv_frame(v.sv, mouse, dt);
             draw_nvim_hint(&v);
             EndDrawing();
-            if (cv_ready(v.cv) && frame < INT_MAX) frame++; /* a shot waits for the load */
-            if (o->shot && frame >= o->frames) {
-                Image img = LoadImageFromScreen();
-                ExportImage(img, o->shot);
-                UnloadImage(img);
-                break;
-            }
-            continue;
-        }
-        if (sv_is_open(v.sv)) { /* the structure screen: the stage plays on behind it, undrawn */
-            ingest_new_events(&v, q);
-            advance_clock(&v, dt);
-            model_update(v.m, v.paused ? 0 : dt, v.sim);
-            Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
-            BeginDrawing();
-            ClearBackground(BG);
-            sv_frame(v.sv, mouse, dt);
-            draw_nvim_hint(&v);
-            EndDrawing();
-            if (sv_ready(v.sv) && frame < INT_MAX) frame++; /* a shot waits for the build */
-            if (o->shot && frame >= o->frames) {
-                Image img = LoadImageFromScreen();
-                ExportImage(img, o->shot);
-                UnloadImage(img);
-                break;
-            }
+            if ((ctx ? cv_ready(v.cv) : sv_ready(v.sv)) && frame < INT_MAX) frame++; /* a shot waits for the load or build */
+            if (o->shot && frame >= o->frames) { save_shot(o->shot); break; }
             continue;
         }
         if (IsKeyPressed(KEY_ESCAPE) && !esc_used) { /* closes the top window; quits when none is open */
@@ -1815,7 +1756,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
             else break;
         }
         ingest_new_events(&v, q);
-        handle_input(&v, dt);
+        handle_input(&v);
         advance_clock(&v, dt);
         model_update(v.m, v.paused ? 0 : dt, v.sim);
         if (o->turn && !v.turn_open && frame == 0) { /* test hook: open an actor's turn */
@@ -1835,8 +1776,6 @@ int viz_run(const VizOpts *o, EvQueue *q) {
             if (v.det_src && !stat(v.det_src, &st) && (long)st.st_size != v.det_size) detail_load(&v);
         }
         if (v.auto_cam) auto_camera(&v, dt);
-
-        Vector2 mouse = o->shot && o->mouse_x >= 0 ? (Vector2){o->mouse_x, o->mouse_y} : GetMousePosition();
         update_hover(&v, mouse);
 
         BeginDrawing();
@@ -1858,12 +1797,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
         EndDrawing();
 
         if (frame < INT_MAX) frame++; /* also gates the test hooks to the first frame */
-        if (o->shot && frame >= o->frames) {
-            Image img = LoadImageFromScreen(); /* TakeScreenshot drops the directory */
-            ExportImage(img, o->shot);
-            UnloadImage(img);
-            break;
-        }
+        if (o->shot && frame >= o->frames) { save_shot(o->shot); break; }
     }
     nv_shutdown();
     detail_close(&v);

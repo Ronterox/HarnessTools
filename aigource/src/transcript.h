@@ -25,7 +25,6 @@ void tr_free(Transcript *t);
 int tr_bash_running(const Transcript *t, double since, double *start);
 /* An Edit/Write/MultiEdit/NotebookEdit on this repo-relative path awaits its result. */
 int tr_writing(Transcript *t, const char *rel);
-const char *tr_actor(const Transcript *t);
 /* A failed Bash call running at `ts` (within `slack` seconds of its span): Claude
  * Code records no file changes for those, so the watcher attributes what changed
  * meanwhile to it. Fills the call's identity into *e (src, tool_id copy, notes,
@@ -88,6 +87,5 @@ void detail_line(Detail *d, DlKind kind, const char *s); /* s may hold newlines 
  * takes the new side's line where it was: the next kept or added one, else
  * (at a hunk's end) the one before, else the hunk's start. */
 int detail_file_line(const Detail *d, int i);
-const char *tr_actor_name(const Transcript *t);
 
 #endif

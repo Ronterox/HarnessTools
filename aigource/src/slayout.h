@@ -76,6 +76,5 @@ typedef struct {
 void lay_wins(LWin *w, int n, float hub, int ticks, int passes);
 /* Pairs (the hub included) nearer than LAY_WIN_PAD on both axes: 0 once settled. */
 int lay_wins_overlaps(const LWin *w, int n, float hub);
-float lay_win_angle(unsigned id); /* a fresh window's angle, radians */
 
 #endif

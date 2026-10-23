@@ -9,7 +9,6 @@
  * ASCII), CONTEXT.md says so. */
 #include "context.h"
 
-#include <dirent.h>
 #include <limits.h>
 #include <locale.h>
 #include <math.h>
@@ -27,7 +26,6 @@
 #include "pyjson.h"
 #include "util.h"
 #include "yyjson.h"
-
 
 const char *const ctx_kind_names[CK_COUNT] = {"system", "tools", "injected", "prompt", "summary",
                                               "text", "thinking", "action", "result", "missing"};
@@ -81,21 +79,22 @@ static unsigned cp_at(const char *s, size_t n, size_t i, int *k) {
 
 static unsigned cp_before(const char *s, size_t i) {
     size_t j = i;
-    while (j > 0 && ((unsigned char)s[j - 1] & 0xC0) == 0x80) j--;
+    while (j > 0 && UTF8_CONT(s[j - 1])) j--;
     if (j > 0) j--;
     return cp_at(s, i, j, NULL);
 }
 
+/* Texts may hold NULs (utf8_count stops at one). */
 static size_t nchars(const char *s, size_t n) { /* len() of a str */
     size_t c = 0;
-    for (size_t i = 0; i < n; i++) c += ((unsigned char)s[i] & 0xC0) != 0x80;
+    for (size_t i = 0; i < n; i++) c += !UTF8_CONT(s[i]);
     return c;
 }
 
 static size_t char_off(const char *s, size_t n, size_t k) { /* byte offset of character k (s[:k]) */
     size_t c = 0;
     for (size_t i = 0; i < n; i++)
-        if (((unsigned char)s[i] & 0xC0) != 0x80 && c++ == k) return i;
+        if (!UTF8_CONT(s[i]) && c++ == k) return i;
     return n;
 }
 
@@ -138,7 +137,7 @@ static Str strip(Str t) {
     t = lstrip(t);
     while (t.n && py_space(cp_before(t.s, t.n))) {
         size_t j = t.n - 1;
-        while (j > 0 && ((unsigned char)t.s[j] & 0xC0) == 0x80) j--;
+        while (j > 0 && UTF8_CONT(t.s[j])) j--;
         t.n = j;
     }
     return t;
@@ -151,13 +150,8 @@ static int starts(Str t, const char *p) {
 
 static int contains(Str t, const char *p) { return memmem(t.s, t.n, p, strlen(p)) != NULL; }
 
-static int ends(const char *s, const char *suf) {
-    size_t n = strlen(s), m = strlen(suf);
-    return n >= m && !strcmp(s + n - m, suf);
-}
-
 /* one_line: " ".join(s.split()), cut to n characters with "…". */
-static void one_line(PyBuf *o, Str s, size_t n) {
+static void one_line(Buf *o, Str s, size_t n) {
     size_t start = o->n;
     for (size_t i = 0; i < s.n;) {
         i = skip_space(s.s, s.n, i);
@@ -165,26 +159,26 @@ static void one_line(PyBuf *o, Str s, size_t n) {
         size_t j = i;
         int k;
         while (j < s.n && !py_space(cp_at(s.s, s.n, j, &k))) j += (size_t)k;
-        if (o->n > start) pyb_put(o, " ", 1);
-        pyb_put(o, s.s + i, j - i);
+        if (o->n > start) buf_put(o, " ", 1);
+        buf_put(o, s.s + i, j - i);
         i = j;
     }
     size_t len = nchars(o->s ? o->s + start : "", o->n - start);
     if (len > n) {
         o->n = start + char_off(o->s + start, o->n - start, n - 1);
-        pyb_puts(o, "\xE2\x80\xA6");
+        buf_puts(o, "\xE2\x80\xA6");
     }
 }
 
 /* str(x) for a JSON value: a string as it is, else roughly Python's repr. */
-static void py_str(PyBuf *o, yyjson_val *v) {
+static void py_str(Buf *o, yyjson_val *v) {
     size_t n0 = o->n;
-    if (!v || yyjson_is_null(v)) pyb_puts(o, "None");
-    else if (yyjson_is_str(v)) pyb_put(o, yyjson_get_str(v), yyjson_get_len(v));
-    else if (yyjson_is_bool(v)) pyb_puts(o, yyjson_get_bool(v) ? "True" : "False");
+    if (!v || yyjson_is_null(v)) buf_puts(o, "None");
+    else if (yyjson_is_str(v)) buf_put(o, yyjson_get_str(v), yyjson_get_len(v));
+    else if (yyjson_is_bool(v)) buf_puts(o, yyjson_get_bool(v) ? "True" : "False");
     else if (pyj_dumps(o, v, 0)) { /* too deep: not a partial dump */
         o->n = n0;
-        pyb_puts(o, "[nested too deeply to show]");
+        buf_puts(o, "[nested too deeply to show]");
     }
 }
 
@@ -204,10 +198,26 @@ static int truthy(yyjson_val *v) {
 
 static yyjson_val *get(yyjson_val *o, const char *k) { return yyjson_is_obj(o) ? yyjson_obj_get(o, k) : NULL; }
 static const char *gets(yyjson_val *o, const char *k) { return yyjson_get_str(get(o, k)); }
-static Str getstr(yyjson_val *o, const char *k) { /* o.get(k, "") as a string */
-    yyjson_val *v = get(o, k);
-    return yyjson_is_str(v) ? (Str){yyjson_get_str(v), yyjson_get_len(v)} : (Str){"", 0};
+static Str vstr(yyjson_val *v) { return yyjson_is_str(v) ? (Str){yyjson_get_str(v), yyjson_get_len(v)} : (Str){"", 0}; }
+static Str getstr(yyjson_val *o, const char *k) { return vstr(get(o, k)); } /* o.get(k, "") as a string */
+
+/* s is one of the NULL-terminated list v */
+static int str_in(Str s, const char *const *v) {
+    for (; *v; v++)
+        if (strlen(*v) == s.n && !memcmp(s.s, *v, s.n)) return 1;
+    return 0;
 }
+
+/* k = key's index in map m, else that of a new element (zeroed) appended to p. */
+#define SLOT(k, m, key, p, n)                                         \
+    do {                                                              \
+        if (((k) = strmap_get((m), (key))) < 0) {                     \
+            (p) = xrealloc((p), (size_t)((n) + 1) * sizeof *(p));     \
+            memset(&(p)[(n)], 0, sizeof *(p));                        \
+            strmap_put((m), (key), (k) = (n)++);                      \
+        }                                                             \
+    } while (0)
+
 /* int(v) for a JSON number (a bool is 1 or 0, a string is parsed), saturated
  * to 64 bits: Python's ints have no limit, C's casts of huge reals are UB. */
 static long long num_ll(yyjson_val *v) {
@@ -266,16 +276,7 @@ static double epoch(const char *ts) {
 
 /* Numbers are written and read with printf/strtod, which follow the locale: a
  * comma-decimal locale would change every hash. The public entry points run
- * in the "C" numeric locale on their thread (uselocale), whatever the app's. */
-static locale_t c_numeric_loc;
-static void make_c_numeric(void) { c_numeric_loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); }
-
-static locale_t c_numeric(void) { /* the thread's locale before */
-    static pthread_once_t once = PTHREAD_ONCE_INIT;
-    pthread_once(&once, make_c_numeric);
-    return c_numeric_loc ? uselocale(c_numeric_loc) : uselocale((locale_t)0);
-}
-
+ * in the "C" numeric locale on their thread (c_numeric), whatever the app's. */
 static double round1(double x) { /* round(x, 1): correctly rounded, ties to even */
     char b[64];
     snprintf(b, sizeof b, "%.1f", x);
@@ -309,10 +310,10 @@ static char *expanduser(const char *p) {
     }
     size_t hn = strlen(home);
     while (hn && home[hn - 1] == '/') hn--;
-    PyBuf o = {0};
-    pyb_put(&o, home, hn);
-    pyb_puts(&o, p + i);
-    if (!o.n) pyb_puts(&o, "/");
+    Buf o = {0};
+    buf_put(&o, home, hn);
+    buf_puts(&o, p + i);
+    if (!o.n) buf_puts(&o, "/");
     return o.s;
 }
 
@@ -327,24 +328,15 @@ static char *normpath(const char *p) {
         if (strcmp(tok, "..") || (!initial && !nc) || (nc && !strcmp(comps[nc - 1], ".."))) comps[nc++] = tok;
         else if (nc) nc--;
     }
-    PyBuf o = {0};
-    for (int i = 0; i < initial; i++) pyb_puts(&o, "/");
+    Buf o = {0};
+    for (int i = 0; i < initial; i++) buf_puts(&o, "/");
     for (int i = 0; i < nc; i++) {
-        if (i) pyb_puts(&o, "/");
-        pyb_puts(&o, comps[i]);
+        if (i) buf_puts(&o, "/");
+        buf_puts(&o, comps[i]);
     }
-    if (!o.n) pyb_puts(&o, ".");
+    if (!o.n) buf_puts(&o, ".");
     free(comps);
     free(copy);
-    return o.s;
-}
-
-static char *path_join(const char *a, const char *b) {
-    if (b[0] == '/' || !*a) return xstrdup(b);
-    PyBuf o = {0};
-    pyb_puts(&o, a);
-    if (a[strlen(a) - 1] != '/') pyb_puts(&o, "/");
-    pyb_puts(&o, b);
     return o.s;
 }
 
@@ -409,13 +401,15 @@ static const char *lang_of(const char *p) {
 static char *rel(const Env *e, const char *p) {
     size_t rn = strlen(e->root), hn = strlen(e->home);
     if (rn && !strncmp(p, e->root, rn) && p[rn] == '/') return xstrdup(p + rn + 1);
-    if (!strncmp(p, e->home, hn) && p[hn] == '/') {
-        char *o = xmalloc(strlen(p) - hn + 2);
-        o[0] = '~';
-        strcpy(o + 1, p + hn);
-        return o;
-    }
+    if (!strncmp(p, e->home, hn) && p[hn] == '/') return xasprintf("~%s", p + hn);
     return xstrdup(p);
+}
+
+static void put_rel(Buf *o, const Env *e, const char *p) { /* rel(p), nothing for NULL */
+    if (!p) return;
+    char *r = rel(e, p);
+    buf_puts(o, r);
+    free(r);
 }
 
 /* ---- string pools: texts are stored once ---- */
@@ -529,15 +523,14 @@ static int take_line(Recs *out, const char *line, size_t n, long *abs, off_t off
         yyjson_doc_free(doc);
         return doc != NULL;
     }
-    GROW(out->r, out->n, out->cap);
-    out->r[out->n++] = (Rec){doc, r, t, (*abs)++, off, n};
+    PUSH(out->r, out->n, out->cap, ((Rec){doc, r, t, (*abs)++, off, n}));
     return 1;
 }
 
 /* Every record of a file. *whole: the bytes up to the end of its last
  * newline-terminated line; *tail_json: a last line without its newline that
  * still parsed (it counts, as the draft reads it too). */
-static int read_records_at(const char *path, Recs *out, atomic_int *cancel, off_t *whole, int *tail_json) {
+static int read_records(const char *path, Recs *out, atomic_int *cancel, off_t *whole, int *tail_json) {
     FILE *f = fopen(path, "r");
     if (!f) return -1;
     char *line = NULL;
@@ -558,10 +551,6 @@ static int read_records_at(const char *path, Recs *out, atomic_int *cancel, off_
     free(line);
     fclose(f);
     return 0;
-}
-
-static int read_records(const char *path, Recs *out, atomic_int *cancel) {
-    return read_records_at(path, out, cancel, NULL, NULL);
 }
 
 static void recs_free(Recs *rs) {
@@ -603,6 +592,11 @@ typedef struct {
     int nrec, old;
 } Resp;
 
+static void resp_clear(Resp *rr) {
+    free(rr->recs), free(rr->mid), free(rr->ref), free(rr->rq), free(rr->model);
+    strv_free(rr->keys, rr->nkeys);
+}
+
 typedef struct { /* sha256 digest -> int */
     uint8_t (*k)[32];
     int *v;
@@ -620,8 +614,8 @@ static int dmap_get(const DMap *m, const uint8_t *d) { return m->cap ? m->v[dslo
 
 static void dmap_put(DMap *m, const uint8_t *d, int v, int replace) {
     if ((m->n + 1) * 2 > m->cap) {
-        DMap g = {xmalloc((m->cap ? m->cap * 2 : 256) * 32), xmalloc((m->cap ? m->cap * 2 : 256) * sizeof(int)),
-                  m->cap ? m->cap * 2 : 256, 0};
+        size_t cap = m->cap ? m->cap * 2 : 256;
+        DMap g = {xmalloc(cap * 32), xmalloc(cap * sizeof(int)), cap, 0};
         memset(g.v, -1, g.cap * sizeof(int));
         for (size_t i = 0; i < m->cap; i++)
             if (m->v[i] >= 0) {
@@ -692,8 +686,6 @@ typedef struct {
     int kept;           /* messages it kept of its base */
 } CallB; /* a call while building */
 
-static char *dup_or_null(const char *s) { return s ? xstrdup(s) : NULL; }
-
 /* ---- what a load keeps to resume (ctx_reload) ----
  *
  * A load reads the agent's records once; a reload reads only what was
@@ -718,7 +710,14 @@ typedef struct {
     int mi, bi;
 } Drop;
 
-typedef struct Loader {
+typedef struct {
+    int *w, nw;     /* a result's words, an action's (sorted ids) */
+    char **p;       /* a result's files (Read, Bash, Grep: files_of), an action's paths; sorted */
+    int np, done;   /* done: w and p computed */
+    int act;        /* a result: the action its files came from (post links it; a later one may replace it) */
+} LinkCache;
+
+typedef struct {
     int ok;                    /* resumable: an exact build, whole lines */
     char *root, *home, *config; /* labels depend on them */
     dev_t dev;
@@ -735,9 +734,11 @@ typedef struct Loader {
     int nih;
     Key *keys;                 /* per instance block (the agent's inst items in order): its content key */
     int nkeys;
-    char **csh, **cpm;         /* per call: shapeHash, its request's model (NULL none) */
-    int *ckept;                /* per call: messages kept of its base */
-    int **cextra, *ncextra;    /* per call: its instances between kept and the public tail (keep past the base) */
+    struct LCall {
+        char *sh, *pm; /* shapeHash, its request's model (NULL none) */
+        int kept;      /* messages kept of its base */
+        int *extra, nextra; /* its instances between kept and the public tail (keep past the base) */
+    } *calls;                  /* per call */
     int ncalls;
     StrMap shape_ix;           /* shapeHash -> shape_raw */
     char **shape_raw;          /* request shapes (the record's "shape", as JSON; the last one counts) */
@@ -768,18 +769,9 @@ typedef struct Loader {
     StrMap wix;                /* links_of's words: name -> wnames */
     char **wnames;
     int nwn;
-    struct LinkCache *lc;      /* per item (the first nlc): what links_of takes from it, which never changes */
+    LinkCache *lc;             /* per item (the first nlc): what links_of takes from it, which never changes */
     int nlc;
 } Loader;
-
-typedef struct LinkCache {
-    int *w, nw;     /* a result's words, an action's (sorted ids) */
-    char **p;       /* a result's files (Read, Bash, Grep: files_of), an action's paths; sorted */
-    int np, done;   /* done: w and p computed */
-    int act;        /* a result: the action its files came from (post links it; a later one may replace it) */
-} LinkCache;
-
-static void resp_clear(Resp *rr);
 
 static char **strv_copy(char **v, int n) {
     char **o = xmalloc(((size_t)n + 1) * sizeof *o);
@@ -787,13 +779,8 @@ static char **strv_copy(char **v, int n) {
     return o;
 }
 
-static void strv_free(char **v, int n) {
-    for (int i = 0; v && i < n; i++) free(v[i]);
-    free(v);
-}
-
 static void *mem_copy(const void *p, size_t n) {
-    void *o = xmalloc(n ? n : 1);
+    void *o = xmalloc(n);
     if (n) memcpy(o, p, n);
     return o;
 }
@@ -822,10 +809,8 @@ static void loader_free(Loader *l) {
     free(l->root), free(l->home), free(l->config), free(l->win);
     strv_free(l->ih, l->nih);
     free(l->keys);
-    strv_free(l->csh, l->ncalls), strv_free(l->cpm, l->ncalls);
-    free(l->ckept);
-    for (int i = 0; i < l->ncalls; i++) free(l->cextra[i]);
-    free(l->cextra), free(l->ncextra);
+    for (int i = 0; i < l->ncalls; i++) free(l->calls[i].sh), free(l->calls[i].pm), free(l->calls[i].extra);
+    free(l->calls);
     strmap_free(&l->shape_ix);
     strv_free(l->shape_raw, l->nshape);
     for (int i = 0; i < l->nold; i++) resp_clear(&l->old[i]);
@@ -856,11 +841,12 @@ static Loader *loader_copy(const Loader *f) {
     l->win = mem_copy(f->win, f->nwin);
     l->ih = strv_copy(f->ih, f->nih);
     l->keys = mem_copy(f->keys, (size_t)f->nkeys * sizeof *f->keys);
-    l->csh = strv_copy(f->csh, f->ncalls), l->cpm = strv_copy(f->cpm, f->ncalls);
-    l->ckept = mem_copy(f->ckept, (size_t)f->ncalls * sizeof *f->ckept);
-    l->ncextra = mem_copy(f->ncextra, (size_t)f->ncalls * sizeof *f->ncextra);
-    l->cextra = xmalloc(((size_t)f->ncalls + 1) * sizeof *l->cextra);
-    for (int i = 0; i < f->ncalls; i++) l->cextra[i] = mem_copy(f->cextra[i], (size_t)f->ncextra[i] * sizeof(int));
+    l->calls = mem_copy(f->calls, (size_t)f->ncalls * sizeof *f->calls);
+    for (int i = 0; i < f->ncalls; i++) {
+        struct LCall *c = &l->calls[i];
+        c->sh = dup_or_null(c->sh), c->pm = dup_or_null(c->pm);
+        c->extra = mem_copy(c->extra, (size_t)c->nextra * sizeof *c->extra);
+    }
     strmap_copy(&l->shape_ix, &f->shape_ix);
     l->shape_raw = strv_copy(f->shape_raw, f->nshape);
     l->old = xmalloc(((size_t)f->nold + 1) * sizeof *l->old);
@@ -904,7 +890,7 @@ typedef struct {
     int nfiles;
     Blk *blk;
     int nblk, capblk;
-    PyBuf buf;
+    Buf buf;
     struct { const void *p; uint8_t d[32]; } *hc; /* block hash cache, by value pointer */
     size_t hccap, hcn;
     Pool S, L; /* texts (the S table), labels and other strings */
@@ -938,18 +924,18 @@ typedef struct {
     ino_t ino;
 } Build;
 
-static int canon_blk(PyBuf *o, Blk k) { /* -1: nested too deeply to hash */
+static int canon_blk(Buf *o, Blk k) { /* -1: nested too deeply to hash */
     if (!k.wrap) return pyj_dumps(o, k.v, PYJ_CANON);
-    pyb_puts(o, "{\"text\":");
+    buf_puts(o, "{\"text\":");
     pyj_str(o, yyjson_get_str(k.v), yyjson_get_len(k.v));
-    pyb_puts(o, ",\"type\":\"text\"}");
+    buf_puts(o, ",\"type\":\"text\"}");
     return 0;
 }
 
-static void hash_buf(const PyBuf *o, uint8_t d[32]) {
+static void hash_buf(const char *s, size_t n, uint8_t d[32]) {
     Sha256 c;
     sha256_init(&c);
-    sha256_update(&c, o->s ? o->s : "", o->n);
+    sha256_update(&c, s ? s : "", n);
     sha256_final(&c, d);
 }
 
@@ -976,10 +962,10 @@ static const uint8_t *blk_hash(Build *b, Blk k) {
         b->buf.n = 0;
         if (canon_blk(&b->buf, k)) {
             b->buf.n = 0;
-            pyb_put(&b->buf, "\0unhashable", 11);
-            pyb_put(&b->buf, (const char *)&p, sizeof p);
+            buf_put(&b->buf, "\0unhashable", 11);
+            buf_put(&b->buf, (const char *)&p, sizeof p);
         }
-        hash_buf(&b->buf, b->hc[i].d);
+        hash_buf(b->buf.s, b->buf.n, b->hc[i].d);
         b->hc[i].p = p;
         b->hcn++;
     }
@@ -1026,17 +1012,17 @@ static void msg_blocks(Build *b, const Msg *m, int *b0, int *nb) {
 
 /* H of a rebuilt message: {"content": [blocks], "role": role}, keys sorted. */
 static int hash_rebuilt(Build *b, int role, int b0, int nb, uint8_t d[32]) { /* -1: unhashable */
-    PyBuf *o = &b->buf;
+    Buf *o = &b->buf;
     o->n = 0;
-    pyb_puts(o, "{\"content\":[");
+    buf_puts(o, "{\"content\":[");
     for (int i = 0; i < nb; i++) {
-        if (i) pyb_puts(o, ",");
+        if (i) buf_puts(o, ",");
         if (canon_blk(o, b->blk[b0 + i])) return -1;
     }
-    pyb_puts(o, "],\"role\":\"");
-    pyb_puts(o, ROLE_NAMES[role]);
-    pyb_puts(o, "\"}");
-    hash_buf(o, d);
+    buf_puts(o, "],\"role\":\"");
+    buf_puts(o, ROLE_NAMES[role]);
+    buf_puts(o, "\"}");
+    hash_buf(o->s, o->n, d);
     return 0;
 }
 
@@ -1046,6 +1032,13 @@ static int store_msg(Store *s, Msg m) {
     return s->nmsgs++;
 }
 
+/* An assistant record's response: its message id, else the record's uuid, else "\x01" (None). */
+static const char *resp_id(yyjson_val *r) {
+    const char *mid = gets(get(r, "message"), "id");
+    if (!mid || !*mid) mid = gets(r, "uuid");
+    return mid && *mid ? mid : "\x01";
+}
+
 /* responses(): message id (or the record's uuid) -> its assistant records.
  * Returns 0, or -1 when a record belongs to a response kept as metadata only
  * (from before an earlier load's window): it can't grow here. */
@@ -1053,17 +1046,9 @@ static int find_responses(Store *s) {
     int rc = 0;
     for (int i = 0; i < s->recs.n; i++) {
         Rec *r = &s->recs.r[i];
-        yyjson_val *msg = get(r->r, "message");
-        if (r->type != T_ASSISTANT || !yyjson_is_obj(msg)) continue;
-        const char *mid = gets(msg, "id");
-        if (!mid || !*mid) mid = gets(r->r, "uuid");
-        if (!mid || !*mid) mid = "\x01"; /* None */
-        int k = strmap_get(&s->resp_ix, mid);
-        if (k < 0) {
-            s->resps = xrealloc(s->resps, (size_t)(s->nresps + 1) * sizeof *s->resps);
-            s->resps[s->nresps] = (Resp){0};
-            strmap_put(&s->resp_ix, mid, k = s->nresps++);
-        }
+        if (r->type != T_ASSISTANT || !yyjson_is_obj(get(r->r, "message"))) continue;
+        int k;
+        SLOT(k, &s->resp_ix, resp_id(r->r), s->resps, s->nresps);
         Resp *rr = &s->resps[k];
         if (rr->old) {
             rc = -1;
@@ -1100,7 +1085,7 @@ static void flush_run(Build *b, Store *s, int *run, int nrun) {
     }
     off[nrun] = b->nblk - start;
     /* each block's canonical JSON once; each run[a:b] hashed incrementally */
-    PyBuf *cj = xcalloc((size_t)off[nrun] + 1, sizeof *cj);
+    Buf *cj = xcalloc((size_t)off[nrun] + 1, sizeof *cj);
     char *bad = xcalloc((size_t)off[nrun] + 1, 1); /* unhashable: no run holding it is stored */
     for (int i = 0; i < off[nrun]; i++) bad[i] = canon_blk(&cj[i], b->blk[start + i]) != 0;
     static const char tail[] = "],\"role\":\"user\"}";
@@ -1125,21 +1110,24 @@ static void flush_run(Build *b, Store *s, int *run, int nrun) {
                          store_msg(s, (Msg){NULL, ROLE_USER, start + off[a], off[e] - off[a], s->recs.r[run[a]].abs}), 0);
         }
     }
-    for (int i = 0; i < off[nrun]; i++) pyb_free(&cj[i]);
+    for (int i = 0; i < off[nrun]; i++) buf_free(&cj[i]);
     free(cj), free(bad);
     free(off);
 }
 
-static long long *usage_of(yyjson_val *u, long long out[5]);
+static long long *usage_of(yyjson_val *u, long long out[5]) { /* NULL when no usage */
+    if (!truthy(u)) return NULL;
+    long long w = geti(u, "cache_creation_input_tokens"), w1h = geti(get(u, "cache_creation"), "ephemeral_1h_input_tokens");
+    out[0] = geti(u, "input_tokens"), out[1] = geti(u, "cache_read_input_tokens");
+    out[2] = w - w1h, out[3] = w1h, out[4] = geti(u, "output_tokens");
+    return out;
+}
 
 /* What the calls need of a response, kept so that a later load needs none of
  * its records. */
 static void resp_meta(Build *b, Store *s, Resp *rr, int b0, int nb) {
     yyjson_val *r0 = s->recs.r[rr->recs[0]].r, *rl = s->recs.r[rr->recs[rr->n - 1]].r, *ml = get(rl, "message");
-    yyjson_val *m0 = get(r0, "message");
-    const char *mid = gets(m0, "id");
-    if (!mid || !*mid) mid = gets(r0, "uuid");
-    rr->mid = xstrdup(mid && *mid ? mid : "\x01");
+    rr->mid = xstrdup(resp_id(r0));
     rr->ref = dup_or_null(gets(r0, "requestRef"));
     rr->rq = dup_or_null(gets(rl, "requestId"));
     rr->model = dup_or_null(gets(ml, "model"));
@@ -1161,18 +1149,9 @@ static void resp_meta(Build *b, Store *s, Resp *rr, int b0, int nb) {
     }
 }
 
-static void resp_clear(Resp *rr) {
-    free(rr->recs), free(rr->mid), free(rr->ref), free(rr->rq), free(rr->model);
-    for (int i = 0; i < rr->nkeys; i++) free(rr->keys[i]);
-    free(rr->keys);
-}
-
 /* The store of a file; meta: the agent's own (its responses' metadata).
  * Returns -1 when a response kept as metadata only would grow (find_responses). */
-static int store_build_meta(Build *b, Store *s, int meta);
-static void store_build(Build *b, Store *s) { store_build_meta(b, s, 0); }
-
-static int store_build_meta(Build *b, Store *s, int meta) {
+static int store_build(Build *b, Store *s, int meta) {
     int *run = NULL, nrun = 0, caprun = 0;
     for (int i = 0; i < s->recs.n; i++) {
         if (b->cancel && !(i & 511) && atomic_load(b->cancel)) break;
@@ -1189,11 +1168,10 @@ static int store_build_meta(Build *b, Store *s, int meta) {
             b->buf.n = 0;
             uint8_t d[32];
             if (!pyj_dumps(&b->buf, m, PYJ_CANON)) {
-                hash_buf(&b->buf, d);
+                hash_buf(b->buf.s, b->buf.n, d);
                 if (dmap_get(&s->map, d) < 0) dmap_put(&s->map, d, store_msg(s, (Msg){m, 0, 0, 0, r->abs}), 0);
             }
-            GROW(run, nrun, caprun);
-            run[nrun++] = i;
+            PUSH(run, nrun, caprun, i);
         }
     }
     flush_run(b, s, run, nrun);
@@ -1224,7 +1202,51 @@ static void store_free(Store *s) {
     free(s->path);
 }
 
-static void msg_rep(Build *b, const Msg *m, uint8_t out[32]);
+/* What a message's items depend on, beyond the hash it was sent under: its
+ * role, an empty system message's effort, and each block of its content as
+ * the draft normalizes it (a string is one text block): its canonical hash
+ * and the order of its objects' keys (items' texts follow it). Claude Code
+ * writes one message under one hash in more than one way (content as a string
+ * or a list), so the hash alone doesn't say. */
+static void key_order(Sha256 *c, yyjson_val *v, int depth) {
+    if (depth > PYJ_MAX_DEPTH) return;
+    size_t i, m;
+    yyjson_val *k, *x;
+    if (yyjson_is_obj(v)) {
+        sha256_update(c, "{", 1);
+        yyjson_obj_foreach(v, i, m, k, x) {
+            sha256_update(c, yyjson_get_str(k), yyjson_get_len(k) + 1); /* with its NUL: keys can't run together */
+            key_order(c, x, depth + 1);
+        }
+        sha256_update(c, "}", 1);
+    } else if (yyjson_is_arr(v)) {
+        sha256_update(c, "[", 1);
+        yyjson_arr_foreach(v, i, m, x) key_order(c, x, depth + 1);
+        sha256_update(c, "]", 1);
+    }
+}
+
+static void msg_rep(Build *b, const Msg *m, uint8_t out[32]) {
+    Sha256 c;
+    sha256_init(&c);
+    int role = msg_role(m), b0, nb;
+    const char *rn = m->v ? gets(m->v, "role") : ROLE_NAMES[m->role];
+    sha256_update(&c, rn ? rn : "\x01", strlen(rn ? rn : "\x01") + 1);
+    if (role == ROLE_SYSTEM && m->v && !truthy(get(m->v, "content"))) {
+        Buf e = {0};
+        py_str(&e, get(get(m->v, "output_config"), "effort"));
+        sha256_update(&c, e.s ? e.s : "", e.n + 1);
+        buf_free(&e);
+    }
+    msg_blocks(b, m, &b0, &nb);
+    for (int i = 0; i < nb; i++) {
+        Blk k = b->blk[b0 + i];
+        sha256_update(&c, blk_hash(b, k), 32);
+        if (k.wrap) sha256_update(&c, "{type\0text\0}", 12);
+        else key_order(&c, k.v, 0);
+    }
+    sha256_final(&c, out);
+}
 
 /* resolve(h): the own file, else the project's other files in order. A
  * message found elsewhere is remembered in the own store (in found_else
@@ -1261,8 +1283,8 @@ static const Msg *resolve(Build *b, const char *h) {
         if (!s->loaded) {
             if (b->cancel && atomic_load(b->cancel)) break;
             s->path = xstrdup(b->files[i]);
-            read_records(s->path, &s->recs, b->cancel);
-            store_build(b, s);
+            read_records(s->path, &s->recs, b->cancel, NULL, NULL);
+            store_build(b, s, 0);
         }
         if ((k = dmap_get(&s->map, d)) >= 0) {
             Loader *ld = b->ld; /* the file must still hold it at the next reload */
@@ -1271,9 +1293,8 @@ static const Msg *resolve(Build *b, const char *h) {
             struct stat st;
             if (!known && !stat(b->files[i], &st)) {
                 ld->srcs = xrealloc(ld->srcs, (size_t)(ld->nsrcs + 1) * sizeof *ld->srcs);
-                ld->srcs[ld->nsrcs].path = xstrdup(b->files[i]);
-                ld->srcs[ld->nsrcs].dev = st.st_dev, ld->srcs[ld->nsrcs].ino = st.st_ino;
-                ld->srcs[ld->nsrcs++].size = st.st_size;
+                ld->srcs[ld->nsrcs++] =
+                    (__typeof__(*ld->srcs)){xstrdup(b->files[i]), st.st_dev, st.st_ino, st.st_size};
             }
             if (!dset_has(&b->ld->found_else, d)) b->a->found_elsewhere++;
             dset_add(&b->ld->found_else, d);
@@ -1300,6 +1321,10 @@ typedef struct {
     const char *tool, *tuid, *p; /* Build.L */
     int err;
 } Fields;
+
+static Fields fields(CtxKind k, const char *s, Str t, double w) {
+    return (Fields){k, s, t, w, -1, NULL, NULL, NULL, 0};
+}
 
 /* A new item's key: its message (or shape) and place in it; a key already
  * given (the same message sent again as a new instance) takes the next free
@@ -1336,6 +1361,20 @@ static uint64_t item_key(Build *b) {
                             ((uint64_t)(b->kpos + 1) * 0x9E3779B97F4A7C15ULL));
 }
 
+/* An item with a tool_use id: an action by it, the last result for it (post links them). */
+static void index_tuid(Build *b, const CtxItem *it, int id) {
+    if (it->tuid && it->kind == CK_ACTION) strmap_put(&b->tool_use, it->tuid, id);
+    else if (it->tuid && it->kind == CK_RESULT) {
+        int k = strmap_get(&b->result_ix, it->tuid);
+        if (k < 0) {
+            GROW(b->result_of, b->nresult, b->capresult);
+            b->result_of[b->nresult].tu = it->tuid;
+            strmap_put(&b->result_ix, it->tuid, k = b->nresult++);
+        }
+        b->result_of[k].item = id;
+    }
+}
+
 static int finish_item(Build *b, const Fields *f) {
     GROW(b->items, b->nitems, b->capitems);
     CtxItem *it = &b->items[b->nitems];
@@ -1352,22 +1391,17 @@ static int finish_item(Build *b, const Fields *f) {
     it->err = f->err;
     it->enter = it->leave = it->action = it->result = -1;
     it->key = item_key(b);
-    int id = b->nitems++;
-    if (f->tuid && f->kind == CK_ACTION) strmap_put(&b->tool_use, f->tuid, id);
-    else if (f->tuid && f->kind == CK_RESULT) {
-        int k = strmap_get(&b->result_ix, f->tuid);
-        if (k < 0) {
-            GROW(b->result_of, b->nresult, b->capresult);
-            b->result_of[b->nresult].tu = f->tuid;
-            strmap_put(&b->result_ix, f->tuid, k = b->nresult++);
-        }
-        b->result_of[k].item = id;
-    }
-    return id;
+    index_tuid(b, it, b->nitems);
+    return b->nitems++;
 }
 
 static const char *L_(Build *b, const char *s) { return pool_str(&b->L, s, strlen(s)); }
-static const char *Lbuf(Build *b, PyBuf *o) { return pool_str(&b->L, o->s ? o->s : "", o->n); }
+static const char *L_opt(Build *b, const char *s) { return s ? L_(b, s) : NULL; }
+static const char *L_str(Build *b, yyjson_val *o, const char *k) { /* o[k] when a string (NULs kept), else NULL */
+    yyjson_val *v = get(o, k);
+    return yyjson_is_str(v) ? pool_str(&b->L, yyjson_get_str(v), yyjson_get_len(v)) : NULL;
+}
+static const char *Lbuf(Build *b, Buf *o) { return pool_str(&b->L, o->s ? o->s : "", o->n); }
 
 /* inj_source: what injected text is, from its start. */
 static const char *inj_source(Str t, char name[160]) {
@@ -1428,17 +1462,14 @@ static int split_text(Build *b, Str t, Seg **out) {
         if (!c) break;
         size_t end = (size_t)(c - t.s) + 18;
         if (strip((Str){t.s + pos, oi - pos}).n) {
-            GROW(v, n, cap);
-            v[n++] = (Seg){CK_PROMPT, NULL, {t.s + pos, oi - pos}};
+            PUSH(v, n, cap, ((Seg){CK_PROMPT, NULL, {t.s + pos, oi - pos}}));
         }
         Str inj = {t.s + oi, end - oi};
-        GROW(v, n, cap);
-        v[n++] = (Seg){CK_INJECTED, L_(b, inj_source(inj, nm)), inj};
+        PUSH(v, n, cap, ((Seg){CK_INJECTED, L_(b, inj_source(inj, nm)), inj}));
         pos = end;
     }
     if (strip((Str){t.s + pos, t.n - pos}).n || !n) {
-        GROW(v, n, cap);
-        v[n++] = (Seg){CK_PROMPT, NULL, {t.s + pos, t.n - pos}};
+        PUSH(v, n, cap, ((Seg){CK_PROMPT, NULL, {t.s + pos, t.n - pos}}));
     }
     static const char *harness[] = {"<local-command", "<command-name>", "<command-message>", "<total_tokens>",
                                     "<task-notification>", "<bash-input>", "<bash-stdout>",
@@ -1459,7 +1490,7 @@ static int split_text(Build *b, Str t, Seg **out) {
 }
 
 /* img_info: "png 1000x100" and tokens (w*h/750 after the 1568 px long-edge resize). */
-static long long img_info(yyjson_val *src, PyBuf *info) {
+static long long img_info(yyjson_val *src, Buf *info) {
     Str data = getstr(src, "data");
     const char *mt = gets(src, "media_type");
     if (!mt || !*mt) mt = "image/?";
@@ -1501,36 +1532,38 @@ static long long img_info(yyjson_val *src, PyBuf *info) {
     char t[64];
     if (w) snprintf(t, sizeof t, "%s %lux%lu", ext, w, h);
     else snprintf(t, sizeof t, "%s", ext);
-    pyb_puts(info, t);
+    buf_puts(info, t);
     return tok;
 }
 
+/* The tools whose calls change files; EDIT_TOOLS: the ones that name the file. */
+static const char *const CHANGE_TOOLS[] = {"Bash", "Edit", "Write", "MultiEdit", "NotebookEdit", NULL};
+#define EDIT_TOOLS (CHANGE_TOOLS + 1)
+
+static yyjson_val *path_arg(yyjson_val *inp) { /* the file an edit names: file_path, else notebook_path */
+    yyjson_val *p = get(inp, "file_path");
+    return truthy(p) ? p : get(inp, "notebook_path");
+}
+
 /* action_label: "Read src/a.c 1-40", "Bash make test", ... */
-static void action_label(Build *b, PyBuf *o, Str name, yyjson_val *inp) {
+static void action_label(Build *b, Buf *o, Str name, yyjson_val *inp) {
     char num[64];
     if (!yyjson_is_obj(inp)) inp = NULL;
 #define IS(x) (name.n == strlen(x) && !memcmp(name.s, x, name.n))
     if (IS("Read")) {
-        pyb_puts(o, "Read ");
-        const char *p = gets(inp, "file_path");
-        char *r = p ? rel(&b->env, p) : xstrdup("");
-        pyb_puts(o, r);
-        free(r);
+        buf_puts(o, "Read ");
+        put_rel(o, &b->env, gets(inp, "file_path"));
         yyjson_val *off = get(inp, "offset"), *lim = get(inp, "limit");
         if (truthy(off) || truthy(lim)) {
             long long a = truthy(off) ? num_ll(off) : 1, l = truthy(lim) ? num_ll(lim) : 2000, z;
             if (__builtin_add_overflow(a, l - (l > LLONG_MIN), &z)) z = a < 0 ? LLONG_MIN : LLONG_MAX; /* a + l - 1 */
             snprintf(num, sizeof num, " %lld-%lld", a, z);
-            pyb_puts(o, num);
+            buf_puts(o, num);
         }
-    } else if (IS("Edit") || IS("Write") || IS("MultiEdit") || IS("NotebookEdit")) {
-        pyb_put(o, name.s, name.n);
-        pyb_puts(o, " ");
-        yyjson_val *p = get(inp, "file_path");
-        if (!truthy(p)) p = get(inp, "notebook_path");
-        char *r = yyjson_is_str(p) ? rel(&b->env, yyjson_get_str(p)) : xstrdup("");
-        pyb_puts(o, r);
-        free(r);
+    } else if (str_in(name, EDIT_TOOLS)) {
+        buf_put(o, name.s, name.n);
+        buf_puts(o, " ");
+        put_rel(o, &b->env, yyjson_get_str(path_arg(inp)));
     } else if (IS("Bash")) {
         /* the usual cd into the repo: ^\s*cd\s+("[^"]*"|\S+)\s*&&\s* */
         Str c = getstr(inp, "command");
@@ -1555,83 +1588,81 @@ static void action_label(Build *b, PyBuf *o, Str name, yyjson_val *inp) {
                         if (starts((Str){c.s + y, c.n - y}, "&&")) e = y + 2;
                         else {
                             x--;
-                            while (x > j && ((unsigned char)c.s[x] & 0xC0) == 0x80) x--;
+                            while (x > j && UTF8_CONT(c.s[x])) x--;
                         }
                     }
                 }
                 if (e) cut = skip_space(c.s, c.n, e);
             }
         }
-        pyb_puts(o, "Bash ");
+        buf_puts(o, "Bash ");
         one_line(o, (Str){c.s + cut, c.n - cut}, 80);
     } else if (IS("Grep") || IS("Glob")) {
-        pyb_put(o, name.s, name.n);
-        pyb_puts(o, " ");
-        PyBuf pat = {0};
+        buf_put(o, name.s, name.n);
+        buf_puts(o, " ");
+        Buf pat = {0};
         yyjson_val *pv = get(inp, "pattern");
         if (pv) py_str(&pat, pv);
         one_line(o, (Str){pat.s ? pat.s : "", pat.n}, 50);
-        pyb_free(&pat);
+        buf_free(&pat);
         yyjson_val *p = get(inp, "path");
         if (truthy(p)) {
-            pyb_puts(o, " in ");
-            char *r = yyjson_is_str(p) ? rel(&b->env, yyjson_get_str(p)) : xstrdup("");
-            pyb_puts(o, r);
-            free(r);
+            buf_puts(o, " in ");
+            put_rel(o, &b->env, yyjson_get_str(p));
         }
     } else if (IS("Agent") || IS("Task")) {
-        pyb_put(o, name.s, name.n);
-        pyb_puts(o, " ");
+        buf_put(o, name.s, name.n);
+        buf_puts(o, " ");
         yyjson_val *t = get(inp, "subagent_type");
         if (truthy(t)) py_str(o, t);
-        pyb_puts(o, ": ");
-        PyBuf d = {0};
+        buf_puts(o, ": ");
+        Buf d = {0};
         yyjson_val *dv = get(inp, "description");
         if (dv) py_str(&d, dv);
         one_line(o, (Str){d.s ? d.s : "", d.n}, 60);
-        pyb_free(&d);
+        buf_free(&d);
     } else if (IS("Skill")) {
-        pyb_puts(o, "Skill ");
+        buf_puts(o, "Skill ");
         if (get(inp, "skill")) py_str(o, get(inp, "skill"));
     } else if (IS("WebFetch")) {
-        pyb_puts(o, "WebFetch ");
-        PyBuf u = {0};
+        buf_puts(o, "WebFetch ");
+        Buf u = {0};
         if (get(inp, "url")) py_str(&u, get(inp, "url"));
         one_line(o, (Str){u.s ? u.s : "", u.n}, 70);
-        pyb_free(&u);
+        buf_free(&u);
     } else { /* f"{name} {one_line(first string value, 60)}".strip() */
         Str first = {"", 0};
         size_t i, m;
         yyjson_val *k, *v;
         if (inp) yyjson_obj_foreach(inp, i, m, k, v) if (yyjson_is_str(v)) {
-                first = (Str){yyjson_get_str(v), yyjson_get_len(v)};
+                first = vstr(v);
                 break;
             }
-        PyBuf t = {0};
-        pyb_put(&t, name.s, name.n);
-        pyb_puts(&t, " ");
+        Buf t = {0};
+        buf_put(&t, name.s, name.n);
+        buf_puts(&t, " ");
         one_line(&t, first, 60);
         Str s = strip((Str){t.s, t.n});
-        pyb_put(o, s.s, s.n);
-        pyb_free(&t);
+        buf_put(o, s.s, s.n);
+        buf_free(&t);
     }
 #undef IS
 }
 
 /* A Str of a JSON value's dumps into a scratch buffer kept alive by the caller. */
-static Str dumps_to(PyBuf *o, Blk k, int flags) {
+static Str dumps_to(Buf *o, Blk k, int flags) {
     o->n = 0;
     if (k.wrap && flags == 0) {
-        pyb_puts(o, "{\"type\": \"text\", \"text\": ");
+        buf_puts(o, "{\"type\": \"text\", \"text\": ");
         pyj_str(o, yyjson_get_str(k.v), yyjson_get_len(k.v));
-        pyb_puts(o, "}");
+        buf_puts(o, "}");
     } else if (k.wrap) {
-        pyb_puts(o, "{\n \"type\": \"text\",\n \"text\": ");
+        buf_puts(o, "{\n \"type\": \"text\",\n \"text\": ");
         pyj_str(o, yyjson_get_str(k.v), yyjson_get_len(k.v));
-        pyb_puts(o, "\n}");
+        buf_puts(o, "\n}");
     } else if (pyj_dumps(o, k.v, flags)) {
         o->n = 0;
-        pyb_puts(o, "[nested too deeply to show]");
+        buf_puts(o, "[nested too deeply to show]");
     }
     return (Str){o->s ? o->s : "", o->n};
 }
@@ -1647,101 +1678,51 @@ static Key key_of(Build *b, int role, Blk k, int sub) {
 }
 
 /* Items of dropped messages, by content key, that a rewritten message may take
- * back (free_items in build_ctx.py). */
+ * back (free_items in build_ctx.py): per key a chain of its items in order
+ * (added last to first), an item taken back marked -1. */
 typedef struct {
-    Key *k;
-    int **v; /* per key: its items, v[i][0] = count */
-    int *cap;
-    int n, capn;
-    int *ix;
-    size_t ixcap;
+    DMap head; /* key_digest -> its first entry */
+    struct { int item, next; } *e;
+    int n, cap;
 } Free;
 
-static uint64_t key_hash(const Key *k) {
-    uint64_t h;
-    memcpy(&h, k->d, 8);
-    return h ^ ((uint64_t)(uint16_t)k->sub << 48) ^ ((uint64_t)k->role << 40) ^ ((uint64_t)k->tag << 32);
+/* A key as one digest: its segment, role and tag folded into the block's hash
+ * (two keys fold alike only if their hashes differ in just those bytes). */
+static void key_digest(const Key *k, uint8_t d[32]) {
+    memcpy(d, k->d, 32);
+    d[0] ^= (uint8_t)k->sub, d[1] ^= (uint8_t)((uint16_t)k->sub >> 8), d[2] ^= k->role, d[3] ^= k->tag;
 }
 
-static int free_find(const Free *f, const Key *k) {
-    if (!f->ixcap) return -1;
-    for (size_t i = key_hash(k) & (f->ixcap - 1);; i = (i + 1) & (f->ixcap - 1)) {
-        if (f->ix[i] < 0) return -1;
-        if (!memcmp(&f->k[f->ix[i]], k, sizeof *k)) return f->ix[i];
-    }
+static void free_add(Free *f, const Key *k, int item) { /* before the items under k so far */
+    uint8_t d[32];
+    key_digest(k, d);
+    GROW(f->e, f->n, f->cap);
+    f->e[f->n].item = item, f->e[f->n].next = dmap_get(&f->head, d);
+    dmap_put(&f->head, d, f->n++, 1);
 }
 
-static void free_add(Free *f, const Key *k, int item) {
-    int j = free_find(f, k);
-    if (j < 0) {
-        if ((size_t)(f->n + 1) * 2 > f->ixcap) {
-            size_t cap = f->ixcap ? f->ixcap * 2 : 256;
-            free(f->ix);
-            f->ix = xmalloc(cap * sizeof *f->ix);
-            memset(f->ix, -1, cap * sizeof *f->ix);
-            f->ixcap = cap;
-            for (int q = 0; q < f->n; q++) {
-                size_t i = key_hash(&f->k[q]) & (cap - 1);
-                while (f->ix[i] >= 0) i = (i + 1) & (cap - 1);
-                f->ix[i] = q;
-            }
+/* item -1: the first item under k (pop), else item if it is under k (list.remove); -1 when none */
+static int free_take(Free *f, const Key *k, int item) {
+    uint8_t d[32];
+    key_digest(k, d);
+    for (int j = dmap_get(&f->head, d); j >= 0; j = f->e[j].next)
+        if (f->e[j].item >= 0 && (item < 0 || f->e[j].item == item)) {
+            int it = f->e[j].item;
+            f->e[j].item = -1;
+            return it;
         }
-        if (f->n == f->capn) {
-            f->capn = f->capn ? f->capn * 2 : 64;
-            f->k = xrealloc(f->k, (size_t)f->capn * sizeof *f->k);
-            f->v = xrealloc(f->v, (size_t)f->capn * sizeof *f->v);
-            f->cap = xrealloc(f->cap, (size_t)f->capn * sizeof *f->cap);
-        }
-        j = f->n++;
-        f->k[j] = *k;
-        f->cap[j] = 4;
-        f->v[j] = xmalloc(4 * sizeof(int));
-        f->v[j][0] = 0;
-        size_t i = key_hash(k) & (f->ixcap - 1);
-        while (f->ix[i] >= 0) i = (i + 1) & (f->ixcap - 1);
-        f->ix[i] = j;
-    }
-    int *v = f->v[j];
-    if (v[0] + 1 >= f->cap[j]) v = f->v[j] = xrealloc(v, (size_t)(f->cap[j] *= 2) * sizeof(int));
-    v[++v[0]] = item;
-}
-
-static int free_pop(Free *f, const Key *k) { /* the first item under k, -1 */
-    int j = free_find(f, k);
-    if (j < 0 || !f->v[j][0]) return -1;
-    int *v = f->v[j], it = v[1];
-    memmove(v + 1, v + 2, (size_t)(v[0] - 1) * sizeof(int));
-    v[0]--;
-    return it;
-}
-
-static void free_remove(Free *f, const Key *k, int item) { /* list.remove(item) when present */
-    int j = free_find(f, k);
-    if (j < 0) return;
-    int *v = f->v[j];
-    for (int i = 1; i <= v[0]; i++)
-        if (v[i] == item) {
-            memmove(v + i, v + i + 1, (size_t)(v[0] - i) * sizeof(int));
-            v[0]--;
-            return;
-        }
+    return -1;
 }
 
 static void free_reset(Free *f) {
-    for (int j = 0; j < f->n; j++) free(f->v[j]);
-    f->n = 0;
-    if (f->ixcap) memset(f->ix, -1, f->ixcap * sizeof *f->ix);
-}
-
-static void free_done(Free *f) {
-    free_reset(f);
-    free(f->k), free(f->v), free(f->cap), free(f->ix);
+    f->n = 0, f->head.n = 0;
+    if (f->head.cap) memset(f->head.v, -1, f->head.cap * sizeof *f->head.v);
 }
 
 /* One block's (key, item): an item of a dropped message with the same key is
  * taken back, else a new one. */
 static void emit(Build *b, Free *fr, Key key, const Fields *f) {
-    int iid = fr ? free_pop(fr, &key) : -1;
+    int iid = fr ? free_take(fr, &key, -1) : -1;
     if (iid < 0) iid = finish_item(b, f);
     b->kpos++;
     if (b->nkeys == b->capkeys) {
@@ -1753,35 +1734,48 @@ static void emit(Build *b, Free *fr, Key key, const Fields *f) {
     b->kitems[b->nkeys++] = iid;
 }
 
+static int is_thinking(const char *t) { return t && (!strcmp(t, "thinking") || !strcmp(t, "redacted_thinking")); }
+
+/* An image: "image png 1000x100" appended to lab, the draft's text for it
+ * ("[image png 1000x100: not embedded in the draft]") to o; its tokens. */
+static long long put_image(Buf *o, Buf *lab, yyjson_val *src) {
+    size_t at = lab->n;
+    buf_puts(lab, "image ");
+    long long tok = img_info(src, lab);
+    buf_puts(o, "[");
+    buf_put(o, lab->s + at, lab->n - at);
+    buf_puts(o, ": not embedded in the draft]");
+    return tok;
+}
+
+static double add_part(Buf *o, int *np, Str t) { /* a part of a result, "\n" between them; its weight */
+    if ((*np)++) buf_puts(o, "\n");
+    buf_put(o, t.s, t.n);
+    return (double)nchars(t.s, t.n) / 4;
+}
+
 /* blocks_of: a message -> its items, one per content block (injected text
  * split out), keyed by content. resp: the response that made an assistant
  * message (its usage sizes the blocks), NULL. */
 static void blocks_of(Build *b, Free *fr, const Msg *m, int made, const Resp *resp) {
     int role = msg_role(m);
-    PyBuf tb = {0}, lb = {0};
-    if (role == ROLE_SYSTEM) {
-        int empty = m->v ? !truthy(get(m->v, "content")) : !m->nb;
-        if (empty) {
-            yyjson_val *eff = get(get(m->v, "output_config"), "effort");
-            if (truthy(eff)) {
-                pyb_puts(&tb, "(effort: ");
-                py_str(&tb, eff);
-                pyb_puts(&tb, ")");
-            } else pyb_puts(&tb, "(empty system message)");
-            Key key;
-            memset(&key, 0, sizeof key);
-            Sha256 c;
-            sha256_init(&c);
-            sha256_update(&c, tb.s, tb.n);
-            sha256_final(&c, key.d);
-            key.tag = 1;
-            key.sub = -1;
-            Fields f = {CK_INJECTED, L_(b, truthy(eff) ? "effort" : "system message"), {tb.s, tb.n}, 4, -1,
-                        NULL, NULL, NULL, 0};
-            emit(b, fr, key, &f);
-            pyb_free(&tb);
-            return;
-        }
+    Buf tb = {0}, lb = {0};
+    if (role == ROLE_SYSTEM && (m->v ? !truthy(get(m->v, "content")) : !m->nb)) {
+        yyjson_val *eff = get(get(m->v, "output_config"), "effort");
+        if (truthy(eff)) {
+            buf_puts(&tb, "(effort: ");
+            py_str(&tb, eff);
+            buf_puts(&tb, ")");
+        } else buf_puts(&tb, "(empty system message)");
+        Key key;
+        memset(&key, 0, sizeof key);
+        hash_buf(tb.s, tb.n, key.d);
+        key.tag = 1;
+        key.sub = -1;
+        Fields f = fields(CK_INJECTED, L_(b, truthy(eff) ? "effort" : "system message"), (Str){tb.s, tb.n}, 4);
+        emit(b, fr, key, &f);
+        buf_free(&tb);
+        return;
     }
     int b0, nb;
     msg_blocks(b, m, &b0, &nb);
@@ -1792,50 +1786,29 @@ static void blocks_of(Build *b, Free *fr, const Msg *m, int made, const Resp *re
     }
     /* an assistant response's blocks: thinking gets its thinking tokens, the
      * rest share the remaining output tokens by size */
-    double *aw = NULL;
+    long long *sz = NULL, sig_sum = 0, size_sum = 0;
     if (role == ROLE_ASSISTANT && resp) {
-        long long out_t = resp->out_t, th_t = resp->th_t;
-        aw = xcalloc((size_t)nb + 1, sizeof *aw);
-        long long *sz = xcalloc((size_t)nb + 1, sizeof *sz);
-        long long sig_sum = 0, size_sum = 0;
+        sz = xcalloc((size_t)nb + 1, sizeof *sz);
         for (int i = 0; i < nb; i++) {
             Blk k = b->blk[b0 + i];
-            const char *t = k.wrap ? "text" : gets(k.v, "type");
-            int th = t && (!strcmp(t, "thinking") || !strcmp(t, "redacted_thinking"));
-            if (th) {
-                Str sig = getstr(k.v, "signature");
+            if (is_thinking(k.wrap ? "text" : gets(k.v, "type"))) {
+                Str sig = getstr(k.v, "signature"), tt = getstr(k.v, "thinking");
                 if (!sig.n) sig = getstr(k.v, "data");
-                Str tt = getstr(k.v, "thinking");
-                sz[i] = (long long)(nchars(sig.s, sig.n) + nchars(tt.s, tt.n) + 1);
-                sig_sum += sz[i];
+                sig_sum += sz[i] = (long long)(nchars(sig.s, sig.n) + nchars(tt.s, tt.n) + 1);
             } else {
                 Str d = dumps_to(&tb, k, 0);
-                sz[i] = (long long)nchars(d.s, d.n) + 1;
-                size_sum += sz[i];
+                size_sum += sz[i] = (long long)nchars(d.s, d.n) + 1;
             }
         }
-        for (int i = 0; i < nb; i++) {
-            Blk k = b->blk[b0 + i];
-            const char *t = k.wrap ? "text" : gets(k.v, "type");
-            int th = t && (!strcmp(t, "thinking") || !strcmp(t, "redacted_thinking"));
-            if (th) {
-                Str tt = getstr(k.v, "thinking");
-                aw[i] = th_t ? (double)th_t * (double)sz[i] / (double)sig_sum : (double)nchars(tt.s, tt.n) / 4;
-            } else {
-                long long rest = out_t - th_t > 0 ? out_t - th_t : 0;
-                aw[i] = out_t ? (double)rest * (double)sz[i] / (double)size_sum : (double)sz[i] / 4;
-            }
-        }
-        free(sz);
     }
     for (int bi = 0; bi < nb; bi++) {
         Blk k = b->blk[b0 + bi];
         const char *bt = k.wrap ? "text" : gets(k.v, "type");
         yyjson_val *bv = k.wrap ? NULL : k.v;
-        Str text = k.wrap ? (Str){yyjson_get_str(k.v), yyjson_get_len(k.v)} : getstr(bv, "text");
+        Str text = k.wrap ? vstr(k.v) : getstr(bv, "text");
         lb.n = 0;
         if (role == ROLE_SYSTEM) {
-            Fields f = {CK_INJECTED, NULL, {0}, 0, -1, NULL, NULL, NULL, 0};
+            Fields f = fields(CK_INJECTED, NULL, (Str){0}, 0);
             if (bt && !strcmp(bt, "text")) {
                 char nm[160];
                 f.t = text;
@@ -1843,179 +1816,123 @@ static void blocks_of(Build *b, Free *fr, const Msg *m, int made, const Resp *re
             } else if (bt && !strcmp(bt, "tool_addition")) {
                 yyjson_val *tool = get(bv, "tool"), *d = get(tool, "definition");
                 if (!truthy(d)) d = tool;
-                yyjson_doc *empty = NULL;
-                if (!truthy(d)) {
-                    empty = yyjson_read("{}", 2, 0);
-                    d = yyjson_doc_get_root(empty);
-                }
-                f.t = dumps_to(&tb, (Blk){d, 0}, PYJ_INDENT1);
-                pyb_puts(&lb, "tool added: ");
+                f.t = truthy(d) ? dumps_to(&tb, (Blk){d, 0}, PYJ_INDENT1) : S_("{}");
+                buf_puts(&lb, "tool added: ");
                 yyjson_val *nm = get(d, "name");
                 if (nm) py_str(&lb, nm);
-                else pyb_puts(&lb, "?");
+                else buf_puts(&lb, "?");
                 f.s = Lbuf(b, &lb);
-                yyjson_doc_free(empty);
             } else {
                 f.t = dumps_to(&tb, k, 0);
-                pyb_puts(&lb, "system ");
-                if (bt) pyb_puts(&lb, bt);
-                else pyb_puts(&lb, "None");
+                buf_puts(&lb, "system ");
+                buf_puts(&lb, bt ? bt : "None");
                 f.s = Lbuf(b, &lb);
             }
             f.w = (double)nchars(f.t.s, f.t.n) / 4;
             emit(b, fr, key_of(b, role, k, -1), &f);
         } else if (role == ROLE_ASSISTANT) {
-            double *w = aw ? &aw[bi] : NULL;
-            Fields f = {CK_TEXT, NULL, {0}, 0, made, NULL, NULL, NULL, 0};
+            Fields f = fields(CK_TEXT, NULL, (Str){0}, 0);
+            f.m = made;
             if (bt && !strcmp(bt, "text")) {
                 f.t = text;
                 f.s = L_(b, "agent text");
-                f.w = w ? *w : (double)nchars(text.s, text.n) / 4;
-            } else if (bt && (!strcmp(bt, "thinking") || !strcmp(bt, "redacted_thinking"))) {
+                f.w = (double)nchars(text.s, text.n) / 4;
+            } else if (is_thinking(bt)) {
                 f.kind = CK_THINKING;
                 f.t = getstr(bv, "thinking");
                 f.s = L_(b, f.t.n ? "thinking" : "thinking (not returned)");
-                f.w = w ? *w : (double)nchars(f.t.s, f.t.n) / 4;
+                f.w = (double)nchars(f.t.s, f.t.n) / 4;
             } else if (bt && (!strcmp(bt, "tool_use") || !strcmp(bt, "server_tool_use"))) {
-                yyjson_val *inp = get(bv, "input");
-                yyjson_doc *empty = NULL;
-                if (!truthy(inp)) {
-                    empty = yyjson_read("{}", 2, 0);
-                    inp = yyjson_doc_get_root(empty);
-                }
+                yyjson_val *inp = get(bv, "input"), *nm = get(bv, "name"), *p = path_arg(inp);
                 f.kind = CK_ACTION;
-                f.t = dumps_to(&tb, (Blk){inp, 0}, PYJ_INDENT1);
-                yyjson_val *nm = get(bv, "name");
-                Str name = yyjson_is_str(nm) ? (Str){yyjson_get_str(nm), yyjson_get_len(nm)}
-                           : nm ? (Str){"None", 4} : (Str){"?", 1};
-                action_label(b, &lb, name, inp);
+                f.t = truthy(inp) ? dumps_to(&tb, (Blk){inp, 0}, PYJ_INDENT1) : S_("{}");
+                action_label(b, &lb, yyjson_is_str(nm) ? vstr(nm) : S_(nm ? "None" : "?"), inp);
                 f.s = Lbuf(b, &lb);
-                f.w = w ? *w : (double)nchars(f.t.s, f.t.n) / 4 + 20;
-                f.tool = yyjson_is_str(nm) ? L_(b, yyjson_get_str(nm)) : NULL;
-                f.tuid = gets(bv, "id") ? L_(b, gets(bv, "id")) : NULL;
-                yyjson_val *p = get(inp, "file_path");
-                if (!truthy(p)) p = get(inp, "notebook_path");
+                f.w = (double)nchars(f.t.s, f.t.n) / 4 + 20;
+                f.tool = L_opt(b, yyjson_get_str(nm));
+                f.tuid = L_opt(b, gets(bv, "id"));
                 if (truthy(p)) {
-                    char *r = yyjson_is_str(p) ? rel(&b->env, yyjson_get_str(p)) : xstrdup("");
-                    f.p = L_(b, r);
-                    free(r);
+                    lb.n = 0;
+                    put_rel(&lb, &b->env, yyjson_get_str(p));
+                    f.p = Lbuf(b, &lb);
                 }
-                yyjson_doc_free(empty);
             } else {
                 f.t = dumps_to(&tb, k, 0);
-                if (bt) pyb_puts(&lb, bt);
-                else pyb_puts(&lb, "None");
-                f.s = Lbuf(b, &lb);
-                f.w = w ? *w : (double)nchars(f.t.s, f.t.n) / 4;
-            }
-            emit(b, fr, key_of(b, role, k, -1), &f);
-        } else { /* user */
-            if (bt && !strcmp(bt, "text")) {
-                Seg *sg;
-                int ns = split_text(b, text, &sg);
-                for (int si = 0; si < ns; si++) {
-                    Fields f = {sg[si].kind, sg[si].src, sg[si].t, (double)nchars(sg[si].t.s, sg[si].t.n) / 4,
-                                -1, NULL, NULL, NULL, 0};
-                    if (f.kind == CK_PROMPT && has_results) f.kind = CK_INJECTED, f.s = L_(b, "with tool results");
-                    emit(b, fr, key_of(b, role, k, si), &f);
-                }
-                free(sg);
-            } else if (bt && !strcmp(bt, "image")) {
-                PyBuf info = {0};
-                long long tok = img_info(get(bv, "source"), &info);
-                pyb_puts(&lb, "image ");
-                pyb_put(&lb, info.s, info.n);
-                tb.n = 0;
-                pyb_puts(&tb, "[image ");
-                pyb_put(&tb, info.s, info.n);
-                pyb_puts(&tb, ": not embedded in the draft]");
-                Fields f = {CK_PROMPT, Lbuf(b, &lb), {tb.s, tb.n}, (double)tok, -1, NULL, NULL, NULL, 0};
-                emit(b, fr, key_of(b, role, k, -1), &f);
-                pyb_free(&info);
-            } else if (bt && !strcmp(bt, "tool_result")) {
-                PyBuf parts = {0}, js = {0};
-                Seg *segs = NULL;
-                int nsegs = 0, capsegs = 0, np = 0;
-                double w = 0;
-                int c0 = b->nblk, nc = norm_into(b, get(bv, "content"));
-                for (int ci = 0; ci < nc; ci++) {
-                    Blk c = b->blk[c0 + ci];
-                    const char *ct = c.wrap ? "text" : gets(c.v, "type");
-                    Str piece = {0};
-                    int have = 0;
-                    if (ct && !strcmp(ct, "text")) {
-                        Str ctext = c.wrap ? (Str){yyjson_get_str(c.v), yyjson_get_len(c.v)} : getstr(c.v, "text");
-                        Seg *sg;
-                        int ns = split_text(b, ctext, &sg);
-                        for (int si = 0; si < ns; si++) {
-                            if (sg[si].kind == CK_INJECTED) {
-                                GROW(segs, nsegs, capsegs);
-                                segs[nsegs++] = sg[si];
-                            } else {
-                                if (np++) pyb_puts(&parts, "\n");
-                                pyb_put(&parts, sg[si].t.s, sg[si].t.n);
-                                w += (double)nchars(sg[si].t.s, sg[si].t.n) / 4;
-                            }
-                        }
-                        free(sg);
-                    } else if (ct && !strcmp(ct, "image")) {
-                        PyBuf info = {0};
-                        long long tok = img_info(get(c.v, "source"), &info);
-                        if (np++) pyb_puts(&parts, "\n");
-                        pyb_puts(&parts, "[image ");
-                        pyb_put(&parts, info.s, info.n);
-                        pyb_puts(&parts, ": not embedded in the draft]");
-                        w += (double)tok;
-                        pyb_free(&info);
-                    } else {
-                        piece = dumps_to(&js, c, 0);
-                        have = 1;
-                    }
-                    if (have) {
-                        if (np++) pyb_puts(&parts, "\n");
-                        pyb_put(&parts, piece.s, piece.n);
-                        w += (double)nchars(piece.s, piece.n) / 4;
-                    }
-                }
-                Fields f = {CK_RESULT, L_(b, "result"), {parts.s ? parts.s : "", parts.n}, w + 10, -1, NULL,
-                            gets(bv, "tool_use_id") ? L_(b, gets(bv, "tool_use_id")) : NULL, NULL,
-                            truthy(get(bv, "is_error"))};
-                emit(b, fr, key_of(b, role, k, -1), &f);
-                for (int si = 0; si < nsegs; si++) {
-                    Fields g = {CK_INJECTED, segs[si].src, segs[si].t, (double)nchars(segs[si].t.s, segs[si].t.n) / 4,
-                                -1, NULL, NULL, NULL, 0};
-                    emit(b, fr, key_of(b, role, k, 1000 + si), &g);
-                }
-                free(segs);
-                pyb_free(&parts);
-                pyb_free(&js);
-            } else {
-                Fields f = {CK_PROMPT, NULL, dumps_to(&tb, k, 0), 0, -1, NULL, NULL, NULL, 0};
-                if (bt) pyb_puts(&lb, bt);
-                else pyb_puts(&lb, "None");
+                buf_puts(&lb, bt ? bt : "None");
                 f.s = Lbuf(b, &lb);
                 f.w = (double)nchars(f.t.s, f.t.n) / 4;
-                emit(b, fr, key_of(b, role, k, -1), &f);
             }
+            if (sz) { /* sized by the response's usage */
+                long long out_t = resp->out_t, th_t = resp->th_t, rest = out_t - th_t > 0 ? out_t - th_t : 0;
+                if (!is_thinking(bt))
+                    f.w = out_t ? (double)rest * (double)sz[bi] / (double)size_sum : (double)sz[bi] / 4;
+                else if (th_t) f.w = (double)th_t * (double)sz[bi] / (double)sig_sum;
+            }
+            emit(b, fr, key_of(b, role, k, -1), &f);
+        } else if (bt && !strcmp(bt, "text")) { /* user */
+            Seg *sg;
+            int ns = split_text(b, text, &sg);
+            for (int si = 0; si < ns; si++) {
+                Fields f = fields(sg[si].kind, sg[si].src, sg[si].t, (double)nchars(sg[si].t.s, sg[si].t.n) / 4);
+                if (f.kind == CK_PROMPT && has_results) f.kind = CK_INJECTED, f.s = L_(b, "with tool results");
+                emit(b, fr, key_of(b, role, k, si), &f);
+            }
+            free(sg);
+        } else if (bt && !strcmp(bt, "image")) {
+            tb.n = 0;
+            long long tok = put_image(&tb, &lb, get(bv, "source"));
+            Fields f = fields(CK_PROMPT, Lbuf(b, &lb), (Str){tb.s, tb.n}, (double)tok);
+            emit(b, fr, key_of(b, role, k, -1), &f);
+        } else if (bt && !strcmp(bt, "tool_result")) {
+            Buf parts = {0}, js = {0};
+            Seg *segs = NULL;
+            int nsegs = 0, capsegs = 0, np = 0;
+            double w = 0;
+            int c0 = b->nblk, nc = norm_into(b, get(bv, "content"));
+            for (int ci = 0; ci < nc; ci++) {
+                Blk c = b->blk[c0 + ci];
+                const char *ct = c.wrap ? "text" : gets(c.v, "type");
+                if (ct && !strcmp(ct, "text")) {
+                    Seg *sg;
+                    int ns = split_text(b, c.wrap ? vstr(c.v) : getstr(c.v, "text"), &sg);
+                    for (int si = 0; si < ns; si++)
+                        if (sg[si].kind == CK_INJECTED) PUSH(segs, nsegs, capsegs, sg[si]);
+                        else w += add_part(&parts, &np, sg[si].t);
+                    free(sg);
+                } else if (ct && !strcmp(ct, "image")) {
+                    if (np++) buf_puts(&parts, "\n");
+                    w += (double)put_image(&parts, &lb, get(c.v, "source"));
+                } else w += add_part(&parts, &np, dumps_to(&js, c, 0));
+            }
+            Fields f = fields(CK_RESULT, L_(b, "result"), (Str){parts.s ? parts.s : "", parts.n}, w + 10);
+            f.tuid = L_opt(b, gets(bv, "tool_use_id"));
+            f.err = truthy(get(bv, "is_error"));
+            emit(b, fr, key_of(b, role, k, -1), &f);
+            for (int si = 0; si < nsegs; si++) {
+                Str t = segs[si].t;
+                Fields g = fields(CK_INJECTED, segs[si].src, t, (double)nchars(t.s, t.n) / 4);
+                emit(b, fr, key_of(b, role, k, 1000 + si), &g);
+            }
+            free(segs);
+            buf_free(&parts);
+            buf_free(&js);
+        } else {
+            Fields f = fields(CK_PROMPT, NULL, dumps_to(&tb, k, 0), 0);
+            buf_puts(&lb, bt ? bt : "None");
+            f.s = Lbuf(b, &lb);
+            f.w = (double)nchars(f.t.s, f.t.n) / 4;
+            emit(b, fr, key_of(b, role, k, -1), &f);
         }
     }
-    free(aw);
-    pyb_free(&tb);
-    pyb_free(&lb);
+    free(sz);
+    buf_free(&tb);
+    buf_free(&lb);
 }
 
 static int new_inst(Build *b, const char *h, int k0) {
     GROW(b->inst, b->ninst, b->capinst);
     b->inst[b->ninst] = (Inst){h, k0, b->nkeys - k0};
     return b->ninst++;
-}
-
-static long long *usage_of(yyjson_val *u, long long out[5]) { /* NULL when no usage */
-    if (!truthy(u)) return NULL;
-    long long w = geti(u, "cache_creation_input_tokens"), w1h = geti(get(u, "cache_creation"), "ephemeral_1h_input_tokens");
-    out[0] = geti(u, "input_tokens"), out[1] = geti(u, "cache_read_input_tokens");
-    out[2] = w - w1h, out[3] = w1h, out[4] = geti(u, "output_tokens");
-    return out;
 }
 
 static CtxCall *new_call(Build *b) {
@@ -2031,52 +1948,6 @@ static CtxCall *new_call(Build *b) {
 
 static int sh_eq(const char *x, const char *y) { return x && y && !strcmp(x, y); }
 
-/* What a message's items depend on, beyond the hash it was sent under: its
- * role, an empty system message's effort, and each block of its content as
- * the draft normalizes it (a string is one text block): its canonical hash
- * and the order of its objects' keys (items' texts follow it). Claude Code
- * writes one message under one hash in more than one way (content as a string
- * or a list), so the hash alone doesn't say. */
-static void key_order(Sha256 *c, yyjson_val *v, int depth) {
-    if (depth > PYJ_MAX_DEPTH) return;
-    size_t i, m;
-    yyjson_val *k, *x;
-    if (yyjson_is_obj(v)) {
-        sha256_update(c, "{", 1);
-        yyjson_obj_foreach(v, i, m, k, x) {
-            sha256_update(c, yyjson_get_str(k), yyjson_get_len(k) + 1); /* with its NUL: keys can't run together */
-            key_order(c, x, depth + 1);
-        }
-        sha256_update(c, "}", 1);
-    } else if (yyjson_is_arr(v)) {
-        sha256_update(c, "[", 1);
-        yyjson_arr_foreach(v, i, m, x) key_order(c, x, depth + 1);
-        sha256_update(c, "]", 1);
-    }
-}
-
-static void msg_rep(Build *b, const Msg *m, uint8_t out[32]) {
-    Sha256 c;
-    sha256_init(&c);
-    int role = msg_role(m), b0, nb;
-    const char *rn = m->v ? gets(m->v, "role") : ROLE_NAMES[m->role];
-    sha256_update(&c, rn ? rn : "\x01", strlen(rn ? rn : "\x01") + 1);
-    if (role == ROLE_SYSTEM && m->v && !truthy(get(m->v, "content"))) {
-        PyBuf e = {0};
-        py_str(&e, get(get(m->v, "output_config"), "effort"));
-        sha256_update(&c, e.s ? e.s : "", e.n + 1);
-        pyb_free(&e);
-    }
-    msg_blocks(b, m, &b0, &nb);
-    for (int i = 0; i < nb; i++) {
-        Blk k = b->blk[b0 + i];
-        sha256_update(&c, blk_hash(b, k), 32);
-        if (k.wrap) sha256_update(&c, "{type\0text\0}", 12);
-        else key_order(&c, k.v, 0);
-    }
-    sha256_final(&c, out);
-}
-
 static void rep_put(Loader *ld, const uint8_t d[32], const uint8_t r[32]) {
     int k = dmap_get(&ld->rep_ix, d);
     if (k < 0) {
@@ -2084,6 +1955,20 @@ static void rep_put(Loader *ld, const uint8_t d[32], const uint8_t r[32]) {
         dmap_put(&ld->rep_ix, d, k = ld->nrep++, 0);
     }
     memcpy(ld->rep[k], r, 32);
+}
+
+/* title_of_file's rules, one record at a time: the last ai-title, else the
+ * first prompt typed as a string (one line). */
+static void title_rec(yyjson_val *r, int type, char **ai, char **first) {
+    yyjson_val *c = get(get(r, "message"), "content");
+    if (type == T_TITLE && truthy(get(r, "aiTitle")) && gets(r, "aiTitle")) {
+        free(*ai);
+        *ai = xstrdup(gets(r, "aiTitle"));
+    } else if (type == T_USER && yyjson_is_str(c) && !*first) {
+        Buf o = {0};
+        one_line(&o, vstr(c), 70);
+        *first = o.s ? o.s : xstrdup("");
+    }
 }
 
 /* What records not taken before add to the state every build needs: tool
@@ -2098,41 +1983,23 @@ static void scan_new(Build *b) {
         yyjson_val *c = get(get(r->r, "message"), "content");
         size_t k, m;
         yyjson_val *x;
+        int q;
+        title_rec(r->r, r->type, &ld->ai_title, &ld->first_prompt);
         if (r->type == T_USER && yyjson_is_arr(c)) {
             yyjson_arr_foreach(c, k, m, x) {
-                const char *t = gets(x, "type");
+                const char *t = gets(x, "type"), *tu = gets(x, "tool_use_id");
                 if (!t || strcmp(t, "tool_result")) continue;
-                const char *tu = gets(x, "tool_use_id");
-                if (!tu) tu = "\x01";
-                int q = strmap_get(&ld->rt_ix, tu);
-                if (q < 0) {
-                    ld->rt = xrealloc(ld->rt, (size_t)(ld->nrt + 1) * sizeof *ld->rt);
-                    strmap_put(&ld->rt_ix, tu, q = ld->nrt++);
-                }
+                SLOT(q, &ld->rt_ix, tu ? tu : "\x01", ld->rt, ld->nrt);
                 ld->rt[q] = epoch(gets(r->r, "timestamp")); /* the last one counts */
             }
-        } else if (r->type == T_USER && yyjson_is_str(c) && !ld->first_prompt) {
-            PyBuf o = {0};
-            one_line(&o, (Str){yyjson_get_str(c), yyjson_get_len(c)}, 70);
-            ld->first_prompt = o.s ? o.s : xstrdup("");
         } else if (r->type == T_ASSISTANT) {
             yyjson_arr_foreach(c, k, m, x) {
-                const char *t = gets(x, "type");
+                const char *t = gets(x, "type"), *id = gets(x, "id");
                 if (!t || strcmp(t, "tool_use")) continue;
-                const char *id = gets(x, "id");
-                if (!id) id = "\x01";
-                int q = strmap_get(&ld->cwd_ix, id);
-                if (q < 0) {
-                    ld->cwd = xrealloc(ld->cwd, (size_t)(ld->ncwd + 1) * sizeof *ld->cwd);
-                    ld->cwd[ld->ncwd] = NULL;
-                    strmap_put(&ld->cwd_ix, id, q = ld->ncwd++);
-                }
+                SLOT(q, &ld->cwd_ix, id ? id : "\x01", ld->cwd, ld->ncwd);
                 free(ld->cwd[q]);
                 ld->cwd[q] = dup_or_null(gets(r->r, "cwd"));
             }
-        } else if (r->type == T_TITLE && truthy(get(r->r, "aiTitle")) && gets(r->r, "aiTitle")) {
-            free(ld->ai_title);
-            ld->ai_title = xstrdup(gets(r->r, "aiTitle"));
         } else if (r->type == T_ATTACH) {
             yyjson_val *at = get(r->r, "attachment");
             const char *t = gets(at, "type");
@@ -2193,8 +2060,7 @@ static void build_calls(Build *b) {
         Rec *r = &R->r[i];
         int fresh = r->abs >= ld->nabs; /* not taken by an earlier load */
         if (r->type == T_REQ && r->abs > ld->last_req) {
-            GROW(reqs, nreqs, capreqs);
-            reqs[nreqs++] = i;
+            PUSH(reqs, nreqs, capreqs, i);
             const char *id = gets(r->r, "id");
             if (id) {
                 if (b->resuming && strmap_get(&by_id, id) >= 0) b->fail = "a request id seen before";
@@ -2203,7 +2069,8 @@ static void build_calls(Build *b) {
         } else if (r->type == T_SHAPE && fresh) {
             const char *sh = gets(r->r, "shapeHash");
             if (!sh) continue;
-            int k = strmap_get(&ld->shape_ix, sh);
+            int n0 = ld->nshape, k;
+            SLOT(k, &ld->shape_ix, sh, ld->shape_raw, ld->nshape);
             if (b->resuming) { /* a call that looked this hash up and missed took no shape */
                 char mk[200];
                 snprintf(mk, sizeof mk, "shape:%.180s", sh);
@@ -2212,21 +2079,16 @@ static void build_calls(Build *b) {
             yyjson_val *shv = get(r->r, "shape");
             char *raw = shv ? yyjson_val_write(shv, 0, NULL) : NULL; /* read back as the same values */
             if (!raw) raw = xstrdup("null");
-            if (k >= 0 && !strcmp(ld->shape_raw[k], raw)) free(raw); /* the same shape again */
-            else if (k >= 0) { /* the last one counts */
-                if (b->resuming) b->fail = "a request shape defined again, changed";
+            if (k < n0 && !strcmp(ld->shape_raw[k], raw)) free(raw); /* the same shape again */
+            else { /* a new one, or the last one counts */
+                if (k < n0 && b->resuming) b->fail = "a request shape defined again, changed";
                 free(ld->shape_raw[k]);
                 ld->shape_raw[k] = raw;
-            } else {
-                ld->shape_raw = xrealloc(ld->shape_raw, (size_t)(ld->nshape + 1) * sizeof *ld->shape_raw);
-                ld->shape_raw[ld->nshape] = raw;
-                strmap_put(&ld->shape_ix, sh, ld->nshape++);
             }
         } else if (r->type == T_SYSTEM && r->abs > ld->last_req) {
             const char *st = gets(r->r, "subtype");
             if (st && !strcmp(st, "compact_boundary")) {
-                GROW(compact, ncompact, capcompact);
-                compact[ncompact++] = r->abs;
+                PUSH(compact, ncompact, capcompact, r->abs);
             }
         } else if (r->type == T_BLOB && fresh && b->resuming) {
             uint8_t d[32], rp[32];
@@ -2257,31 +2119,21 @@ static void build_calls(Build *b) {
         if (kept > nprev) kept = nprev;
         if (kept < 0) kept = 0;
         int *inst = NULL, ninst = 0, capinst = 0;
-        for (int i = 0; i < kept; i++) {
-            GROW(inst, ninst, capinst);
-            inst[ninst++] = prev->inst[i];
-        }
-        /* dropped messages: their items, by key, for rewritten ones */
+        for (int i = 0; i < kept; i++) PUSH(inst, ninst, capinst, prev->inst[i]);
+        /* dropped messages: their items by key, for rewritten ones; queues by hash, for unchanged ones
+         * (both in dropped order: built from the last; queues hold index + 1, 0 the end) */
         free_reset(&fr);
         strmap_free(&same_ix);
         int ndropped = nprev - kept, *dropped = prev ? prev->inst + kept : NULL;
         int *qnext = xmalloc(((size_t)ndropped + 1) * sizeof *qnext); /* next dropped with the same hash */
         int *qhead = NULL, nq = 0;
-        for (int i = 0; i < ndropped; i++) {
+        for (int i = ndropped - 1; i >= 0; i--) {
             Inst *in = &b->inst[dropped[i]];
-            for (int k = 0; k < in->nk; k++) free_add(&fr, &b->keys[in->k0 + k], b->kitems[in->k0 + k]);
-            qnext[i] = -1;
-        }
-        for (int i = ndropped - 1; i >= 0; i--) { /* queues in dropped order */
-            const char *h = b->inst[dropped[i]].h;
-            int q = strmap_get(&same_ix, h);
-            if (q < 0) {
-                qhead = xrealloc(qhead, (size_t)(nq + 1) * sizeof *qhead);
-                qhead[nq] = -1;
-                strmap_put(&same_ix, h, q = nq++);
-            }
+            for (int k = in->nk - 1; k >= 0; k--) free_add(&fr, &b->keys[in->k0 + k], b->kitems[in->k0 + k]);
+            int q;
+            SLOT(q, &same_ix, in->h, qhead, nq);
             qnext[i] = qhead[q];
-            qhead[q] = i;
+            qhead[q] = i + 1;
         }
         yyjson_val *tail = get(r, "tail");
         size_t ti, tm;
@@ -2289,17 +2141,14 @@ static void build_calls(Build *b) {
         yyjson_arr_foreach(tail, ti, tm, hv) {
             const char *h = yyjson_get_str(hv);
             if (!h) h = "";
-            int q = strmap_get(&same_ix, h), same = -1;
-            if (q >= 0) {
-                /* the first not taken yet: a taken one leaves its queue (a call holds an instance
-                 * once, so the draft's "not in used" needs nothing more) */
-                if (qhead[q] >= 0) same = qhead[q], qhead[q] = qnext[same];
-            }
+            /* the first not taken yet: a taken one leaves its queue (a call holds an instance once, so
+             * the draft's "not in used" needs nothing more) */
+            int q = strmap_get(&same_ix, h), same = q >= 0 ? qhead[q] - 1 : -1;
             if (same >= 0) { /* an unchanged message sent again keeps its instance */
-                GROW(inst, ninst, capinst);
-                inst[ninst++] = dropped[same];
+                qhead[q] = qnext[same];
+                PUSH(inst, ninst, capinst, dropped[same]);
                 Inst *in = &b->inst[dropped[same]];
-                for (int k = 0; k < in->nk; k++) free_remove(&fr, &b->keys[in->k0 + k], b->kitems[in->k0 + k]);
+                for (int k = 0; k < in->nk; k++) free_take(&fr, &b->keys[in->k0 + k], b->kitems[in->k0 + k]);
                 continue;
             }
             uint8_t d[32];
@@ -2339,28 +2188,17 @@ static void build_calls(Build *b) {
             int k0 = b->nkeys;
             b->kh = h, b->kpos = 0;
             if (!m) {
-                PyBuf t = {0};
-                char hh[13];
-                snprintf(hh, sizeof hh, "%.12s", h);
-                pyb_puts(&t, "[message ");
-                pyb_puts(&t, hh);
-                pyb_puts(&t, "\xE2\x80\xA6 not found in any transcript of the project]");
-                Fields f = {CK_MISSING, L_(b, "message not found"), {t.s, t.n}, 0, -1, NULL, NULL, NULL, 0};
+                char *t = xasprintf("[message %.12s\xE2\x80\xA6 not found in any transcript of the project]", h);
+                Fields f = fields(CK_MISSING, L_(b, "message not found"), S_(t), 0);
                 Key key;
                 memset(&key, 0, sizeof key);
-                if (!hex_digest(h, key.d)) {
-                    Sha256 c;
-                    sha256_init(&c);
-                    sha256_update(&c, h, strlen(h));
-                    sha256_final(&c, key.d);
-                }
+                if (!hex_digest(h, key.d)) hash_buf(h, strlen(h), key.d);
                 key.tag = 2;
                 key.sub = -1;
                 emit(b, NULL, key, &f);
-                pyb_free(&t);
+                free(t);
             } else blocks_of(b, &fr, m, made, rr);
-            GROW(inst, ninst, capinst);
-            inst[ninst++] = new_inst(b, L_(b, h), k0);
+            PUSH(inst, ninst, capinst, new_inst(b, L_(b, h), k0));
         }
         free(qnext), free(qhead);
         if (b->fail) {
@@ -2394,31 +2232,30 @@ static void build_calls(Build *b) {
             yyjson_val *sys = get(shape, "system");
             size_t i, m;
             yyjson_val *x;
-            PyBuf kh = {0};
-            pyb_puts(&kh, "shape ");
-            pyb_puts(&kh, sh ? sh : "");
+            Buf kh = {0};
+            buf_puts(&kh, "shape ");
+            buf_puts(&kh, sh ? sh : "");
             b->kh = kh.s;
             yyjson_arr_foreach(sys, i, m, x) {
                 b->kpos = (int)i + 1;
-                PyBuf t = {0};
+                Buf t = {0};
                 if (yyjson_is_obj(x)) {
                     Str st = getstr(x, "text");
-                    pyb_put(&t, st.s, st.n);
+                    buf_put(&t, st.s, st.n);
                 } else py_str(&t, x);
-                int same = -1, tx = pool_find(&b->S, t.s ? t.s : "", t.n);
+                Str ts = {t.s ? t.s : "", t.n};
+                int same = -1, tx = pool_find(&b->S, ts.s, ts.n);
                 if (tx >= 0) {
                     snprintf(key, sizeof key, "%d", tx);
                     same = strmap_get(&old, key);
                     if (same >= 0) strmap_put(&old, key, -1); /* popped */
                 }
                 if (same < 0) {
-                    Fields f = {CK_SYSTEM, L_(b, "system prompt"), {t.s ? t.s : "", t.n},
-                                (double)nchars(t.s ? t.s : "", t.n) / 4, -1, NULL, NULL, NULL, 0};
+                    Fields f = fields(CK_SYSTEM, L_(b, "system prompt"), ts, (double)nchars(ts.s, ts.n) / 4);
                     same = finish_item(b, &f);
                 }
-                GROW(ids, nids, capids);
-                ids[nids++] = same;
-                pyb_free(&t);
+                PUSH(ids, nids, capids, same);
+                buf_free(&t);
             }
             strmap_free(&old);
             yyjson_val *tools = get(shape, "tools");
@@ -2427,7 +2264,7 @@ static void build_calls(Build *b) {
                 int *tx = xmalloc((size_t)nt * sizeof *tx);
                 const char **names = xmalloc((size_t)nt * sizeof *names);
                 long long total = 0;
-                PyBuf t = {0}, lab = {0};
+                Buf t = {0}, lab = {0};
                 yyjson_arr_foreach(tools, i, m, x) {
                     dumps_to(&t, (Blk){x, 0}, PYJ_INDENT1);
                     total += (long long)nchars(t.s, t.n);
@@ -2435,13 +2272,13 @@ static void build_calls(Build *b) {
                     yyjson_val *nm = get(x, "name");
                     lab.n = 0;
                     if (nm) py_str(&lab, nm);
-                    else pyb_puts(&lab, "?");
+                    else buf_puts(&lab, "?");
                     names[i] = Lbuf(b, &lab);
                 }
                 char st[48];
                 snprintf(st, sizeof st, "tool definitions (%d)", nt);
                 b->kpos = 0;
-                Fields f = {CK_TOOLS, L_(b, st), {"", 0}, (double)total / 4, -1, NULL, NULL, NULL, 0};
+                Fields f = fields(CK_TOOLS, L_(b, st), S_(""), (double)total / 4);
                 int iid = finish_item(b, &f);
                 yyjson_arr_foreach(tools, i, m, x) { /* the S table: after the item's own "" */
                     dumps_to(&t, (Blk){x, 0}, PYJ_INDENT1);
@@ -2455,18 +2292,16 @@ static void build_calls(Build *b) {
                 memmove(ids + 1, ids, (size_t)nids * sizeof *ids);
                 ids[0] = iid;
                 nids++;
-                pyb_free(&t);
-                pyb_free(&lab);
+                buf_free(&t);
+                buf_free(&lab);
             }
             if (!truthy(shape)) {
-                Fields f = {CK_MISSING, L_(b, "system + tools not found"), S_("[request shape not found]"), 0, -1,
-                            NULL, NULL, NULL, 0};
+                Fields f = fields(CK_MISSING, L_(b, "system + tools not found"), S_("[request shape not found]"), 0);
                 b->kpos = -1;
-                GROW(ids, nids, capids);
-                ids[nids++] = finish_item(b, &f);
+                PUSH(ids, nids, capids, finish_item(b, &f));
             }
             b->kh = NULL;
-            pyb_free(&kh);
+            buf_free(&kh);
             b->shapes = xrealloc(b->shapes, (size_t)(b->nshapes + 1) * sizeof *b->shapes);
             b->shapes[b->nshapes++] = ids;
         }
@@ -2478,15 +2313,15 @@ static void build_calls(Build *b) {
         prev_pos = pos;
         if (keep && base < 0) a->broken++;
         CtxCall *c = new_call(b);
-        b->cb[ci].sh = sh ? L_(b, sh) : NULL;
+        b->cb[ci].sh = L_opt(b, sh);
         b->cb[ci].inst = inst;
         b->cb[ci].ninst = ninst;
         b->cb[ci].kept = kept;
         const char *pm = gets(get(r, "params"), "model");
-        b->cb[ci].pmodel = pm ? L_(b, pm) : NULL;
+        b->cb[ci].pmodel = L_opt(b, pm);
         c->t = epoch(gets(r, "timestamp"));
-        c->id = rid ? L_(b, rid) : NULL;
-        c->query = gets(r, "querySource") ? L_(b, gets(r, "querySource")) : NULL;
+        c->id = L_opt(b, rid);
+        c->query = L_opt(b, gets(r, "querySource"));
         c->base = base;
         c->keep = keep;
         c->shape = ids;
@@ -2502,7 +2337,7 @@ static void build_calls(Build *b) {
         Resp *rr = rk >= 0 ? &own->resps[rk] : NULL;
         const char *model = b->cb[ci].pmodel;
         if (rr && rr->model && *rr->model) model = rr->model;
-        c->model = model ? L_(b, model) : NULL;
+        c->model = L_opt(b, model);
         c->has_u = rr && rr->has_u;
         if (c->has_u) memcpy(c->u, rr->u, sizeof c->u);
         else memset(c->u, 0, sizeof c->u);
@@ -2535,8 +2370,7 @@ static void build_calls(Build *b) {
             Inst *in = &b->inst[cb->inst[mi]];
             for (int q = 0; q < in->nk; q++)
                 if (b->items[b->kitems[in->k0 + q]].kind == CK_THINKING) {
-                    GROW(th, nth, capth);
-                    th[nth++] = b->kitems[in->k0 + q];
+                    PUSH(th, nth, capth, b->kitems[in->k0 + q]);
                 }
             if (bi < 0) bi += nth;
             if (!nth || bi < 0) {
@@ -2553,7 +2387,8 @@ static void build_calls(Build *b) {
     for (int k = 0; k < ld->nshape; k++) yyjson_doc_free(shape_doc[k]);
     free(shape_doc);
     free(reqs), free(compact);
-    free_done(&fr);
+    dmap_free(&fr.head);
+    free(fr.e);
     strmap_free(&same_ix), strmap_free(&resp_by_req), strmap_free(&block_resp);
     strmap_free(&reqid_call), strmap_free(&pos_of);
     strmap_free(&by_id);
@@ -2566,8 +2401,8 @@ static void build_estimated(Build *b) {
     CtxAgent *a = b->a;
     Store *own = &b->own;
     Recs *R = &own->recs;
-    Fields sf = {CK_SYSTEM, L_(b, "system prompt + tools (estimated)"),
-                 S_("[not in the transcript: estimated from the first call's usage]"), 0, -1, NULL, NULL, NULL, 0};
+    Fields sf = fields(CK_SYSTEM, L_(b, "system prompt + tools (estimated)"),
+                       S_("[not in the transcript: estimated from the first call's usage]"), 0);
     b->kh = "estimated system", b->kpos = 0;
     int sys_id = finish_item(b, &sf);
     typedef struct { char h[65]; Msg m; int resp, made; } EMsg;
@@ -2576,7 +2411,7 @@ static void build_estimated(Build *b) {
     char (*prev)[65] = NULL;
     int nprev = 0, comp_next = 0;
     char *seen = xcalloc((size_t)own->nresps + 1, 1);
-    PyBuf hb = {0};
+    Buf hb = {0};
     for (int i = 0; i < R->n; i++) {
         if (b->cancel && atomic_load(b->cancel)) break;
         Rec *r = &R->r[i];
@@ -2591,7 +2426,7 @@ static void build_estimated(Build *b) {
             uint8_t d[32];
             if (pyj_dumps(&hb, msg, PYJ_CANON)) snprintf(e->h, sizeof e->h, "unhashable %d", nmsgs); /* equals no other */
             else {
-                hash_buf(&hb, d);
+                hash_buf(hb.s, hb.n, d);
                 sha256_hex(d, e->h);
             }
             e->m = (Msg){msg, 0, 0, 0, r->abs};
@@ -2600,7 +2435,7 @@ static void build_estimated(Build *b) {
             yyjson_val *at = get(r->r, "attachment");
             yyjson_val *txt = yyjson_is_str(get(at, "content")) ? get(at, "content") : get(at, "text");
             const char *ty = gets(at, "type");
-            if (yyjson_is_str(txt) && strip((Str){yyjson_get_str(txt), yyjson_get_len(txt)}).n &&
+            if (yyjson_is_str(txt) && strip(vstr(txt)).n &&
                 !(ty && !strcmp(ty, "hook_success"))) {
                 GROW(msgs, nmsgs, capmsgs);
                 EMsg *e = &msgs[nmsgs++];
@@ -2612,9 +2447,7 @@ static void build_estimated(Build *b) {
                 e->resp = e->made = -1;
             }
         } else if (r->type == T_ASSISTANT && yyjson_is_obj(msg)) {
-            const char *mid = gets(msg, "id");
-            if (!mid || !*mid) mid = gets(r->r, "uuid");
-            if (!mid || !*mid) mid = "\x01";
+            const char *mid = resp_id(r->r);
             int rk = strmap_get(&own->resp_ix, mid);
             if (rk < 0 || seen[rk]) continue;
             seen[rk] = 1;
@@ -2625,16 +2458,14 @@ static void build_estimated(Build *b) {
             CallB *bb = base >= 0 ? &b->cb[base] : NULL;
             int *inst = NULL, ninst = 0, capinst = 0;
             for (int k = 0; bb && k < keep && k < bb->ninst; k++) {
-                GROW(inst, ninst, capinst);
-                inst[ninst++] = bb->inst[k];
+                PUSH(inst, ninst, capinst, bb->inst[k]);
             }
             for (int k = keep; k < nmsgs; k++) {
                 int k0 = b->nkeys;
                 Resp *r2 = msgs[k].resp >= 0 ? &own->resps[msgs[k].resp] : NULL;
                 b->kh = msgs[k].h, b->kpos = 0;
                 blocks_of(b, NULL, &msgs[k].m, msgs[k].made, r2);
-                GROW(inst, ninst, capinst);
-                inst[ninst++] = new_inst(b, L_(b, msgs[k].h), k0);
+                PUSH(inst, ninst, capinst, new_inst(b, L_(b, msgs[k].h), k0));
             }
             yyjson_val *last = resp_msg(own, rr, rr->n - 1);
             CtxCall *c = new_call(b);
@@ -2642,7 +2473,7 @@ static void build_estimated(Build *b) {
             b->cb[ci].ninst = ninst;
             c->t = epoch(gets(own->recs.r[rr->recs[0]].r, "timestamp"));
             c->id = L_(b, mid);
-            c->model = gets(last, "model") ? L_(b, gets(last, "model")) : NULL;
+            c->model = L_opt(b, gets(last, "model"));
             c->base = base;
             c->keep = keep;
             if (!b->nshapes) {
@@ -2680,7 +2511,7 @@ static void build_estimated(Build *b) {
         b->items[sys_id].w = tot - msgw > 0 ? tot - msgw : 0;
     }
     free(msgs), free(prev), free(seen);
-    pyb_free(&hb);
+    buf_free(&hb);
 }
 
 /* After the calls (post): each call's order, items' enter and leave, tool
@@ -2728,26 +2559,22 @@ static void post(Build *b) {
 /* ---- shell commands, as build_ctx.py reads them ---- */
 
 typedef struct {
-    char **w;
+    char **v;
     int n, cap;
-} Words;
+} Strs; /* a command's words; a small set of paths, insertion ordered */
 
-static void words_add(Words *ws, const char *s, size_t n) {
-    GROW(ws->w, ws->n, ws->cap);
-    ws->w[ws->n++] = xstrndup(s, n);
-}
+static void strs_add(Strs *ws, const char *s, size_t n) { PUSH(ws->v, ws->n, ws->cap, xstrndup(s, n)); }
 
-static void words_free(Words *ws) {
-    for (int i = 0; i < ws->n; i++) free(ws->w[i]);
-    free(ws->w);
+static void strs_free(Strs *ws) {
+    strv_free(ws->v, ws->n);
     memset(ws, 0, sizeof *ws);
 }
 
 /* shlex.split(s): POSIX mode, whitespace split, no comments; -1 on its
  * ValueError (no closing quotation, no escaped character). */
-static int shlex_split(const char *s, size_t n, Words *out) {
+static int shlex_split(const char *s, size_t n, Strs *out) {
     size_t i = 0;
-    PyBuf tok = {0};
+    Buf tok = {0};
     for (;;) {
         char state = ' ', esc = 0;
         int quoted = 0;
@@ -2761,41 +2588,41 @@ static int shlex_split(const char *s, size_t n, Words *out) {
                 if (ws) { if (tok.n || quoted) break; continue; }
                 if (c == '\\') esc = 'a', state = '\\';
                 else if (c == '\'' || c == '"') state = c;
-                else { pyb_put(&tok, &c, 1); state = 'a'; }
+                else { buf_put(&tok, &c, 1); state = 'a'; }
             } else if (state == '\'' || state == '"') {
                 quoted = 1;
-                if (eof) { pyb_free(&tok); return -1; }
+                if (eof) { buf_free(&tok); return -1; }
                 if (c == state) state = 'a';
                 else if (c == '\\' && state == '"') esc = state, state = '\\';
-                else pyb_put(&tok, &c, 1);
+                else buf_put(&tok, &c, 1);
             } else if (state == '\\') {
-                if (eof) { pyb_free(&tok); return -1; }
-                if ((esc == '\'' || esc == '"') && c != '\\' && c != esc) pyb_put(&tok, "\\", 1);
-                pyb_put(&tok, &c, 1);
+                if (eof) { buf_free(&tok); return -1; }
+                if ((esc == '\'' || esc == '"') && c != '\\' && c != esc) buf_put(&tok, "\\", 1);
+                buf_put(&tok, &c, 1);
                 state = esc;
             } else { /* 'a' */
                 if (eof) { state = 0; break; }
                 if (ws) { state = ' '; if (tok.n || quoted) break; continue; }
                 if (c == '\'' || c == '"') state = c;
                 else if (c == '\\') esc = 'a', state = '\\';
-                else pyb_put(&tok, &c, 1);
+                else buf_put(&tok, &c, 1);
             }
         }
         if (!quoted && !tok.n) break; /* None: the end */
-        words_add(out, tok.s ? tok.s : "", tok.n);
+        strs_add(out, tok.s ? tok.s : "", tok.n);
     }
-    pyb_free(&tok);
+    buf_free(&tok);
     return 0;
 }
 
-static void split_ws(const char *s, size_t n, Words *out) { /* str.split() */
+static void split_ws(const char *s, size_t n, Strs *out) { /* str.split() */
     for (size_t i = 0; i < n;) {
         i = skip_space(s, n, i);
         if (i >= n) break;
         size_t j = i;
         int k;
         while (j < n && !py_space(cp_at(s, n, j, &k))) j += (size_t)k;
-        words_add(out, s + i, j - i);
+        strs_add(out, s + i, j - i);
         i = j;
     }
 }
@@ -2817,8 +2644,7 @@ static int split_unquoted(Str s, const char *const *seps, int nseps, Str **out) 
             for (int k = 0; k < nseps && hit < 0; k++)
                 if (starts((Str){s.s + i, s.n - i}, seps[k])) hit = k;
             if (hit >= 0) {
-                GROW(v, n, cap);
-                v[n++] = (Str){s.s + start, i - start};
+                PUSH(v, n, cap, ((Str){s.s + start, i - start}));
                 i += strlen(seps[hit]);
                 start = i;
                 continue;
@@ -2826,16 +2652,22 @@ static int split_unquoted(Str s, const char *const *seps, int nseps, Str **out) 
         }
         i++;
     }
-    GROW(v, n, cap);
-    v[n++] = (Str){s.s + start, s.n - start};
+    PUSH(v, n, cap, ((Str){s.s + start, s.n - start}));
     *out = v;
     return n;
+}
+
+static Str strip_quotes(const char *t) {
+    size_t a = 0, z = strlen(t);
+    while (a < z && (t[a] == '\'' || t[a] == '"')) a++;
+    while (z > a && (t[z - 1] == '\'' || t[z - 1] == '"')) z--;
+    return (Str){t + a, z - a};
 }
 
 typedef struct {
     char *cwd;
     Str seg;
-    Words words;
+    Strs words;
 } Segment;
 
 /* segments: (cwd, segment, words of its pipeline's first command), following cd. */
@@ -2849,19 +2681,16 @@ static int segments(const Env *e, Str cmd, const char *cwd0, Segment **out) {
     for (int i = 0; i < ns; i++) {
         Str *ps;
         split_unquoted(segs[i], pipe, 1, &ps);
-        Words w = {0};
+        Strs w = {0};
         if (shlex_split(ps[0].s, ps[0].n, &w) < 0) {
-            words_free(&w);
+            strs_free(&w);
             split_ws(ps[0].s, ps[0].n, &w);
         }
         free(ps);
-        if (!w.n) { words_free(&w); continue; }
-        if (!strcmp(w.w[0], "cd") && w.n > 1) {
-            char *t = w.w[1];
-            size_t a = 0, z = strlen(t);
-            while (a < z && (t[a] == '\'' || t[a] == '"')) a++;
-            while (z > a && (t[z - 1] == '\'' || t[z - 1] == '"')) z--;
-            char *raw = xstrndup(t + a, z - a), *d = expanduser(raw);
+        if (!w.n) { strs_free(&w); continue; }
+        if (!strcmp(w.v[0], "cd") && w.n > 1) {
+            Str t = strip_quotes(w.v[1]);
+            char *raw = xstrndup(t.s, t.n), *d = expanduser(raw);
             free(raw);
             if (d[0] == '/') {
                 free(cwd);
@@ -2873,11 +2702,10 @@ static int segments(const Env *e, Str cmd, const char *cwd0, Segment **out) {
                 free(j);
                 free(d);
             }
-            words_free(&w);
+            strs_free(&w);
             continue;
         }
-        GROW(v, n, cap);
-        v[n++] = (Segment){xstrdup(cwd), segs[i], w};
+        PUSH(v, n, cap, ((Segment){xstrdup(cwd), segs[i], w}));
     }
     free(cwd);
     free(segs);
@@ -2886,15 +2714,8 @@ static int segments(const Env *e, Str cmd, const char *cwd0, Segment **out) {
 }
 
 static void segments_free(Segment *v, int n) {
-    for (int i = 0; i < n; i++) free(v[i].cwd), words_free(&v[i].words);
+    for (int i = 0; i < n; i++) free(v[i].cwd), strs_free(&v[i].words);
     free(v);
-}
-
-static Str strip_quotes(const char *t) {
-    size_t a = 0, z = strlen(t);
-    while (a < z && (t[a] == '\'' || t[a] == '"')) a++;
-    while (z > a && (t[z - 1] == '\'' || t[z - 1] == '"')) z--;
-    return (Str){t + a, z - a};
 }
 
 /* re.match(r"^[class]+$", s): $ also before a final newline. */
@@ -2966,10 +2787,13 @@ static int letters_with_i(Str s, size_t k, int upper) { /* -[a-z]*i (or [a-zA-Z]
     return 0;
 }
 
+/* Commands that write the files they name (cp: its last word), git's that write files. */
+static const char *const WRITE_VERBS[] = {"tee", "mv", "rm", "truncate", "patch", NULL};
+static const char *const GIT_WRITES[] = {"checkout", "restore", "reset", "stash", "apply",
+                                         "merge", "rebase", "pull", "am", NULL};
+
 /* WRITE_CMD.search(cmd): a command that may write files. */
 static int write_cmd(Str s) {
-    static const char *const words[] = {"tee", "mv", "cp", "rm", "truncate", "patch"};
-    static const char *const git[] = {"checkout", "restore", "reset", "stash", "apply", "merge", "rebase", "pull", "am"};
     for (size_t i = 0; i < s.n; i++) {
         char c = s.s[i];
         if (c == '>' && i > 0 && s.s[i - 1] != '&' && s.s[i - 1] != '2') return 1;
@@ -2980,15 +2804,15 @@ static int write_cmd(Str s) {
             size_t k = skip_space(s.s, s.n, i + 3);
             if (k > i + 3 && (letters_with_i(s, k, 1) || starts((Str){s.s + k, s.n - k}, "--in-place"))) return 1;
         }
-        for (size_t w = 0; w < sizeof words / sizeof *words; w++)
-            if (word_lit(s, i, words[w])) return 1;
+        if (word_lit(s, i, "cp")) return 1;
+        for (const char *const *w = WRITE_VERBS; *w; w++)
+            if (word_lit(s, i, *w)) return 1;
         if (starts((Str){s.s + i, s.n - i}, "git")) {
             size_t k = skip_space(s.s, s.n, i + 3);
-            if (k > i + 3)
-                for (size_t g = 0; g < sizeof git / sizeof *git; g++) {
-                    size_t gl = strlen(git[g]);
-                    if (k + gl <= s.n && !memcmp(s.s + k, git[g], gl) && !word_at(s.s, s.n, k + gl)) return 1;
-                }
+            for (const char *const *g = GIT_WRITES; k > i + 3 && *g; g++) {
+                size_t gl = strlen(*g);
+                if (k + gl <= s.n && !memcmp(s.s + k, *g, gl) && !word_at(s.s, s.n, k + gl)) return 1;
+            }
         }
         if (starts((Str){s.s + i, s.n - i}, "perl")) {
             size_t k = skip_space(s.s, s.n, i + 4);
@@ -2998,36 +2822,23 @@ static int write_cmd(Str s) {
     return 0;
 }
 
-typedef struct {
-    char **p;
-    int n, cap;
-} PathSet; /* a small set of paths, insertion ordered */
-
-static void set_add(PathSet *ps, char *p) { /* takes p */
+static void set_add(Strs *ps, char *p) { /* takes p */
     for (int i = 0; i < ps->n; i++)
-        if (!strcmp(ps->p[i], p)) { free(p); return; }
-    GROW(ps->p, ps->n, ps->cap);
-    ps->p[ps->n++] = p;
+        if (!strcmp(ps->v[i], p)) { free(p); return; }
+    PUSH(ps->v, ps->n, ps->cap, p);
 }
 
-static int set_has(const PathSet *ps, const char *p) {
+static int set_has(const Strs *ps, const char *p) {
     for (int i = 0; i < ps->n; i++)
-        if (!strcmp(ps->p[i], p)) return 1;
+        if (!strcmp(ps->v[i], p)) return 1;
     return 0;
 }
 
-static void set_free(PathSet *ps) {
-    for (int i = 0; i < ps->n; i++) free(ps->p[i]);
-    free(ps->p);
-    memset(ps, 0, sizeof *ps);
-}
-
-static int cmp_strp(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
-static void set_sort(PathSet *ps) { if (ps->n > 1) qsort(ps->p, (size_t)ps->n, sizeof *ps->p, cmp_strp); }
+static void set_sort(Strs *ps) { if (ps->n > 1) qsort(ps->v, (size_t)ps->n, sizeof *ps->v, cmp_str); }
 
 /* QUOTED_FILE.findall(cmd): file names a python heredoc assigns or opens:
  * (?:open\(\s*|\w\s*=\s*|[\[(,]\s*)['"]([\w./~+-]+\.[A-Za-z]\w{0,4})['"] */
-static void quoted_files(Str s, const char *cwd, PathSet *out) {
+static void quoted_files(Str s, const char *cwd, Strs *out) {
     for (size_t i = 0; i < s.n;) {
         int k;
         unsigned c = cp_at(s.s, s.n, i, &k);
@@ -3075,16 +2886,15 @@ static void quoted_files(Str s, const char *cwd, PathSet *out) {
 }
 
 /* cmd_write_files: absolute paths a shell command writes, as far as patterns see. */
-static void cmd_write_files(const Env *e, Str cmd, const char *cwd, PathSet *out) {
+static void cmd_write_files(const Env *e, Str cmd, const char *cwd, Strs *out) {
     int py = py_write(cmd);
     Segment *sg;
     int ns = segments(e, cmd, cwd, &sg);
-    static const char *const git[] = {"checkout", "restore", "reset", "stash", "apply", "am", "merge", "rebase", "pull"};
     for (int s = 0; s < ns; s++) {
-        Words *w = &sg[s].words;
+        Strs *w = &sg[s].words;
         const char *d = sg[s].cwd;
         for (int i = 0; i < w->n; i++) { /* ^\d?>>?(.*)$, not 2> */
-            const char *t = w->w[i];
+            const char *t = w->v[i];
             size_t j = 0;
             if (t[j] >= '0' && t[j] <= '9') j++;
             if (t[j] != '>' || !strncmp(t, "2>", 2)) continue;
@@ -3093,26 +2903,24 @@ static void cmd_write_files(const Env *e, Str cmd, const char *cwd, PathSet *out
             size_t len = strlen(t + j);
             if (len && t[j + len - 1] == '\n') len--;
             if (memchr(t + j, '\n', len)) continue;
-            char *target = len ? xstrndup(t + j, len) : xstrdup(i + 1 < w->n ? w->w[i + 1] : "");
+            char *target = len ? xstrndup(t + j, len) : xstrdup(i + 1 < w->n ? w->v[i + 1] : "");
             if (file_like(target)) set_add(out, absolute(target, d));
             free(target);
         }
-        const char *w0 = w->w[0];
-        int writes = !strcmp(w0, "tee") || !strcmp(w0, "rm") || !strcmp(w0, "truncate") || !strcmp(w0, "patch") ||
-                     !strcmp(w0, "mv");
+        const char *w0 = w->v[0];
+        int writes = str_in(S_(w0), WRITE_VERBS);
         if (!strcmp(w0, "sed") || !strcmp(w0, "perl"))
             for (int i = 1; i < w->n && !writes; i++) {
-                const char *a = w->w[i];
+                const char *a = w->v[i];
                 if (a[0] != '-') continue;
                 while (*a == '-') a++;
                 writes = memchr(a, 'i', strnlen(a, 3)) != NULL;
             }
-        if (!strcmp(w0, "git") && w->n > 1)
-            for (size_t g = 0; g < sizeof git / sizeof *git; g++) writes |= !strcmp(w->w[1], git[g]);
+        if (!strcmp(w0, "git") && w->n > 1) writes |= str_in(S_(w->v[1]), GIT_WRITES);
         if (writes) {
             for (int i = 1; i < w->n; i++)
-                if (file_like(w->w[i])) set_add(out, absolute(w->w[i], d));
-        } else if (!strcmp(w0, "cp") && file_like(w->w[w->n - 1])) set_add(out, absolute(w->w[w->n - 1], d));
+                if (file_like(w->v[i])) set_add(out, absolute(w->v[i], d));
+        } else if (!strcmp(w0, "cp") && file_like(w->v[w->n - 1])) set_add(out, absolute(w->v[w->n - 1], d));
         if (py && !strncmp(w0, "python", 6)) {
             quoted_files(cmd, d, out);
             py = 0;
@@ -3122,42 +2930,36 @@ static void cmd_write_files(const Env *e, Str cmd, const char *cwd, PathSet *out
 }
 
 /* cmd_read_files: the files a read-only command shows (cat, sed -n, head, ...). */
-static void cmd_read_files(const Env *e, Str cmd, const char *cwd, PathSet *out) {
-    static const char *const verbs[] = {"cat", "sed", "head", "tail", "nl", "grep", "rg", "less", "awk", "wc", "bat", "diff"};
+static void cmd_read_files(const Env *e, Str cmd, const char *cwd, Strs *out) {
+    static const char *const verbs[] = {"cat", "sed", "head", "tail", "nl", "grep", "rg",
+                                        "less", "awk", "wc", "bat", "diff", NULL};
     if (py_write(cmd)) return;
     Segment *sg;
     int ns = segments(e, cmd, cwd, &sg);
     for (int s = 0; s < ns; s++) {
-        Words *w = &sg[s].words;
-        int verb = 0, inplace = 0;
-        for (size_t k = 0; k < sizeof verbs / sizeof *verbs; k++) verb |= !strcmp(w->w[0], verbs[k]);
-        if (!strcmp(w->w[0], "sed"))
-            for (int i = 1; i < w->n; i++) inplace |= !strncmp(w->w[i], "-i", 2);
+        Strs *w = &sg[s].words;
+        int verb = str_in(S_(w->v[0]), verbs), inplace = 0;
+        if (!strcmp(w->v[0], "sed"))
+            for (int i = 1; i < w->n; i++) inplace |= !strncmp(w->v[i], "-i", 2);
         if (!verb || inplace) continue;
         for (int i = 1; i < w->n; i++)
-            if (file_like(w->w[i]) && !strchr(w->w[i], '>')) set_add(out, absolute(w->w[i], sg[s].cwd));
+            if (file_like(w->v[i]) && !strchr(w->v[i], '>')) set_add(out, absolute(w->v[i], sg[s].cwd));
     }
     segments_free(sg, ns);
 }
 
+static int is_sep(unsigned c) { return py_space(c) || (c < 0x80 && strchr(";|&<>()=,", (int)c)); } /* [\s;|&<>()=,] */
+
 /* cmd_paths: file-like words of a command (with an extension), repo-relative where they can be. */
-static void cmd_paths(const Env *e, Str cmd, PathSet *out) {
+static void cmd_paths(const Env *e, Str cmd, Strs *out) {
     for (size_t i = 0; i < cmd.n;) {
         size_t j = i;
         int k;
-        for (; j < cmd.n; j += (size_t)k) { /* [\s;|&<>()=,]+ separates */
-            unsigned c = cp_at(cmd.s, cmd.n, j, &k);
-            if (py_space(c) || (c < 0x80 && strchr(";|&<>()=,", (int)c))) break;
-        }
+        for (; j < cmd.n && !is_sep(cp_at(cmd.s, cmd.n, j, &k)); j += (size_t)k) {}
         Str tok = {cmd.s + i, j - i};
         while (tok.n && strchr("'\"`", tok.s[0])) tok.s++, tok.n--;
         while (tok.n && strchr("'\"`", tok.s[tok.n - 1])) tok.n--;
-        i = j;
-        while (i < cmd.n) {
-            unsigned c = cp_at(cmd.s, cmd.n, i, &k);
-            if (!(py_space(c) || (c < 0x80 && strchr(";|&<>()=,", (int)c)))) break;
-            i += (size_t)k;
-        }
+        for (i = j; i < cmd.n && is_sep(cp_at(cmd.s, cmd.n, i, &k)); i += (size_t)k) {} /* separators */
         if (!tok.n || starts(tok, "-") || starts(tok, "http") || starts(tok, "/dev/") || starts(tok, "$") ||
             memchr(tok.s, '*', tok.n) || memchr(tok.s, '@', tok.n))
             continue;
@@ -3195,16 +2997,6 @@ typedef struct {
     struct { Edit *e; int n, cap; double *seen; int *seen_file; int nseen, capseen; } *v;
     int n;
 } Changes;
-
-static int changes_slot(Changes *c, const char *p) {
-    int k = strmap_get(&c->ix, p);
-    if (k < 0) {
-        c->v = xrealloc(c->v, (size_t)(c->n + 1) * sizeof *c->v);
-        memset(&c->v[c->n], 0, sizeof *c->v);
-        strmap_put(&c->ix, p, k = c->n++);
-    }
-    return k;
-}
 
 typedef struct { /* one change a call made: its file as recorded (Edit) or resolved (Bash) */
     char *path;
@@ -3252,10 +3044,9 @@ struct CtxProject {
     Env env;
     Pool L; /* labels and tool_use ids of the edits */
     PFile *f;
-    int n, cap;
+    int n;
     StrMap ix; /* path -> f */
 };
-
 
 static void use_clear(Use *u) {
     free(u->id), free(u->name), free(u->cwd), free(u->cmd), free(u->path);
@@ -3284,10 +3075,7 @@ static void fc_record(PFile *pf, yyjson_val *r, int type) {
     if (type == T_ASSISTANT) {
         yyjson_arr_foreach(c, k, m, x) {
             const char *t = gets(x, "type"), *nm = gets(x, "name"), *id = gets(x, "id");
-            if (!t || strcmp(t, "tool_use") || !nm || !id) continue;
-            if (strcmp(nm, "Edit") && strcmp(nm, "Write") && strcmp(nm, "MultiEdit") && strcmp(nm, "NotebookEdit") &&
-                strcmp(nm, "Bash"))
-                continue;
+            if (!t || strcmp(t, "tool_use") || !nm || !id || !str_in(S_(nm), CHANGE_TOOLS)) continue;
             int q = strmap_get(&fs->uses, id);
             if (q < 0) {
                 GROW(fs->u, fs->nu, fs->capu);
@@ -3296,10 +3084,9 @@ static void fc_record(PFile *pf, yyjson_val *r, int type) {
             }
             Use *u = &fs->u[q]; /* uses[id] = (block, cwd): the last one counts */
             use_clear(u);
-            yyjson_val *inp = get(x, "input"), *p = get(inp, "file_path");
-            if (!truthy(p)) p = get(inp, "notebook_path");
+            yyjson_val *inp = get(x, "input"), *p = path_arg(inp);
             *u = (Use){xstrdup(id), xstrdup(nm), dup_or_null(gets(r, "cwd")), dup_or_null(gets(inp, "command")),
-                       truthy(p) && yyjson_is_str(p) ? xstrdup(yyjson_get_str(p)) : NULL, 0, NULL, 0};
+                       dup_or_null(truthy(p) ? yyjson_get_str(p) : NULL), 0, NULL, 0};
             if (!strcmp(nm, "Bash") && !u->cmd) u->cmd = xstrdup("");
         }
     } else if (type == T_USER) {
@@ -3307,11 +3094,8 @@ static void fc_record(PFile *pf, yyjson_val *r, int type) {
             const char *t = gets(x, "type"), *tu = gets(x, "tool_use_id");
             int q;
             if (!t || strcmp(t, "tool_result") || !tu || (q = strmap_get(&fs->uses, tu)) < 0) continue;
-            int d = strmap_get(&fs->done, tu);
-            if (d < 0) {
-                fs->dv = xrealloc(fs->dv, (size_t)(fs->nd + 1) * sizeof *fs->dv);
-                strmap_put(&fs->done, tu, d = fs->nd++);
-            }
+            int d;
+            SLOT(d, &fs->done, tu, fs->dv, fs->nd);
             fs->dv[d].t = epoch(gets(r, "timestamp"));
             fs->dv[d].err = truthy(get(x, "is_error"));
             fs->u[q].valid = 0;
@@ -3337,44 +3121,46 @@ static void use_edits(CtxProject *p, FileScan *fs, Use *u) {
     if (dk < 0 || fs->dv[dk].err) return;
     double t = fs->dv[dk].t;
     const char *tu = pool_str(&p->L, u->id, strlen(u->id));
-    PyBuf lab = {0};
+    Buf lab = {0};
     if (!strcmp(u->name, "Bash")) {
         Str cmd = S_(u->cmd);
         if (write_cmd(cmd)) {
-            PathSet ps = {0};
+            Strs ps = {0};
             cmd_write_files(&p->env, cmd, u->cwd, &ps);
             u->ed = xrealloc(u->ed, ((size_t)ps.n + 1) * sizeof *u->ed);
             for (int i = 0; i < ps.n; i++) {
                 lab.n = 0;
-                pyb_puts(&lab, base_name(ps.p[i]));
-                pyb_puts(&lab, ": Bash ");
+                buf_puts(&lab, base_name(ps.v[i]));
+                buf_puts(&lab, ": Bash ");
                 one_line(&lab, cmd, 60);
-                u->ed[u->ned++] = (PEdit){xstrdup(ps.p[i]), t, tu, pool_str(&p->L, lab.s, lab.n), 1};
+                u->ed[u->ned++] = (PEdit){xstrdup(ps.v[i]), t, tu, pool_str(&p->L, lab.s, lab.n), 1};
             }
-            set_free(&ps);
+            strs_free(&ps);
         }
     } else if (u->path) {
-        pyb_puts(&lab, u->name);
-        pyb_puts(&lab, " ");
-        char *r = rel(&p->env, u->path);
-        pyb_puts(&lab, r);
-        free(r);
+        buf_puts(&lab, u->name);
+        buf_puts(&lab, " ");
+        put_rel(&lab, &p->env, u->path);
         u->ed = xrealloc(u->ed, sizeof *u->ed);
         u->ed[u->ned++] = (PEdit){xstrdup(u->path), t, tu, pool_str(&p->L, lab.s, lab.n), 0};
     }
-    pyb_free(&lab);
+    buf_free(&lab);
 }
 
 /* Can a line matter for changes? Transcripts are compact JSON: a tool call
  * names its tool as "name":"Bash", a result its call as "tool_use_id":"...". */
 static int relevant_line(const FileScan *fs, const char *l, size_t n) {
-    static const char *const names[] = {"\"name\":\"Edit\"", "\"name\":\"Write\"", "\"name\":\"MultiEdit\"",
-                                        "\"name\":\"NotebookEdit\"", "\"name\":\"Bash\""};
+    const char *e = l + n;
     if (memmem(l, n, "edited_text_file", 16)) return 1;
     if (memmem(l, n, "\"tool_use\"", 10))
-        for (size_t i = 0; i < sizeof names / sizeof *names; i++)
-            if (memmem(l, n, names[i], strlen(names[i]))) return 1;
-    for (const char *p = l, *e = l + n; (p = memmem(p, (size_t)(e - p), "\"tool_use_id\":\"", 15));) {
+        for (const char *p = l; (p = memmem(p, (size_t)(e - p), "\"name\":\"", 8));) {
+            p += 8;
+            const char *q = memchr(p, '"', (size_t)(e - p));
+            if (!q) break;
+            if (str_in((Str){p, (size_t)(q - p)}, CHANGE_TOOLS)) return 1;
+            p = q;
+        }
+    for (const char *p = l; (p = memmem(p, (size_t)(e - p), "\"tool_use_id\":\"", 15));) {
         p += 15;
         const char *q = memchr(p, '"', (size_t)(e - p));
         if (!q) break;
@@ -3468,7 +3254,7 @@ static void project_clear(CtxProject *p) {
         free(p->f[i].path);
     }
     free(p->f);
-    p->f = NULL, p->n = p->cap = 0;
+    p->f = NULL, p->n = 0;
     strmap_free(&p->ix);
     pool_free(&p->L, 0);
     memset(&p->L, 0, sizeof p->L);
@@ -3496,20 +3282,17 @@ static void project_changes(CtxProject *p, const Env *env, char **files, int nfi
         p->env = (Env){p->root, xstrdup(env->home), xstrdup(env->config)};
     }
     for (int i = 0; i < nfiles && !(cancel && atomic_load(cancel)); i++) {
-        int k = strmap_get(&p->ix, files[i]);
-        if (k < 0) {
-            GROW(p->f, p->n, p->cap);
-            memset(&p->f[p->n], 0, sizeof *p->f);
-            p->f[p->n].path = xstrdup(files[i]);
-            strmap_put(&p->ix, files[i], k = p->n++);
-        }
+        int k;
+        SLOT(k, &p->ix, files[i], p->f, p->n);
         PFile *pf = &p->f[k];
+        if (!pf->path) pf->path = xstrdup(files[i]);
         scan_file(pf, cancel);
         for (int q = 0; q < pf->fs.nu; q++) {
             Use *u = &pf->fs.u[q];
             if (!u->valid) use_edits(p, &pf->fs, u);
             for (int e = 0; e < u->ned; e++) {
-                int s = changes_slot(ch, u->ed[e].path);
+                int s;
+                SLOT(s, &ch->ix, u->ed[e].path, ch->v, ch->n);
                 GROW(ch->v[s].e, ch->v[s].n, ch->v[s].cap);
                 const char *tu = u->ed[e].tu, *lab = u->ed[e].label;
                 ch->v[s].e[ch->v[s].n++] = (Edit){u->ed[e].t, i, pool_str(L, tu, strlen(tu)), pool_str(L, lab, strlen(lab)),
@@ -3517,7 +3300,8 @@ static void project_changes(CtxProject *p, const Env *env, char **files, int nfi
             }
         }
         for (int j = 0; j < pf->nseen; j++) {
-            int s = changes_slot(ch, pf->seen[j].path);
+            int s;
+            SLOT(s, &ch->ix, pf->seen[j].path, ch->v, ch->n);
             GROW(ch->v[s].seen, ch->v[s].nseen, ch->v[s].capseen);
             ch->v[s].seen_file = xrealloc(ch->v[s].seen_file, (size_t)ch->v[s].capseen * sizeof(int));
             ch->v[s].seen[ch->v[s].nseen] = pf->seen[j].t;
@@ -3535,6 +3319,10 @@ static int cmp_stale(const void *x, const void *y) { /* sorted(ev): by time, kin
     return strcmp(a->label, b->label);
 }
 
+static yyjson_doc *parse_text(Build *b, int x) { /* an action's input, from its text */
+    return yyjson_read_opts(b->S.s[x], b->S.len[x], PYJ_READ, NULL, NULL);
+}
+
 /* stale_events: per read (a Read result, or a read-only command's output
  * naming files), the changes to its file after the read while it stayed in
  * the context. */
@@ -3542,10 +3330,10 @@ static void stale_events(Build *b, Changes *ch, int own_file, const int *session
     CtxAgent *a = b->a;
     Loader *ld = b->ld; /* its maps: every record of the agent's own file (scan_new) */
     double last_t = a->ncalls ? a->calls[a->ncalls - 1].t : 0;
-    PyBuf lab = {0};
+    Buf lab = {0};
     for (int i = 0; i < b->nitems; i++) {
         CtxItem *it = &b->items[i];
-        if (it->kind != CK_RESULT || !it->tool || (strcmp(it->tool, "Read") && strcmp(it->tool, "Bash")) ||
+        if (it->kind != CK_RESULT || !str_in(S_(it->tool), (const char *const[]){"Read", "Bash", NULL}) ||
             it->action < 0 || it->err)
             continue;
         CtxItem *act = &b->items[it->action];
@@ -3553,26 +3341,26 @@ static void stale_events(Build *b, Changes *ch, int own_file, const int *session
         int rq = tu ? strmap_get(&ld->rt_ix, tu) : -1, cq = tu ? strmap_get(&ld->cwd_ix, tu) : -1;
         double t0 = rq >= 0 ? ld->rt[rq] : 0;
         const char *cwd = cq >= 0 ? ld->cwd[cq] : NULL;
-        yyjson_doc *doc = yyjson_read_opts(b->S.s[act->x], b->S.len[act->x], PYJ_READ, NULL, NULL);
+        yyjson_doc *doc = parse_text(b, act->x);
         yyjson_val *inp = yyjson_doc_get_root(doc);
         if (!doc) continue;
         int bash = !strcmp(it->tool, "Bash");
-        PathSet paths = {0};
+        Strs paths = {0};
         if (!bash) {
             if (gets(inp, "file_path")) set_add(&paths, xstrdup(gets(inp, "file_path")));
         } else cmd_read_files(&b->env, getstr(inp, "command"), cwd, &paths);
         double t1 = it->leave >= 0 ? a->calls[it->leave].t : last_t;
         if (!t0 || !paths.n || !a->ncalls) {
-            set_free(&paths);
+            strs_free(&paths);
             yyjson_doc_free(doc);
             continue;
         }
         CtxStale *ev = NULL;
         int nev = 0, capev = 0;
-        PathSet own_writes = {0};
+        Strs own_writes = {0};
         if (bash) cmd_write_files(&b->env, getstr(inp, "command"), cwd, &own_writes);
         for (int p = 0; p < paths.n; p++) {
-            int k = strmap_get(&ch->ix, paths.p[p]);
+            int k = strmap_get(&ch->ix, paths.v[p]);
             if (k < 0) continue;
             for (int e = 0; e < ch->v[k].n; e++) {
                 Edit *ed = &ch->v[k].e[e];
@@ -3583,8 +3371,7 @@ static void stale_events(Build *b, Changes *ch, int own_file, const int *session
                            : in_session ? CST_SESSION : CST_PROJECT;
                 int item = -1;
                 if (kind < CST_SESSION) item = strmap_get(&b->tool_use, ed->tu);
-                GROW(ev, nev, capev);
-                ev[nev++] = (CtxStale){round1(ed->t), kind, item, ed->label};
+                PUSH(ev, nev, capev, ((CtxStale){round1(ed->t), kind, item, ed->label}));
             }
             /* Claude Code noticed a change it did not make with Edit/Write; skipped when a command of the
              * project (this read's own included) wrote the file just before */
@@ -3596,18 +3383,15 @@ static void stale_events(Build *b, Changes *ch, int own_file, const int *session
                     double et = ch->v[k].e[e].t;
                     near = t0 - 5 <= et && et <= t;
                 }
-                if (near || set_has(&own_writes, paths.p[p])) continue;
+                if (near || set_has(&own_writes, paths.v[p])) continue;
                 lab.n = 0;
-                char *r = rel(&b->env, paths.p[p]);
-                pyb_puts(&lab, r);
-                free(r);
-                pyb_puts(&lab, " changed by the user or a program (Claude Code noticed)");
-                GROW(ev, nev, capev);
-                ev[nev++] = (CtxStale){round1(t), CST_NOTICED, -1, Lbuf(b, &lab)};
+                put_rel(&lab, &b->env, paths.v[p]);
+                buf_puts(&lab, " changed by the user or a program (Claude Code noticed)");
+                PUSH(ev, nev, capev, ((CtxStale){round1(t), CST_NOTICED, -1, Lbuf(b, &lab)}));
             }
         }
-        set_free(&own_writes);
-        set_free(&paths);
+        strs_free(&own_writes);
+        strs_free(&paths);
         yyjson_doc_free(doc);
         if (nev) {
             qsort(ev, (size_t)nev, sizeof *ev, cmp_stale);
@@ -3615,7 +3399,7 @@ static void stale_events(Build *b, Changes *ch, int own_file, const int *session
             it->nst = nev;
         } else free(ev);
     }
-    pyb_free(&lab);
+    buf_free(&lab);
 }
 
 /* ---- why it decided (links_of) ---- */
@@ -3660,8 +3444,6 @@ static void find_words(Str s, StrMap *ix, int **ids, int *n, int *cap, int add_n
     }
 }
 
-static int cmp_int(const void *a, const void *b) { return (*(const int *)a > *(const int *)b) - (*(const int *)a < *(const int *)b); }
-
 static int uniq(int *v, int n) { /* sort and dedupe */
     if (n < 2) return n;
     qsort(v, (size_t)n, sizeof *v, cmp_int);
@@ -3701,15 +3483,13 @@ static int cmp_rare(const void *x, const void *y, void *ud) { /* a hit's words: 
     return strcmp(r->names[a], r->names[b]);
 }
 
-/* links_of: for each action, the items most likely behind it, from the
- * context of the call that made it. */
 /* What links_of takes from an item, once (the loader keeps it): a result's
  * words (the first 200000 characters) and the files it is about (files_of);
  * an action's words (its string inputs) and the paths it acts on. Words get
  * ids in a table only links_of uses: ids never reach the output. */
 static void link_cache(Build *b, LinkCache *c, int i, StrMap *wix, char ***names, int *nnames) {
     CtxItem *it = &b->items[i];
-    PathSet ps = {0};
+    Strs ps = {0};
     int cap = 0;
     free(c->w), strv_free(c->p, c->np);
     memset(c, 0, sizeof *c);
@@ -3721,39 +3501,38 @@ static void link_cache(Build *b, LinkCache *c, int i, StrMap *wix, char ***names
         find_words((Str){b->S.s[x], lim}, wix, &c->w, &c->nw, &cap, 1, names, nnames);
         if (it->tool && !strcmp(it->tool, "Read")) {
             if (it->path) set_add(&ps, xstrdup(it->path));
-        } else if (it->tool && (!strcmp(it->tool, "Bash") || !strcmp(it->tool, "Grep")) && it->action >= 0) {
-            CtxItem *ac = &b->items[it->action];
-            yyjson_doc *d = yyjson_read_opts(b->S.s[ac->x], b->S.len[ac->x], PYJ_READ, NULL, NULL);
+        } else if (str_in(S_(it->tool), (const char *const[]){"Bash", "Grep", NULL}) && it->action >= 0) {
+            yyjson_doc *d = parse_text(b, b->items[it->action].x);
             yyjson_val *inp = yyjson_doc_get_root(d);
             cmd_paths(&b->env, getstr(inp, "command"), &ps);
             if (gets(inp, "path")) set_add(&ps, rel(&b->env, gets(inp, "path")));
             yyjson_doc_free(d);
         }
     } else if (it->kind == CK_ACTION) {
-        yyjson_doc *d = yyjson_read_opts(b->S.s[it->x], b->S.len[it->x], PYJ_READ, NULL, NULL);
+        yyjson_doc *d = parse_text(b, it->x);
         yyjson_val *inp = yyjson_doc_get_root(d);
         const char *pk[] = {"file_path", "notebook_path"};
         for (int k = 0; k < 2; k++)
             if (gets(inp, pk[k])) set_add(&ps, rel(&b->env, gets(inp, pk[k])));
         if (it->tool && !strcmp(it->tool, "Bash")) cmd_paths(&b->env, getstr(inp, "command"), &ps);
-        PyBuf text = {0};
+        Buf text = {0};
         if (yyjson_is_obj(inp)) {
             size_t k, m;
             yyjson_val *key, *v;
             int first = 1;
             yyjson_obj_foreach(inp, k, m, key, v) if (yyjson_is_str(v)) {
-                if (!first) pyb_puts(&text, " ");
+                if (!first) buf_puts(&text, " ");
                 first = 0;
-                pyb_put(&text, yyjson_get_str(v), yyjson_get_len(v));
+                buf_put(&text, yyjson_get_str(v), yyjson_get_len(v));
             }
-        } else pyb_put(&text, b->S.s[it->x], b->S.len[it->x]);
+        } else buf_put(&text, b->S.s[it->x], b->S.len[it->x]);
         find_words((Str){text.s ? text.s : "", text.n}, wix, &c->w, &c->nw, &cap, 1, names, nnames);
-        pyb_free(&text);
+        buf_free(&text);
         yyjson_doc_free(d);
     }
     c->nw = uniq(c->w, c->nw);
     set_sort(&ps);
-    c->p = ps.p, c->np = ps.n;
+    c->p = ps.v, c->np = ps.n;
 }
 
 /* links_of: for each action, the items most likely behind it, from the
@@ -3790,15 +3569,15 @@ static void links_of(Build *b) {
         char *sw = xstrdup(STOP_WORDS);
         for (char *t, *sv = NULL, *q = sw; (t = strtok_r(q, " ", &sv)); q = NULL) strmap_put(&stop, t, 1);
         free(sw);
-        PyBuf pth = {0};
-        pyb_puts(&pth, b->env.root);
-        pyb_puts(&pth, "/");
-        pyb_puts(&pth, b->env.home);
-        pyb_puts(&pth, "/");
-        pyb_puts(&pth, b->env.config);
+        Buf pth = {0};
+        buf_puts(&pth, b->env.root);
+        buf_puts(&pth, "/");
+        buf_puts(&pth, b->env.home);
+        buf_puts(&pth, "/");
+        buf_puts(&pth, b->env.config);
         char *pp = pth.s;
         for (char *t, *sv = NULL, *q = pp; (t = strtok_r(q, "/-_.", &sv)); q = NULL) strmap_put(&stop, t, 1);
-        pyb_free(&pth);
+        buf_free(&pth);
         static const char *extra[] = {"claude", "jsonl", "projects", "scratchpad", "tmp"};
         for (size_t i = 0; i < 5; i++) strmap_put(&stop, extra[i], 1);
         for (int w = 0; w < nnames; w++)
@@ -3822,34 +3601,26 @@ static void links_of(Build *b) {
         if (b->items[i].kind == CK_RESULT)
             for (int k = 0; k < lc[i].nw; k++) post[fill[lc[i].w[k]]++] = i;
     free(fill);
-    /* by_made: items each call's response made, in id order */
-    int **made = xcalloc((size_t)a->ncalls + 1, sizeof *made), *nmade = xcalloc((size_t)a->ncalls + 1, sizeof *nmade),
-        *capmade = xcalloc((size_t)a->ncalls + 1, sizeof *capmade);
-    for (int i = 0; i < b->nitems; i++) {
-        int m = b->items[i].made;
-        if (m < 0 || m >= a->ncalls) continue;
-        GROW(made[m], nmade[m], capmade[m]);
-        made[m][nmade[m]++] = i;
-    }
     int *inctx = xcalloc((size_t)b->nitems + 1, sizeof *inctx); /* times an item is in the call's context */
     char *linked = xcalloc((size_t)b->nitems + 1, 1);
     int **hits = xcalloc((size_t)b->nitems + 1, sizeof *hits), *nhits = xcalloc((size_t)b->nitems + 1, sizeof *nhits),
         *caphits = xcalloc((size_t)b->nitems + 1, sizeof *caphits), *touched = NULL, ntouched = 0, captouched = 0;
-    PyBuf lab = {0};
+    Buf lab = {0};
     for (int mc = 0; mc < a->ncalls; mc++) {
         if (b->cancel && atomic_load(b->cancel)) break;
-        int any = 0;
-        for (int q = 0; q < nmade[mc] && !any; q++) any = b->items[made[mc][q]].kind == CK_ACTION;
-        if (!any) continue;
         CtxCall *ctx = &a->calls[mc];
+        const int *made = ctx->made, nmade = ctx->nmade; /* by_made: items its response made, in id order */
+        int any = 0;
+        for (int q = 0; q < nmade && !any; q++) any = b->items[made[q]].kind == CK_ACTION;
+        if (!any) continue;
         for (int q = 0; q < ctx->norder; q++) inctx[ctx->order[q]]++;
         int prompt = -1; /* the prompt that started the turn: the last one in the context */
         for (int q = ctx->norder - 1; q >= 0 && prompt < 0; q--) {
             const char *s = b->items[ctx->order[q]].src;
             if (s && (!strcmp(s, "prompt") || !strcmp(s, "compaction summary"))) prompt = ctx->order[q];
         }
-        for (int mq = 0; mq < nmade[mc]; mq++) {
-            int ii = made[mc][mq];
+        for (int mq = 0; mq < nmade; mq++) {
+            int ii = made[mq];
             CtxItem *it = &b->items[ii];
             if (it->kind != CK_ACTION) continue;
             LinkCache *ac = &lc[ii];
@@ -3860,9 +3631,8 @@ static void links_of(Build *b) {
                 for (int q = ctx->norder - 1; q >= 0; q--) {
                     int iid = ctx->order[q];
                     CtxItem *r = &b->items[iid];
-                    if (r->kind != CK_RESULT || !r->tool ||
-                        (strcmp(r->tool, "Read") && strcmp(r->tool, "Bash") && strcmp(r->tool, "Grep")))
-                        continue;
+                    static const char *const reads[] = {"Read", "Bash", "Grep", NULL};
+                    if (r->kind != CK_RESULT || !str_in(S_(r->tool), reads)) continue;
                     LinkCache *rc = &lc[iid];
                     int hit = -1;
                     for (int p = 0; p < ac->np && hit < 0; p++)
@@ -3871,23 +3641,21 @@ static void links_of(Build *b) {
                     if (hit >= 0 && ac->p[hit][0] && per[hit] < 2 && tot < 4) {
                         per[hit]++, tot++;
                         lab.n = 0;
-                        pyb_puts(&lab, strcmp(r->tool, "Read") ? "saw " : "read of ");
-                        pyb_puts(&lab, base_name(ac->p[hit]));
-                        GROW(lk, nlk, caplk);
-                        lk[nlk++] = (CtxLink){iid, Lbuf(b, &lab)};
+                        buf_puts(&lab, strcmp(r->tool, "Read") ? "saw " : "read of ");
+                        buf_puts(&lab, base_name(ac->p[hit]));
+                        PUSH(lk, nlk, caplk, ((CtxLink){iid, Lbuf(b, &lab)}));
                     }
                 }
                 free(per);
             }
             if (prompt >= 0) {
-                GROW(lk, nlk, caplk);
-                lk[nlk++] = (CtxLink){prompt, L_(b, "the prompt of this turn")};
+                PUSH(lk, nlk, caplk, ((CtxLink){prompt, L_(b, "the prompt of this turn")}));
             }
-            for (int q = 0; q < nmade[mc] && made[mc][q] != ii; q++) { /* its text and thinking just before */
-                CtxItem *t = &b->items[made[mc][q]];
+            for (int q = 0; q < nmade && made[q] != ii; q++) { /* its text and thinking just before */
+                CtxItem *t = &b->items[made[q]];
                 if (t->kind == CK_TEXT || t->kind == CK_THINKING) {
-                    GROW(lk, nlk, caplk);
-                    lk[nlk++] = (CtxLink){made[mc][q], L_(b, t->kind == CK_TEXT ? "its text just before" : "its thinking just before")};
+                    const char *why = t->kind == CK_TEXT ? "its text just before" : "its thinking just before";
+                    PUSH(lk, nlk, caplk, ((CtxLink){made[q], L_(b, why)}));
                 }
             }
             /* results that mention names in the action's input, rarest names first: each word's results in
@@ -3900,8 +3668,7 @@ static void links_of(Build *b) {
                     int r = post[pi];
                     if (!inctx[r] || linked[r]) continue;
                     if (!nhits[r]) {
-                        GROW(touched, ntouched, captouched);
-                        touched[ntouched++] = r;
+                        PUSH(touched, ntouched, captouched, r);
                     }
                     GROW(hits[r], nhits[r], caphits[r]);
                     hits[r][nhits[r]++] = w;
@@ -3931,13 +3698,12 @@ static void links_of(Build *b) {
             for (int q = 0; q < nsc && q < 3; q++) {
                 if (sc[q].score < 0.34) continue;
                 lab.n = 0;
-                pyb_puts(&lab, "mentions ");
+                buf_puts(&lab, "mentions ");
                 for (int k = 0; k < sc[q].ntop; k++) {
-                    if (k) pyb_puts(&lab, ", ");
-                    pyb_puts(&lab, names[sc[q].top[k]]);
+                    if (k) buf_puts(&lab, ", ");
+                    buf_puts(&lab, names[sc[q].top[k]]);
                 }
-                GROW(lk, nlk, caplk);
-                lk[nlk++] = (CtxLink){sc[q].item, Lbuf(b, &lab)};
+                PUSH(lk, nlk, caplk, ((CtxLink){sc[q].item, Lbuf(b, &lab)}));
             }
             free(sc);
             it->lk = lk;
@@ -3946,12 +3712,11 @@ static void links_of(Build *b) {
         }
         for (int q = 0; q < ctx->norder; q++) inctx[ctx->order[q]] = 0;
     }
-    pyb_free(&lab);
-    for (int c = 0; c < a->ncalls; c++) free(made[c]);
+    buf_free(&lab);
     for (int i = 0; i < b->nitems; i++) free(hits[i]);
     ld->wix = wix, ld->wnames = names, ld->nwn = nnames; /* kept */
     ld->lc = lc, ld->nlc = b->nitems;
-    free(df), free(stopped), free(pstart), free(post), free(made), free(nmade), free(capmade), free(inctx), free(linked);
+    free(df), free(stopped), free(pstart), free(post), free(inctx), free(linked);
     free(hits), free(nhits), free(caphits), free(touched);
     strmap_free(&stop);
 }
@@ -4096,159 +3861,18 @@ int ctx_code_lines(const CtxItem *it, char **buf, char ***lines, int **nums, con
 
 /* ---- finding agents ---- */
 
-static char *projects_dir(void) {
+static char *config_dir(void) { /* $CLAUDE_CONFIG_DIR, else ~/.claude */
     const char *cfg = getenv("CLAUDE_CONFIG_DIR");
-    if (cfg) return path_join(cfg, "projects");
-    char *h = expanduser("~/.claude/projects");
-    return h;
+    return cfg ? xstrdup(cfg) : expanduser("~/.claude");
 }
 
 static char *project_of(const char *root) { /* Claude Code's project dir: every non-alphanumeric char of the cwd -> '-' */
-    char *pd = projects_dir(), *slug = xstrdup(root);
+    char *cfg = config_dir(), *pd = path_join(cfg, "projects"), *slug = xstrdup(root);
     for (char *p = slug; *p; p++)
         if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') || (*p >= '0' && *p <= '9'))) *p = '-';
     char *d = path_join(pd, slug);
-    free(pd), free(slug);
+    free(cfg), free(pd), free(slug);
     return d;
-}
-
-static int list_dir(const char *dir, const char *suffix, char ***out) { /* sorted names */
-    DIR *d = opendir(dir);
-    struct dirent *de;
-    char **v = NULL;
-    int n = 0;
-    while (d && (de = readdir(d))) {
-        if (de->d_name[0] == '.' || (suffix && !ends(de->d_name, suffix))) continue;
-        v = xrealloc(v, (size_t)(n + 1) * sizeof *v);
-        v[n++] = xstrdup(de->d_name);
-    }
-    if (d) closedir(d);
-    if (n > 1) qsort(v, (size_t)n, sizeof *v, cmp_strp);
-    *out = v;
-    return n;
-}
-
-static void free_list(char **v, int n) {
-    for (int i = 0; i < n; i++) free(v[i]);
-    free(v);
-}
-
-char *ctx_find(const char *root, const char *agent, char **err) {
-    struct stat st;
-    char buf[512];
-    if (strchr(agent, '/') || ends(agent, ".jsonl")) {
-        if (!stat(agent, &st) && S_ISREG(st.st_mode)) return xstrdup(agent);
-        snprintf(buf, sizeof buf, "%s: no such transcript", agent);
-        *err = xstrdup(buf);
-        return NULL;
-    }
-    const char *id = !strncmp(agent, "agent-", 6) ? agent + 6 : agent;
-    size_t idn = strlen(id);
-    char *dir = project_of(root), **names, *found = NULL;
-    int n = list_dir(dir, NULL, &names), hits = 0, exact = 0;
-    for (int i = 0; i < n; i++) {
-        char *p = path_join(dir, names[i]);
-        if (ends(names[i], ".jsonl")) {
-            int ex = strlen(names[i]) == idn + 6;
-            if (!strncmp(names[i], id, idn) && (!exact || ex)) {
-                if (ex && !exact) hits = 0, free(found), found = NULL;
-                exact |= ex;
-                hits++;
-                free(found);
-                found = xstrdup(p);
-            }
-        } else if (!stat(p, &st) && S_ISDIR(st.st_mode)) {
-            char *sub = path_join(p, "subagents"), **subs;
-            int ns = list_dir(sub, ".jsonl", &subs);
-            for (int k = 0; k < ns; k++) {
-                if (strncmp(subs[k], "agent-", 6) || strncmp(subs[k] + 6, id, idn)) continue;
-                int ex = strlen(subs[k]) == idn + 12;
-                if (exact && !ex) continue;
-                if (ex && !exact) hits = 0;
-                exact |= ex;
-                hits++;
-                free(found);
-                found = path_join(sub, subs[k]);
-            }
-            free_list(subs, ns);
-            free(sub);
-        }
-        free(p);
-    }
-    free_list(names, n);
-    if (hits != 1) {
-        snprintf(buf, sizeof buf, "%s: %s in %s", agent, hits ? "more than one agent matches" : "no such session or subagent", dir);
-        *err = xstrdup(buf);
-        free(found);
-        found = NULL;
-    }
-    free(dir);
-    return found;
-}
-
-/* The project dir, session id and main transcript of a transcript path. */
-static void locate(const char *path, char **projdir, char **session, char **main, int *is_sub) {
-    const char *sub = strstr(path, "/subagents/");
-    for (const char *p; sub && (p = strstr(sub + 1, "/subagents/"));) sub = p;
-    *is_sub = sub && !strncmp(base_name(path), "agent-", 6);
-    if (*is_sub) {
-        const char *sid = sub;
-        while (sid > path && sid[-1] != '/') sid--;
-        *session = xstrndup(sid, (size_t)(sub - sid));
-        *projdir = sid > path ? xstrndup(path, (size_t)(sid - path - 1)) : xstrdup(".");
-    } else {
-        const char *b = base_name(path);
-        *session = xstrndup(b, strlen(b) - (ends(b, ".jsonl") ? 6 : 0));
-        *projdir = b > path ? xstrndup(path, (size_t)(b - path - 1)) : xstrdup(".");
-    }
-    PyBuf m = {0};
-    pyb_puts(&m, *projdir);
-    pyb_puts(&m, "/");
-    pyb_puts(&m, *session);
-    pyb_puts(&m, ".jsonl");
-    *main = m.s;
-}
-
-static char *meta_path(const char *jsonl) { /* agent-x.jsonl -> agent-x.meta.json */
-    size_t n = strlen(jsonl) - (ends(jsonl, ".jsonl") ? 6 : 0);
-    char *m = xmalloc(n + 11);
-    memcpy(m, jsonl, n);
-    strcpy(m + n, ".meta.json");
-    return m;
-}
-
-int ctx_session_agents(const char *path, CtxRef **out) {
-    char *pd, *sid, *main;
-    int is_sub;
-    locate(path, &pd, &sid, &main, &is_sub);
-    CtxRef *v = xcalloc(1, sizeof *v);
-    int n = 1;
-    v[0] = (CtxRef){main, xstrdup(sid), xstrdup("main"), NULL, NULL};
-    char *dir = xmalloc(strlen(pd) + strlen(sid) + 16);
-    sprintf(dir, "%s/%s/subagents", pd, sid);
-    char **subs;
-    int ns = list_dir(dir, ".jsonl", &subs);
-    for (int k = 0; k < ns; k++) {
-        if (strncmp(subs[k], "agent-", 6)) continue;
-        v = xrealloc(v, (size_t)(n + 1) * sizeof *v);
-        char *p = path_join(dir, subs[k]), *meta = meta_path(p);
-        yyjson_doc *doc = yyjson_read_file(meta, 0, NULL, NULL);
-        yyjson_val *root = yyjson_doc_get_root(doc);
-        const char *t = gets(root, "agentType"), *d = gets(root, "description"), *tu = gets(root, "toolUseId");
-        v[n++] = (CtxRef){p, xstrndup(subs[k] + 6, strlen(subs[k]) - 12), xstrdup(t && *t ? t : "subagent"),
-                          d ? xstrdup(d) : NULL, tu ? xstrdup(tu) : NULL};
-        yyjson_doc_free(doc);
-        free(meta);
-    }
-    free_list(subs, ns);
-    free(dir), free(pd), free(sid);
-    *out = v;
-    return n;
-}
-
-void ctx_refs_free(CtxRef *r, int n) {
-    for (int i = 0; i < n; i++) free(r[i].path), free(r[i].id), free(r[i].name), free(r[i].desc), free(r[i].tu);
-    free(r);
 }
 
 static int cmp_mtime(const void *x, const void *y) { /* by mtime, then name: the same order every time */
@@ -4263,11 +3887,11 @@ static int project_files(const char *pd, char ***out) {
     int n = list_dir(pd, NULL, &names), nm = 0;
     struct { char *p; double mt; } *mains = xcalloc((size_t)n + 1, sizeof *mains);
     char **subs = NULL;
-    int nsub = 0;
+    int nsub = 0, capsub = 0;
     struct stat st;
     for (int i = 0; i < n; i++) {
         char *p = path_join(pd, names[i]);
-        if (ends(names[i], ".jsonl") && !stat(p, &st)) {
+        if (ends_with(names[i], ".jsonl") && !stat(p, &st)) {
             mains[nm].p = p;
             mains[nm++].mt = st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
             continue;
@@ -4275,24 +3899,117 @@ static int project_files(const char *pd, char ***out) {
         if (!stat(p, &st) && S_ISDIR(st.st_mode)) {
             char *sd = path_join(p, "subagents"), **ss;
             int k = list_dir(sd, ".jsonl", &ss);
-            for (int j = 0; j < k; j++) {
-                subs = xrealloc(subs, (size_t)(nsub + 1) * sizeof *subs);
-                subs[nsub++] = path_join(sd, ss[j]);
-            }
-            free_list(ss, k);
+            for (int j = 0; j < k; j++) PUSH(subs, nsub, capsub, path_join(sd, ss[j]));
+            strv_free(ss, k);
             free(sd);
         }
         free(p);
     }
-    free_list(names, n);
+    strv_free(names, n);
     if (nm > 1) qsort(mains, (size_t)nm, sizeof *mains, cmp_mtime);
-    if (nsub > 1) qsort(subs, (size_t)nsub, sizeof *subs, cmp_strp);
+    if (nsub > 1) qsort(subs, (size_t)nsub, sizeof *subs, cmp_str);
     char **v = xmalloc((size_t)(nm + nsub + 1) * sizeof *v);
     for (int i = 0; i < nm; i++) v[i] = mains[i].p;
     for (int i = 0; i < nsub; i++) v[nm + i] = subs[i];
     free(mains), free(subs);
     *out = v;
     return nm + nsub;
+}
+
+char *ctx_find(const char *root, const char *agent, char **err) {
+    struct stat st;
+    if (strchr(agent, '/') || ends_with(agent, ".jsonl")) {
+        if (!stat(agent, &st) && S_ISREG(st.st_mode)) return xstrdup(agent);
+        *err = xasprintf("%s: no such transcript", agent);
+        return NULL;
+    }
+    /* among the project's transcripts: the ones named by the id exactly, else by a prefix of it */
+    const char *id = !strncmp(agent, "agent-", 6) ? agent + 6 : agent, *found = NULL;
+    size_t idn = strlen(id);
+    char *dir = project_of(root), **files;
+    int n = project_files(dir, &files), hits = 0, exact = 0;
+    for (int i = 0; i < n; i++) {
+        const char *name = base_name(files[i]);
+        if (strchr(files[i] + strlen(dir) + 1, '/')) { /* a subagent's: <session>/subagents/agent-<id>.jsonl */
+            if (strncmp(name, "agent-", 6)) continue;
+            name += 6;
+        }
+        if (strncmp(name, id, idn)) continue;
+        int ex = !strcmp(name + idn, ".jsonl");
+        if (exact && !ex) continue;
+        if (ex && !exact) hits = 0;
+        exact |= ex, hits++, found = files[i];
+    }
+    char *path = hits == 1 ? xstrdup(found) : NULL;
+    if (!path)
+        *err = xasprintf("%s: %s in %s", agent, hits ? "more than one agent matches" : "no such session or subagent",
+                         dir);
+    strv_free(files, n);
+    free(dir);
+    return path;
+}
+
+/* The project dir, session id and main transcript of a transcript path. */
+static void locate(const char *path, char **projdir, char **session, char **main, int *is_sub) {
+    const char *sub = strstr(path, "/subagents/");
+    for (const char *p; sub && (p = strstr(sub + 1, "/subagents/"));) sub = p;
+    *is_sub = sub && !strncmp(base_name(path), "agent-", 6);
+    if (*is_sub) {
+        const char *sid = sub;
+        while (sid > path && sid[-1] != '/') sid--;
+        *session = xstrndup(sid, (size_t)(sub - sid));
+        *projdir = sid > path ? xstrndup(path, (size_t)(sid - path - 1)) : xstrdup(".");
+    } else {
+        const char *b = base_name(path);
+        *session = xstrndup(b, strlen(b) - (ends_with(b, ".jsonl") ? 6 : 0));
+        *projdir = b > path ? xstrndup(path, (size_t)(b - path - 1)) : xstrdup(".");
+    }
+    *main = xasprintf("%s/%s.jsonl", *projdir, *session);
+}
+
+static char *subagents_dir(const char *pd, const char *session) { return xasprintf("%s/%s/subagents", pd, session); }
+static char *agent_id(const char *name) { return xstrndup(name + 6, strlen(name) - 12); } /* agent-<id>.jsonl */
+
+/* A subagent's agent-<id>.meta.json beside its transcript: its agentType
+ * ("subagent" when none), description, toolUseId and model (NULL when not
+ * there; model: not read when NULL). */
+static void read_meta(const char *jsonl, char **name, char **desc, char **tu, char **model) {
+    char *meta = xasprintf("%.*s.meta.json", (int)(strlen(jsonl) - (ends_with(jsonl, ".jsonl") ? 6 : 0)), jsonl);
+    yyjson_doc *doc = yyjson_read_file(meta, 0, NULL, NULL);
+    yyjson_val *r = yyjson_doc_get_root(doc);
+    const char *t = gets(r, "agentType");
+    *name = xstrdup(t && *t ? t : "subagent");
+    *desc = dup_or_null(gets(r, "description")), *tu = dup_or_null(gets(r, "toolUseId"));
+    if (model) *model = dup_or_null(gets(r, "model"));
+    yyjson_doc_free(doc);
+    free(meta);
+}
+
+int ctx_session_agents(const char *path, CtxRef **out) {
+    char *pd, *sid, *main;
+    int is_sub;
+    locate(path, &pd, &sid, &main, &is_sub);
+    CtxRef *v = xcalloc(1, sizeof *v);
+    int n = 1;
+    v[0] = (CtxRef){main, xstrdup(sid), xstrdup("main"), NULL, NULL};
+    char *dir = subagents_dir(pd, sid), **subs;
+    int ns = list_dir(dir, ".jsonl", &subs);
+    for (int k = 0; k < ns; k++) {
+        if (strncmp(subs[k], "agent-", 6)) continue;
+        v = xrealloc(v, (size_t)(n + 1) * sizeof *v);
+        CtxRef *r = &v[n++];
+        r->path = path_join(dir, subs[k]), r->id = agent_id(subs[k]);
+        read_meta(r->path, &r->name, &r->desc, &r->tu, NULL);
+    }
+    strv_free(subs, ns);
+    free(dir), free(pd), free(sid);
+    *out = v;
+    return n;
+}
+
+void ctx_refs_free(CtxRef *r, int n) {
+    for (int i = 0; i < n; i++) free(r[i].path), free(r[i].id), free(r[i].name), free(r[i].desc), free(r[i].tu);
+    free(r);
 }
 
 /* title_of_file, resumable: a subagent's session title, from its main
@@ -4319,17 +4036,8 @@ static char *title_scan(TitleScan *ts, const char *path) {
             int title = memmem(line, (size_t)n, "\"ai-title\"", 10) != NULL;
             if (!title && (ts->first || !memmem(line, (size_t)n, "\"user\"", 6))) continue;
             yyjson_doc *doc = yyjson_read_opts(line, (size_t)n, PYJ_READ, NULL, NULL);
-            yyjson_val *r = yyjson_doc_get_root(doc), *c = get(get(r, "message"), "content");
-            int t = rec_type(r);
-            char **ai = whole ? &ts->ai : &tail_ai, **first = whole ? &ts->first : &tail_first;
-            if (t == T_TITLE && truthy(get(r, "aiTitle")) && gets(r, "aiTitle")) {
-                free(*ai);
-                *ai = xstrdup(gets(r, "aiTitle"));
-            } else if (t == T_USER && yyjson_is_str(c) && !ts->first && !*first) {
-                PyBuf o = {0};
-                one_line(&o, (Str){yyjson_get_str(c), yyjson_get_len(c)}, 70);
-                *first = o.s ? o.s : xstrdup("");
-            }
+            yyjson_val *r = yyjson_doc_get_root(doc);
+            title_rec(r, rec_type(r), whole ? &ts->ai : &tail_ai, whole ? &ts->first : &tail_first);
             yyjson_doc_free(doc);
         }
         free(line);
@@ -4342,16 +4050,6 @@ static char *title_scan(TitleScan *ts, const char *path) {
 }
 
 /* ---- loading ---- */
-
-static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atomic_int *cancel, char **err,
-                      const CtxAgent *prev, const char **refused);
-
-CtxAgent *ctx_load(const char *root, const char *path, CtxProject *proj, atomic_int *cancel, char **err) {
-    locale_t prev = c_numeric();
-    CtxAgent *a = load(root, path, proj, cancel, err, NULL, NULL);
-    uselocale(prev);
-    return a;
-}
 
 typedef struct {
     Pool L;         /* labels and other strings the items point into */
@@ -4388,7 +4086,6 @@ static void restore(Build *b, const CtxAgent *prev) {
     const Priv *pp = prev->priv;
     Loader *ld = b->ld = loader_copy(pp->ld);
     b->resuming = 1;
-#define RE(s) ((s) ? L_(b, (s)) : NULL)
     for (int i = 0; i < prev->nstr; i++) pool_add(&b->S, prev->str[i], prev->slen[i]); /* the same indices */
     b->items = xmalloc(((size_t)prev->nitems + 1) * sizeof *b->items);
     b->nitems = b->capitems = prev->nitems;
@@ -4396,7 +4093,8 @@ static void restore(Build *b, const CtxAgent *prev) {
         const CtxItem *o = &prev->items[i];
         CtxItem *d = &b->items[i];
         *d = *o;
-        d->src = RE(o->src), d->tool = RE(o->tool), d->tuid = RE(o->tuid), d->path = RE(o->path);
+        d->src = L_opt(b, o->src), d->tool = L_opt(b, o->tool);
+        d->tuid = L_opt(b, o->tuid), d->path = L_opt(b, o->path);
         if (o->kind == CK_RESULT) d->src = L_(b, "result"), d->tool = NULL, d->path = NULL; /* post links them again */
         d->text = NULL, d->len = 0, d->lang = NULL, d->line0 = d->line1 = 0;
         d->cmd = d->old_str = d->new_str = d->content = d->desc = NULL;
@@ -4404,21 +4102,12 @@ static void restore(Build *b, const CtxAgent *prev) {
         d->names = NULL;
         if (o->ntx) {
             d->names = xmalloc((size_t)o->ntx * sizeof *d->names);
-            for (int k = 0; k < o->ntx; k++) d->names[k] = RE(o->names[k]);
+            for (int k = 0; k < o->ntx; k++) d->names[k] = L_opt(b, o->names[k]);
         }
         d->st = NULL, d->nst = 0, d->lk = NULL, d->nlk = 0;
         d->enter = d->leave = d->action = d->result = -1;
         kset_take(b, d->key);
-        if (d->tuid && d->kind == CK_ACTION) strmap_put(&b->tool_use, d->tuid, i);
-        else if (d->tuid && d->kind == CK_RESULT) {
-            int k = strmap_get(&b->result_ix, d->tuid);
-            if (k < 0) {
-                GROW(b->result_of, b->nresult, b->capresult);
-                b->result_of[b->nresult].tu = d->tuid;
-                strmap_put(&b->result_ix, d->tuid, k = b->nresult++);
-            }
-            b->result_of[k].item = i;
-        }
+        index_tuid(b, d, i);
     }
     b->ninst = b->capinst = prev->ninst;
     b->inst = xmalloc(((size_t)b->ninst + 1) * sizeof *b->inst);
@@ -4438,23 +4127,23 @@ static void restore(Build *b, const CtxAgent *prev) {
         CtxCall *d = &a->calls[c];
         memset(d, 0, sizeof *d);
         d->t = o->t, d->base = o->base, d->keep = o->keep, d->comp = o->comp;
-        d->id = RE(o->id), d->query = RE(o->query);
+        d->id = L_opt(b, o->id), d->query = L_opt(b, o->query);
         d->nshape = o->nshape;
         d->shape = mem_copy(o->shape, (size_t)o->nshape * sizeof *o->shape);
         b->shapes = xrealloc(b->shapes, (size_t)(b->nshapes + 1) * sizeof *b->shapes);
         b->shapes[b->nshapes++] = d->shape; /* freed once the calls have their copies */
         CallB *cb = &b->cb[c];
-        cb->sh = RE(ld->csh[c]), cb->pmodel = RE(ld->cpm[c]), cb->kept = ld->ckept[c];
+        const struct LCall *lc = &ld->calls[c];
+        cb->sh = L_opt(b, lc->sh), cb->pmodel = L_opt(b, lc->pm), cb->kept = lc->kept;
         /* its messages: its base's first kept, what lay between them and the public tail, the tail */
         const CallB *bb = o->base >= 0 ? &b->cb[o->base] : NULL;
         int kept = bb ? cb->kept : 0;
-        cb->ninst = kept + ld->ncextra[c] + o->ntail;
+        cb->ninst = kept + lc->nextra + o->ntail;
         cb->inst = xmalloc(((size_t)cb->ninst + 1) * sizeof *cb->inst);
         if (kept) memcpy(cb->inst, bb->inst, (size_t)kept * sizeof(int));
-        if (ld->ncextra[c]) memcpy(cb->inst + kept, ld->cextra[c], (size_t)ld->ncextra[c] * sizeof(int));
-        if (o->ntail) memcpy(cb->inst + kept + ld->ncextra[c], o->tail, (size_t)o->ntail * sizeof(int));
+        if (lc->nextra) memcpy(cb->inst + kept, lc->extra, (size_t)lc->nextra * sizeof(int));
+        if (o->ntail) memcpy(cb->inst + kept + lc->nextra, o->tail, (size_t)o->ntail * sizeof(int));
     }
-#undef RE
     a->missing = prev->missing, a->found_elsewhere = prev->found_elsewhere, a->broken = prev->broken;
     /* the responses before the window: metadata only, first */
     Store *own = &b->own;
@@ -4540,23 +4229,16 @@ static void save_loader(Build *b, const char *path) {
     free(ld->keys);
     ld->keys = mem_copy(b->keys, (size_t)b->nkeys * sizeof *b->keys);
     ld->nkeys = b->nkeys;
-    strv_free(ld->csh, ld->ncalls), strv_free(ld->cpm, ld->ncalls);
-    for (int i = 0; i < ld->ncalls; i++) free(ld->cextra[i]);
-    free(ld->ckept), free(ld->cextra), free(ld->ncextra);
+    for (int i = 0; i < ld->ncalls; i++) free(ld->calls[i].sh), free(ld->calls[i].pm), free(ld->calls[i].extra);
     ld->ncalls = a->ncalls;
-    ld->csh = xmalloc(((size_t)a->ncalls + 1) * sizeof *ld->csh);
-    ld->cpm = xmalloc(((size_t)a->ncalls + 1) * sizeof *ld->cpm);
-    ld->ckept = xmalloc(((size_t)a->ncalls + 1) * sizeof *ld->ckept);
-    ld->cextra = xmalloc(((size_t)a->ncalls + 1) * sizeof *ld->cextra);
-    ld->ncextra = xmalloc(((size_t)a->ncalls + 1) * sizeof *ld->ncextra);
+    ld->calls = xrealloc(ld->calls, ((size_t)a->ncalls + 1) * sizeof *ld->calls);
     for (int c = 0; c < a->ncalls; c++) {
         CallB *cb = &b->cb[c];
         CtxCall *C = &a->calls[c];
-        ld->csh[c] = dup_or_null(cb->sh), ld->cpm[c] = dup_or_null(cb->pmodel), ld->ckept[c] = cb->kept;
         int from = C->base >= 0 ? (C->keep < cb->ninst ? C->keep : cb->ninst) : 0, kept = C->base >= 0 ? cb->kept : 0;
         if (from < kept) from = kept;
-        ld->ncextra[c] = from - kept;
-        ld->cextra[c] = mem_copy(cb->inst + kept, (size_t)(from - kept) * sizeof(int));
+        ld->calls[c] = (struct LCall){dup_or_null(cb->sh), dup_or_null(cb->pmodel), cb->kept,
+                                      mem_copy(cb->inst + kept, (size_t)(from - kept) * sizeof(int)), from - kept};
     }
     /* the window: from just after the last response before the last request */
     Recs *R = &b->own.recs;
@@ -4613,9 +4295,7 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
     t[np++] = now_wall();
     FILE *probe = fopen(path, "r");
     if (!probe) {
-        char m[512];
-        snprintf(m, sizeof m, "%s: cannot read", path);
-        *err = xstrdup(m);
+        *err = xasprintf("%s: cannot read", path);
         return NULL;
     }
     fclose(probe);
@@ -4626,10 +4306,7 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
     a->root = xstrdup(root ? root : "");
     b->env.root = a->root;
     b->env.home = expanduser("~");
-    {
-        const char *cfg = getenv("CLAUDE_CONFIG_DIR");
-        b->env.config = cfg ? xstrdup(cfg) : expanduser("~/.claude");
-    }
+    b->env.config = config_dir();
     b->own.path = xstrdup(path);
     char *pd, *main_path;
     int is_sub;
@@ -4640,11 +4317,11 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
      * the transcripts it maps aren't resident beside the own file's records */
     Changes ch = {0};
     int own_file = -1, *session = xcalloc((size_t)b->nfiles + 1, sizeof *session), nsession = 0;
-    char *sub_prefix = xmalloc(strlen(pd) + strlen(a->session) + 16);
-    sprintf(sub_prefix, "%s/%s/subagents/", pd, a->session);
+    char *subs = subagents_dir(pd, a->session);
+    size_t nsub = strlen(subs);
     for (int i = 0; i < b->nfiles; i++) {
         if (!strcmp(b->files[i], path)) own_file = i;
-        if (!strcmp(b->files[i], main_path) || !strncmp(b->files[i], sub_prefix, strlen(sub_prefix)))
+        if (!strcmp(b->files[i], main_path) || (!strncmp(b->files[i], subs, nsub) && b->files[i][nsub] == '/'))
             session[nsession++] = i;
     }
     if (own_file < 0) { /* a transcript outside its project dir's listing */
@@ -4674,33 +4351,25 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
         b->ld->last_req = -1;
         off_t whole = 0;
         int tail_json = 0;
-        read_records_at(path, &b->own.recs, cancel, &whole, &tail_json);
+        read_records(path, &b->own.recs, cancel, &whole, &tail_json);
         b->new_off = whole, b->new_abs = b->own.recs.n, b->tail_json = tail_json;
         struct stat st;
         if (!stat(path, &st)) b->dev = st.st_dev, b->ino = st.st_ino;
     }
     Loader *ld = b->ld;
     if (!b->fail) scan_new(b);
-    a->id = is_sub ? xstrndup(base_name(path) + 6, strlen(base_name(path)) - 12) : xstrdup(a->session);
+    a->id = is_sub ? agent_id(base_name(path)) : xstrdup(a->session);
     a->kind = xstrdup(is_sub ? "subagent" : "main");
     if (is_sub) {
-        char *meta = meta_path(path);
-        yyjson_doc *doc = yyjson_read_file(meta, 0, NULL, NULL);
-        yyjson_val *r = yyjson_doc_get_root(doc);
-        const char *type = gets(r, "agentType");
-        a->name = xstrdup(type && *type ? type : "subagent");
-        a->desc = xstrdup(gets(r, "description") ? gets(r, "description") : "");
-        a->tu = gets(r, "toolUseId") ? xstrdup(gets(r, "toolUseId")) : NULL;
-        a->model = gets(r, "model") ? xstrdup(gets(r, "model")) : NULL;
-        yyjson_doc_free(doc);
-        free(meta);
+        read_meta(path, &a->name, &a->desc, &a->tu, &a->model);
+        if (!a->desc) a->desc = xstrdup("");
         a->title = title_scan(&ld->main, main_path);
     } else {
         a->name = xstrdup("main");
         a->title = xstrdup(ld->ai_title ? ld->ai_title : ld->first_prompt ? ld->first_prompt : "");
     }
     t[np++] = now_wall();
-    if (!b->fail && store_build_meta(b, &b->own, 1) < 0 && b->resuming) b->fail = "a response from before the window grew";
+    if (!b->fail && store_build(b, &b->own, 1) < 0 && b->resuming) b->fail = "a response from before the window grew";
     t[np++] = now_wall();
     int has_req = b->resuming; /* a resumable load was an exact one */
     for (int i = 0; i < b->own.recs.n && !has_req; i++) has_req = b->own.recs.r[i].type == T_REQ;
@@ -4717,7 +4386,13 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
     for (int k = 0; k < ch.n; k++) free(ch.v[k].e), free(ch.v[k].seen), free(ch.v[k].seen_file);
     free(ch.v);
     strmap_free(&ch.ix);
-    free(session), free(sub_prefix);
+    free(session), free(subs);
+    for (int i = 0; i < b->nitems; i++) { /* what each call's response made (links_of reads it) */
+        int m = b->items[i].made;
+        if (m < 0 || m >= a->ncalls) continue;
+        a->calls[m].made = xrealloc(a->calls[m].made, (size_t)(a->calls[m].nmade + 1) * sizeof(int));
+        a->calls[m].made[a->calls[m].nmade++] = i;
+    }
     if (!b->fail) links_of(b);
     ld->ok = has_req && !b->tail_json && !b->fail && !(cancel && atomic_load(cancel));
     if (ld->ok) save_loader(b, path); /* before the hand-over frees the calls' instances */
@@ -4730,21 +4405,13 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
         it->len = b->S.len[it->x];
         it->lang = lang_of(it->path);
         if (it->kind == CK_ACTION && it->tool) { /* the inputs a window shows, parsed once */
-            yyjson_doc *doc = yyjson_read_opts(b->S.s[it->x], b->S.len[it->x], PYJ_READ, NULL, NULL);
+            yyjson_doc *doc = parse_text(b, it->x);
             yyjson_val *inp = yyjson_doc_get_root(doc);
-#define INPUT(field, key)                                                                             \
-    do {                                                                                              \
-        yyjson_val *v_ = get(inp, key);                                                               \
-        if (yyjson_is_str(v_)) it->field = pool_str(&b->L, yyjson_get_str(v_), yyjson_get_len(v_));   \
-    } while (0)
-            if (!strcmp(it->tool, "Bash")) {
-                INPUT(cmd, "command");
-                INPUT(desc, "description");
-            } else if (!strcmp(it->tool, "Edit")) {
-                INPUT(old_str, "old_string");
-                INPUT(new_str, "new_string");
-            } else if (!strcmp(it->tool, "Write")) INPUT(content, "content");
-#undef INPUT
+            if (!strcmp(it->tool, "Bash"))
+                it->cmd = L_str(b, inp, "command"), it->desc = L_str(b, inp, "description");
+            else if (!strcmp(it->tool, "Edit"))
+                it->old_str = L_str(b, inp, "old_string"), it->new_str = L_str(b, inp, "new_string");
+            else if (!strcmp(it->tool, "Write")) it->content = L_str(b, inp, "content");
             yyjson_doc_free(doc);
         }
     }
@@ -4784,12 +4451,6 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
     }
     for (int i = 0; i < b->nshapes; i++) free(b->shapes[i]);
     free(b->shapes);
-    for (int i = 0; i < a->nitems; i++) { /* what each call's response made */
-        int m = a->items[i].made;
-        if (m < 0 || m >= a->ncalls) continue;
-        a->calls[m].made = xrealloc(a->calls[m].made, (size_t)(a->calls[m].nmade + 1) * sizeof(int));
-        a->calls[m].made[a->calls[m].nmade++] = i;
-    }
     for (int c = 0; c < a->ncalls; c++)
         if (a->calls[c].t && (!a->t0 || a->calls[c].t < a->t0)) a->t0 = a->calls[c].t;
     derive(a);
@@ -4835,7 +4496,7 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
     }
     free(b->others), free(b->files), free(b->blk), free(b->hc), free(b->inst), free(b->keys), free(b->kitems);
     free(b->result_of), free(b->cb), free(b->kset);
-    pyb_free(&b->buf);
+    buf_free(&b->buf);
     strmap_free(&b->tool_use), strmap_free(&b->result_ix);
     free(b->env.home), free(b->env.config);
     free(pd), free(main_path), free(b->raw);
@@ -4848,6 +4509,13 @@ static CtxAgent *load(const char *root, const char *path, CtxProject *proj, atom
         ctx_free(a);
         return NULL;
     }
+    return a;
+}
+
+CtxAgent *ctx_load(const char *root, const char *path, CtxProject *proj, atomic_int *cancel, char **err) {
+    locale_t prev = c_numeric();
+    CtxAgent *a = load(root, path, proj, cancel, err, NULL, NULL);
+    uselocale(prev);
     return a;
 }
 
@@ -4877,8 +4545,7 @@ void ctx_free(CtxAgent *a) {
         free(C->tail), free(C->shape), free(C->drop), free(C->order), free(C->state), free(C->cum), free(C->made);
     }
     free(a->calls);
-    for (int i = 0; i < a->nstr; i++) free(a->str[i]);
-    free(a->str), free(a->slen);
+    strv_free(a->str, a->nstr), free(a->slen);
     Priv *pv = a->priv;
     if (pv) {
         pool_free(&pv->L, 0);
@@ -4893,14 +4560,14 @@ void ctx_free(CtxAgent *a) {
 /* ---- JSON ---- */
 
 static void jstr(FILE *f, const char *s, size_t n) {
-    PyBuf o = {0};
+    Buf o = {0};
     pyj_str(&o, s ? s : "", s ? n : 0);
     /* the page embeds it in a <script>: no "</" may close it early */
     for (size_t i = 0; i < o.n; i++) {
         if (o.s[i] == '<' && i + 1 < o.n && o.s[i + 1] == '/') fputs("<\\", f);
         else fputc(o.s[i], f);
     }
-    pyb_free(&o);
+    buf_free(&o);
 }
 
 static void js(FILE *f, const char *s) {
@@ -4908,11 +4575,16 @@ static void js(FILE *f, const char *s) {
     else fputs("null", f);
 }
 
+static void jkv(FILE *f, const char *k, const char *s) { /* ,"k":s */
+    fprintf(f, ",\"%s\":", k);
+    js(f, s);
+}
+
 static void jnum(FILE *f, double d) {
-    PyBuf o = {0};
+    Buf o = {0};
     pyj_float(&o, d);
     fwrite(o.s, 1, o.n, f);
-    pyb_free(&o);
+    buf_free(&o);
 }
 
 static void jints(FILE *f, const int *v, int n) {
@@ -4921,15 +4593,11 @@ static void jints(FILE *f, const int *v, int n) {
     fputc(']', f);
 }
 
-static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat);
-
 void ctx_json(FILE *f, const CtxAgent *a, const int *at, int nat) {
+    static const struct { const char *k; size_t off; } PK[] = {
+        {"in", offsetof(CtxPrice, in)}, {"read", offsetof(CtxPrice, read)}, {"w5", offsetof(CtxPrice, w5)},
+        {"w1h", offsetof(CtxPrice, w1h)}, {"out", offsetof(CtxPrice, out)}};
     locale_t prev = c_numeric();
-    json_out(f, a, at, nat);
-    uselocale(prev);
-}
-
-static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat) {
     double t0 = 0, t1 = 0;
     for (int c = 0; c < a->ncalls; c++) {
         double t = a->calls[c].t;
@@ -4942,17 +4610,11 @@ static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat) {
     jnum(f, t0);
     fputs(",\"prices\":{", f);
     for (int i = 0; i < ctx_nprices; i++) {
-        const CtxPrice *p = &ctx_prices[i];
-        fprintf(f, "%s\"%s\":{\"in\":", i ? "," : "", p->model);
-        jnum(f, p->in);
-        fputs(",\"read\":", f);
-        jnum(f, p->read);
-        fputs(",\"w5\":", f);
-        jnum(f, p->w5);
-        fputs(",\"w1h\":", f);
-        jnum(f, p->w1h);
-        fputs(",\"out\":", f);
-        jnum(f, p->out);
+        fprintf(f, "%s\"%s\":", i ? "," : "", ctx_prices[i].model);
+        for (size_t k = 0; k < sizeof PK / sizeof *PK; k++) {
+            fprintf(f, "%c\"%s\":", k ? ',' : '{', PK[k].k);
+            jnum(f, *(const double *)((const char *)&ctx_prices[i] + PK[k].off));
+        }
         fputc('}', f);
     }
     fputs("},\"price_source\":", f);
@@ -4964,30 +4626,19 @@ static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat) {
             a->missing, a->found_elsewhere, a->ncalls, a->broken);
     fputs("\"sessions\":[{\"id\":", f);
     js(f, a->session);
-    fputs(",\"title\":", f);
-    js(f, a->title);
+    jkv(f, "title", a->title);
     fprintf(f, ",\"start\":0,\"end\":%.0f,\"agents\":[{\"kind\":", rint(t1 - t0));
     js(f, a->kind);
-    fputs(",\"name\":", f);
-    js(f, a->name);
-    if (!strcmp(a->kind, "subagent")) {
-        fputs(",\"desc\":", f);
-        js(f, a->desc);
-        fputs(",\"tu\":", f);
-        js(f, a->tu);
-        fputs(",\"model\":", f);
-        js(f, a->model);
-    }
-    fputs(",\"id\":", f);
-    js(f, a->id);
+    jkv(f, "name", a->name);
+    if (!strcmp(a->kind, "subagent")) jkv(f, "desc", a->desc), jkv(f, "tu", a->tu), jkv(f, "model", a->model);
+    jkv(f, "id", a->id);
     fprintf(f, ",\"est\":%s,\"missing\":%d,\"calls\":[", a->est ? "true" : "false", a->missing);
     for (int c = 0; c < a->ncalls; c++) {
         const CtxCall *C = &a->calls[c];
         fputs(c ? ",{\"t\":" : "{\"t\":", f);
         if (C->t) jnum(f, round1(C->t - t0));
         else fputs("null", f);
-        fputs(",\"m\":", f);
-        js(f, C->model);
+        jkv(f, "m", C->model);
         if (C->base >= 0) fprintf(f, ",\"b\":%d", C->base);
         else fputs(",\"b\":null", f);
         fprintf(f, ",\"k\":%d,\"tl\":", C->keep);
@@ -5027,14 +4678,8 @@ static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat) {
         fputs(",\"w\":", f);
         jnum(f, it->w);
         if (it->made >= 0) fprintf(f, ",\"m\":%d", it->made);
-        if (it->kind == CK_ACTION || it->action >= 0) {
-            fputs(",\"tool\":", f);
-            js(f, it->tool);
-        }
-        if (it->path) {
-            fputs(",\"p\":", f);
-            js(f, it->path);
-        }
+        if (it->kind == CK_ACTION || it->action >= 0) jkv(f, "tool", it->tool);
+        if (it->path) jkv(f, "p", it->path);
         if (it->err) fputs(",\"err\":1", f);
         fprintf(f, ",\"x\":%d,\"n\":%d", remap[it->x], it->n);
         if (it->enter >= 0) fprintf(f, ",\"e\":%d", it->enter);
@@ -5097,4 +4742,5 @@ static void json_out(FILE *f, const CtxAgent *a, const int *at, int nat) {
     }
     fputs("]}\n", f);
     free(remap), free(order);
+    uselocale(prev);
 }

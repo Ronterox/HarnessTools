@@ -25,8 +25,8 @@ void cmd_guess(const char *cmd, GuessFn fn, void *ud);
  * the lexer above sees them (quotes, here-documents, $(...) and comments
  * understood; redirects dropped), each its words joined by spaces, without a
  * leading env, VAR=x, sudo, time, timeout N. Bits: CMD_RUN, a segment matching
- * re ran under root (relative to start, where the command began; root NULL: any
- * segment counts); CMD_PIPED, one of those was piped into the next command (a
+ * re ran under root (relative to start, where the command began, itself relative
+ * to root unless absolute; root NULL: any segment counts); CMD_PIPED, one of those was piped into the next command (a
  * single |, or its subshell's) while pipefail was off (`set -o pipefail` /
  * `set -euo pipefail` turn it on, `set +o pipefail` off), so the line's exit
  * status is not its own; CMD_AWAY, a matching segment ran after a cd out of

@@ -146,19 +146,7 @@ bool nv_find(const char *root, char *sock, size_t n) {
 
 /* ---- msgpack: just what one request and its reply need ------------------- */
 
-typedef struct {
-    unsigned char *b;
-    size_t n, cap;
-} Buf;
-
-static void put(Buf *o, const void *p, size_t n) {
-    if (o->n + n > o->cap) {
-        o->cap = (o->n + n) * 2;
-        o->b = xrealloc(o->b, o->cap);
-    }
-    memcpy(o->b + o->n, p, n);
-    o->n += n;
-}
+static void put(Buf *o, const void *p, size_t n) { buf_put(o, p, n); }
 
 static void put_be(Buf *o, unsigned char tag, uint64_t v, int bytes) {
     unsigned char t[9] = {tag};
@@ -348,7 +336,7 @@ static int call(const char *sock, const char *code, const char *path, int line, 
     put_int(&q, line);
     int rc = 1; /* 1 while waiting */
     for (size_t off = 0; off < q.n;) {
-        ssize_t k = send(fd, q.b + off, q.n - off, MSG_NOSIGNAL);
+        ssize_t k = send(fd, q.s + off, q.n - off, MSG_NOSIGNAL);
         if (k <= 0) {
             snprintf(out, n, "%s", k < 0 ? strerror(errno) : "closed");
             rc = NV_E_NVIM;
@@ -356,7 +344,7 @@ static int call(const char *sock, const char *code, const char *path, int line, 
         }
         off += (size_t)k;
     }
-    free(q.b);
+    free(q.s);
     /* The reply, read until it parses whole, by the deadline. */
     unsigned char *b = xmalloc(REPLY_MAX);
     size_t len = 0;

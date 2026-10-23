@@ -9,54 +9,35 @@
 
 #include "util.h"
 
-void pyb_put(PyBuf *b, const char *s, size_t n) {
-    if (b->n + n + 1 > b->cap) {
-        b->cap = (b->n + n + 1) * 2;
-        b->s = xrealloc(b->s, b->cap);
-    }
-    memcpy(b->s + b->n, s, n);
-    b->n += n;
-    b->s[b->n] = 0;
-}
-
-void pyb_puts(PyBuf *b, const char *s) { pyb_put(b, s, strlen(s)); }
-
-void pyb_free(PyBuf *b) {
-    free(b->s);
-    memset(b, 0, sizeof *b);
-}
-
-void pyj_str(PyBuf *b, const char *s, size_t n) {
-    pyb_put(b, "\"", 1);
+void pyj_str(Buf *b, const char *s, size_t n) {
+    buf_put(b, "\"", 1);
     size_t run = 0; /* bytes copied as they are */
     for (size_t i = 0; i < n; i++) {
         unsigned char c = (unsigned char)s[i];
         if (c >= 0x20 && c != '"' && c != '\\') continue;
-        pyb_put(b, s + run, i - run);
+        buf_put(b, s + run, i - run);
         run = i + 1;
         char e[8];
         switch (c) {
-        case '"': pyb_put(b, "\\\"", 2); break;
-        case '\\': pyb_put(b, "\\\\", 2); break;
-        case '\n': pyb_put(b, "\\n", 2); break;
-        case '\r': pyb_put(b, "\\r", 2); break;
-        case '\t': pyb_put(b, "\\t", 2); break;
-        case '\b': pyb_put(b, "\\b", 2); break;
-        case '\f': pyb_put(b, "\\f", 2); break;
+        case '"': buf_put(b, "\\\"", 2); break;
+        case '\\': buf_put(b, "\\\\", 2); break;
+        case '\n': buf_put(b, "\\n", 2); break;
+        case '\r': buf_put(b, "\\r", 2); break;
+        case '\t': buf_put(b, "\\t", 2); break;
+        case '\b': buf_put(b, "\\b", 2); break;
+        case '\f': buf_put(b, "\\f", 2); break;
         default:
             snprintf(e, sizeof e, "\\u%04x", c);
-            pyb_put(b, e, 6);
+            buf_put(b, e, 6);
         }
     }
-    pyb_put(b, s + run, n - run);
-    pyb_put(b, "\"", 1);
+    buf_put(b, s + run, n - run);
+    buf_put(b, "\"", 1);
 }
 
-/* printf and strtod follow the locale's decimal point: numbers are written and
- * read in the "C" one whatever the thread's. */
 static locale_t c_loc;
 static void make_c_loc(void) { c_loc = newlocale(LC_NUMERIC_MASK, "C", (locale_t)0); }
-static locale_t c_numeric(void) {
+locale_t c_numeric(void) {
     static pthread_once_t once = PTHREAD_ONCE_INIT;
     pthread_once(&once, make_c_loc);
     return c_loc ? uselocale(c_loc) : uselocale((locale_t)0);
@@ -69,10 +50,10 @@ static double c_strtod(const char *s) {
     return d;
 }
 
-void pyj_float(PyBuf *b, double d) {
-    if (isnan(d)) { pyb_puts(b, "NaN"); return; }
-    if (isinf(d)) { pyb_puts(b, d < 0 ? "-Infinity" : "Infinity"); return; }
-    if (d == 0) { pyb_puts(b, signbit(d) ? "-0.0" : "0.0"); return; }
+void pyj_float(Buf *b, double d) {
+    if (isnan(d)) { buf_puts(b, "NaN"); return; }
+    if (isinf(d)) { buf_puts(b, d < 0 ? "-Infinity" : "Infinity"); return; }
+    if (d == 0) { buf_puts(b, signbit(d) ? "-0.0" : "0.0"); return; }
     char e[40];
     locale_t prev = c_numeric();
     for (int p = 1; p <= 17; p++) { /* the shortest digits that read back as d */
@@ -107,7 +88,7 @@ void pyj_float(PyBuf *b, double d) {
                 o[k++] = digits[i];
             }
         }
-        pyb_put(b, o, (size_t)k);
+        buf_put(b, o, (size_t)k);
     } else {
         o[k++] = digits[0];
         if (nd > 1) {
@@ -115,13 +96,13 @@ void pyj_float(PyBuf *b, double d) {
             for (int i = 1; i < nd; i++) o[k++] = digits[i];
         }
         k += snprintf(o + k, sizeof o - (size_t)k, "e%c%02d", decpt - 1 < 0 ? '-' : '+', abs(decpt - 1));
-        pyb_put(b, o, (size_t)k);
+        buf_put(b, o, (size_t)k);
     }
 }
 
-static void put_indent(PyBuf *b, int level) {
-    pyb_put(b, "\n", 1);
-    for (int i = 0; i < level; i++) pyb_put(b, " ", 1);
+static void put_indent(Buf *b, int level) {
+    buf_put(b, "\n", 1);
+    for (int i = 0; i < level; i++) buf_put(b, " ", 1);
 }
 
 typedef struct {
@@ -135,19 +116,19 @@ static int cmp_key(const void *a, const void *b) {
     return c ? c : (nx > ny) - (nx < ny);
 }
 
-static int dumps(PyBuf *b, yyjson_val *v, int flags, int level) {
+static int dumps(Buf *b, yyjson_val *v, int flags, int level) {
     char num[32];
     if (level > PYJ_MAX_DEPTH) return -1;
     const char *item_sep = flags & (PYJ_COMPACT | PYJ_INDENT1) ? "," : ", ";
     const char *key_sep = flags & PYJ_COMPACT ? ":" : ": ";
     switch (yyjson_get_type(v)) {
-    case YYJSON_TYPE_NULL: pyb_puts(b, "null"); return 0;
-    case YYJSON_TYPE_BOOL: pyb_puts(b, yyjson_get_bool(v) ? "true" : "false"); return 0;
+    case YYJSON_TYPE_NULL: buf_puts(b, "null"); return 0;
+    case YYJSON_TYPE_BOOL: buf_puts(b, yyjson_get_bool(v) ? "true" : "false"); return 0;
     case YYJSON_TYPE_STR: pyj_str(b, yyjson_get_str(v), yyjson_get_len(v)); return 0;
     case YYJSON_TYPE_RAW: { /* a number too big for 64 bits: an int stays exact, a float is +-inf */
         const char *r = yyjson_get_raw(v);
         if (strpbrk(r, ".eE")) pyj_float(b, c_strtod(r));
-        else pyb_puts(b, r);
+        else buf_puts(b, r);
         return 0;
     }
     case YYJSON_TYPE_NUM:
@@ -156,52 +137,52 @@ static int dumps(PyBuf *b, yyjson_val *v, int flags, int level) {
         case YYJSON_SUBTYPE_SINT: snprintf(num, sizeof num, "%lld", (long long)yyjson_get_sint(v)); break;
         default: pyj_float(b, yyjson_get_real(v)); return 0;
         }
-        pyb_puts(b, num);
+        buf_puts(b, num);
         return 0;
     case YYJSON_TYPE_ARR: {
         size_t n = yyjson_arr_size(v);
-        if (!n) { pyb_puts(b, "[]"); return 0; }
-        pyb_put(b, "[", 1);
+        if (!n) { buf_puts(b, "[]"); return 0; }
+        buf_put(b, "[", 1);
         size_t i, m;
         yyjson_val *x;
         yyjson_arr_foreach(v, i, m, x) {
-            if (i) pyb_puts(b, item_sep);
+            if (i) buf_puts(b, item_sep);
             if (flags & PYJ_INDENT1) put_indent(b, level + 1);
             if (dumps(b, x, flags, level + 1)) return -1;
         }
         if (flags & PYJ_INDENT1) put_indent(b, level);
-        pyb_put(b, "]", 1);
+        buf_put(b, "]", 1);
         return 0;
     }
     case YYJSON_TYPE_OBJ: {
         size_t n = yyjson_obj_size(v);
-        if (!n) { pyb_puts(b, "{}"); return 0; }
+        if (!n) { buf_puts(b, "{}"); return 0; }
         Pair stack[16], *p = n <= 16 ? stack : xmalloc(n * sizeof *p);
         size_t i, m;
         yyjson_val *k, *x;
         yyjson_obj_foreach(v, i, m, k, x) p[i].k = k, p[i].v = x;
         if (flags & PYJ_SORT) qsort(p, n, sizeof *p, cmp_key); /* keys are unique: qsort's instability is moot */
-        pyb_put(b, "{", 1);
-        for (i = 0; i < n; i++) {
-            if (i) pyb_puts(b, item_sep);
+        int rc = 0;
+        buf_put(b, "{", 1);
+        for (i = 0; i < n && !rc; i++) {
+            if (i) buf_puts(b, item_sep);
             if (flags & PYJ_INDENT1) put_indent(b, level + 1);
             pyj_str(b, yyjson_get_str(p[i].k), yyjson_get_len(p[i].k));
-            pyb_puts(b, key_sep);
-            if (dumps(b, p[i].v, flags, level + 1)) {
-                if (p != stack) free(p);
-                return -1;
-            }
+            buf_puts(b, key_sep);
+            rc = dumps(b, p[i].v, flags, level + 1);
         }
-        if (flags & PYJ_INDENT1) put_indent(b, level);
-        pyb_put(b, "}", 1);
+        if (!rc) {
+            if (flags & PYJ_INDENT1) put_indent(b, level);
+            buf_put(b, "}", 1);
+        }
         if (p != stack) free(p);
-        return 0;
+        return rc;
     }
-    default: pyb_puts(b, "null"); return 0;
+    default: buf_puts(b, "null"); return 0;
     }
 }
 
-int pyj_dumps(PyBuf *b, yyjson_val *v, int flags) { return dumps(b, v, flags, 0); }
+int pyj_dumps(Buf *b, yyjson_val *v, int flags) { return dumps(b, v, flags, 0); }
 
 /* ---- sha256 ---- */
 

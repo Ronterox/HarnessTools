@@ -18,15 +18,6 @@
 
 #include "util.h"
 
-#define PUSH(a, n, cap, v)                                                   \
-    do {                                                                     \
-        if ((n) == (cap)) {                                                  \
-            (cap) = (cap) ? (cap) * 2 : 8;                                   \
-            (a) = xrealloc((a), (size_t)(cap) * sizeof *(a));                \
-        }                                                                    \
-        (a)[(n)++] = (v);                                                    \
-    } while (0)
-
 #define DESC(a, b) (((b) > (a)) - ((b) < (a))) /* larger first */
 
 static double jround(double x) { return floor(x + 0.5); } /* Math.round */
@@ -73,15 +64,6 @@ typedef struct {
     int *of_an;        /* snapshot node -> tmp node */
 } Build;
 
-static char *join(const char *a, const char *b) {
-    size_t na = strlen(a), nb = strlen(b);
-    char *r = xmalloc(na + nb + 2);
-    memcpy(r, a, na);
-    r[na] = '/';
-    memcpy(r + na + 1, b, nb + 1);
-    return r;
-}
-
 static int cmp_value(const void *pa, const void *pb, void *ctx) {
     const Tmp *t = ctx;
     return DESC(t[*(const int *)pa].value, t[*(const int *)pb].value);
@@ -98,12 +80,12 @@ static int tmp_build(Build *b, int sn, int parent, const char *ppath) {
     while (s->nodes[an].kind == AN_DIR && *ppath && s->nodes[an].nkids == 1 &&
            s->nodes[s->nodes[an].kids[0]].kind == AN_DIR) {
         an = s->nodes[an].kids[0];
-        char *nm = join(name, s->nodes[an].name);
+        char *nm = xasprintf("%s/%s", name, s->nodes[an].name);
         free(name);
         name = nm;
         b->of_an[an] = b->nt;
     }
-    Tmp z = {.an = an, .parent = parent, .name = name, .id = *ppath ? join(ppath, name) : xstrdup(name)};
+    Tmp z = {.an = an, .parent = parent, .name = name, .id = *ppath ? xasprintf("%s/%s", ppath, name) : xstrdup(name)};
     PUSH(b->t, b->nt, b->ct, z);
     int me = b->nt - 1;
     const AnNode *n = &s->nodes[an];
@@ -135,24 +117,21 @@ static int tmp_build(Build *b, int sn, int parent, const char *ppath) {
 
 /* ---- sorts ---- */
 
-typedef struct {
-    const long long *tms; /* turn -> prompt time in ms, as the page's ISO strings compare */
-} Ctx;
-
+/* ctx: tms, turn -> prompt time in ms, as the page's ISO strings compare */
 static int cmp_turn_time(const void *pa, const void *pb, void *ctx) {
-    const long long *tms = ((const Ctx *)ctx)->tms;
+    const long long *tms = ctx;
     long long a = tms[*(const int *)pa], b = tms[*(const int *)pb];
     return (a > b) - (a < b);
 }
 
 static int cmp_rows_newest(const void *pa, const void *pb, void *ctx) {
-    const long long *tms = ((const Ctx *)ctx)->tms;
+    const long long *tms = ctx;
     long long a = tms[((const StNodeTurn *)pa)->turn], b = tms[((const StNodeTurn *)pb)->turn];
     return (b > a) - (b < a);
 }
 
 static int cmp_blame(const void *pa, const void *pb, void *ctx) {
-    const long long *tms = ((const Ctx *)ctx)->tms;
+    const long long *tms = ctx;
     int ta = ((const StBlame *)pa)->turn, tb = ((const StBlame *)pb)->turn;
     if (ta < 0 || tb < 0) return (ta < 0) - (tb < 0);
     return DESC(tms[ta], tms[tb]);
@@ -175,11 +154,6 @@ static int cmp_who(const void *pa, const void *pb, void *ctx) {
     return DESC(a->lines, b->lines);
 }
 
-static int cmp_lines_desc(const void *pa, const void *pb, void *ctx) {
-    (void)ctx;
-    return DESC(((const StWho *)pa)->lines, ((const StWho *)pb)->lines);
-}
-
 static int cmp_partner(const void *pa, const void *pb, void *ctx) {
     (void)ctx;
     const StPartner *a = pa, *b = pb;
@@ -190,11 +164,6 @@ static int cmp_touch(const void *pa, const void *pb, void *ctx) {
     (void)ctx;
     const StTouch *a = pa, *b = pb;
     return DESC(a->add + a->del, b->add + b->del);
-}
-
-static int cmp_int(const void *pa, const void *pb) {
-    int a = *(const int *)pa, b = *(const int *)pb;
-    return (a > b) - (a < b);
 }
 
 typedef struct { long long age; int n; } AgeRun; /* n lines of this age */
@@ -227,14 +196,14 @@ typedef struct {       /* first-seen lookups: key -> position, valid while stamp
 } Seen;
 
 static Seen seen_new(int n) {
-    return (Seen){xcalloc((size_t)(n > 0 ? n : 1), sizeof(int)), xcalloc((size_t)(n > 0 ? n : 1), sizeof(int)), 0};
+    return (Seen){xcalloc((size_t)n, sizeof(int)), xcalloc((size_t)n, sizeof(int)), 0};
 }
 static void seen_free(Seen *s) { free(s->stamp), free(s->pos); }
-/* key's position, or -1 the first time (then it's at *next, which advances) */
-static int seen(Seen *s, int key, int *next) {
+/* key's position, or -1 the first time (then it's at next) */
+static int seen(Seen *s, int key, int next) {
     if (s->stamp[key] == s->gen) return s->pos[key];
     s->stamp[key] = s->gen;
-    s->pos[key] = (*next)++;
+    s->pos[key] = next;
     return -1;
 }
 
@@ -247,9 +216,9 @@ static StRead *reads_of(const AnSnapshot *s, const int *cids, int n, const StrMa
     for (int i = 0; i < n; i++) {
         const AnChange *c = &s->changes[cids[i]];
         for (int k = 0; k < c->ntop; k++) {
-            int p = c->top[k].path, at = nr;
+            int p = c->top[k].path;
             if (p < 0 || p >= s->npaths) continue;
-            int j = seen(ps, p, &at);
+            int j = seen(ps, p, nr);
             if (j < 0) PUSH(r, nr, cr, ((StRead){p, c->top[k].n, -1}));
             else if (c->top[k].n > r[j].n) r[j].n = c->top[k].n;
         }
@@ -270,14 +239,20 @@ static bool same_note(int a, int b) { return (a >= 0 ? a : -1 - a) == (b >= 0 ? 
 
 /* Lines by agent, in first-seen order (the owner's tie-break); actor -1 at key 0. */
 static void add_who(StNode *d, int *cap, Seen *ws, int actor, int lines) {
-    int at = d->nwho, j = seen(ws, actor + 1, &at);
-    if (j < 0) { PUSH(d->who, d->nwho, *cap, ((StWho){actor, 0})); j = at - 1; }
+    int j = seen(ws, actor + 1, d->nwho);
+    if (j < 0) { PUSH(d->who, d->nwho, *cap, ((StWho){actor, 0})); j = d->nwho - 1; }
     d->who[j].lines += lines;
 }
 
 static int file_of(const StMetrics *m, int i) {
     while (i >= 0 && m->nodes[i].kind != AN_FILE) i = m->nodes[i].parent;
     return i;
+}
+
+static bool is_anc(const StMetrics *m, int a, int v) { /* a is above v */
+    while ((v = m->nodes[v].parent) >= 0)
+        if (v == a) return true;
+    return false;
 }
 
 /* The blame runs of f over its lines a..b (1-based), clipped, into out
@@ -300,23 +275,16 @@ static int node_runs(const StMetrics *m, int i, AnRun *out) {
     return d->kind == AN_FILE ? clip_runs(f, 1, INT_MAX, out) : clip_runs(f, d->a > 1 ? d->a : 1, d->b, out);
 }
 
-static int cmp_cid_key(const void *k, const void *e) {
-    int a = *(const int *)k, b = *(const int *)e;
-    return (a > b) - (a < b);
-}
-
 StMetrics *st_build(const AnSnapshot *s) {
     StMetrics *m = xcalloc(1, sizeof *m);
     m->snap = s;
     m->nturns = s->nturns;
-    m->turns = xcalloc((size_t)(s->nturns ? s->nturns : 1), sizeof *m->turns);
-    m->order = xcalloc((size_t)(s->nturns ? s->nturns : 1), sizeof *m->order);
-    long long *tms = xcalloc((size_t)(s->nturns ? s->nturns : 1), sizeof *tms);
+    m->turns = xcalloc((size_t)s->nturns, sizeof *m->turns);
+    m->order = xcalloc((size_t)s->nturns, sizeof *m->order);
+    long long *tms = xcalloc((size_t)s->nturns, sizeof *tms);
     for (int t = 0; t < s->nturns; t++) tms[t] = llround(s->turns[t].ts * 1e6) / 1000, m->order[t] = t;
-    Ctx ctx = {tms};
-    ssort(m->order, (size_t)s->nturns, sizeof *m->order, cmp_turn_time, &ctx);
-    int *rank = xcalloc((size_t)(s->nturns ? s->nturns : 1), sizeof *rank);
-    for (int r = 0; r < s->nturns; r++) rank[m->order[r]] = r, m->turns[m->order[r]].rank = r;
+    ssort(m->order, (size_t)s->nturns, sizeof *m->order, cmp_turn_time, tms);
+    for (int r = 0; r < s->nturns; r++) m->turns[m->order[r]].rank = r;
     int maxactor = -1;
     for (int c = 0; c < s->nchanges; c++) {
         long long e = s->changes[c].epoch;
@@ -330,7 +298,6 @@ StMetrics *st_build(const AnSnapshot *s) {
     m->bar_big = 1;
     if (!s->nnodes) {
         free(tms);
-        free(rank);
         return m;
     }
 
@@ -361,7 +328,7 @@ StMetrics *st_build(const AnSnapshot *s) {
         d->parent = t->parent < 0 ? -1 : fin[t->parent];
         d->depth = d->parent < 0 ? 0 : m->nodes[d->parent].depth + 1;
         d->nkids = t->nkids;
-        d->kids = xmalloc((size_t)(t->nkids ? t->nkids : 1) * sizeof *d->kids);
+        d->kids = xmalloc((size_t)t->nkids * sizeof *d->kids);
         for (int k = 0; k < t->nkids; k++) d->kids[k] = fin[t->kids[k]];
         d->own = t->own, d->value = t->value;
         d->lines = t->lines, d->cx = t->cx, d->nest = an->kind >= AN_FUNC ? an->depth : 0;
@@ -388,10 +355,8 @@ StMetrics *st_build(const AnSnapshot *s) {
     int nt = s->nturns, nc = s->nchanges;
     Seen ts = seen_new(nt + 1), cs = seen_new(nc), ps = seen_new(s->npaths), ws = seen_new(maxactor + 2);
     Seen rws = seen_new(nt * (ST_REWORK_TURNS + 1)), ns = seen_new(nn);
-    int *first = xcalloc((size_t)(nt ? nt : 1), sizeof *first);
     int *cids = NULL, ncids = 0, ccids = 0;
-    long *acc = xcalloc((size_t)(nc ? nc : 1), sizeof *acc); /* lines a node changed per change */
-    double *share = NULL;
+    long *acc = xcalloc((size_t)nc, sizeof *acc); /* lines a node changed per change */
     AnRun *runs = xmalloc((size_t)maxblame * sizeof *runs);
     Scratch *sc = xcalloc((size_t)nn, sizeof *sc);
 
@@ -405,14 +370,13 @@ StMetrics *st_build(const AnSnapshot *s) {
         for (int k = 0; k < t->nch; k++) {
             const AnCh *e = &t->ch[k];
             const AnChange *c = &s->changes[e->cid];
-            int tu = c->turn, at = d->nrows, row = seen(&ts, tu, &at);
-            if (row < 0) {
+            int tu = c->turn, row = seen(&ts, tu, d->nrows);
+            if (row < 0) { /* ctx_first runs alongside rows */
                 PUSH(d->rows, d->nrows, crows, ((StNodeTurn){.turn = tu}));
                 PUSH(ctx_first, nctx, cctx, e->cid);
-                first[tu] = nctx - 1;
                 row = d->nrows - 1;
-            } else if (e->cid < ctx_first[first[tu]]) {
-                ctx_first[first[tu]] = e->cid;
+            } else if (e->cid < ctx_first[row]) {
+                ctx_first[row] = e->cid;
             }
             StNodeTurn *r = &d->rows[row];
             r->changes++, r->add += e->add, r->del += e->del;
@@ -423,17 +387,11 @@ StMetrics *st_build(const AnSnapshot *s) {
             if (notes && has_note(s, c->comment)) {
                 int j = 0;
                 while (j < r->nnotes && !same_note(r->notes[j], c->comment)) j++;
-                if (j == r->nnotes) {
-                    r->notes = xrealloc(r->notes, (size_t)(r->nnotes + 1) * sizeof *r->notes);
-                    r->notes[r->nnotes++] = c->comment;
-                }
+                if (j == r->nnotes) PUSH(r->notes, r->nnotes, r->cnotes, c->comment);
             }
             int j = 0;
             while (j < r->ntools && strcmp(r->tools[j], c->tool)) j++;
-            if (j == r->ntools) {
-                r->tools = xrealloc(r->tools, (size_t)(r->ntools + 1) * sizeof *r->tools);
-                r->tools[r->ntools++] = c->tool;
-            }
+            if (j == r->ntools) PUSH(r->tools, r->ntools, r->ctools, c->tool);
         }
         d->edits = t->nch;
         d->turns = d->nrows;
@@ -444,7 +402,7 @@ StMetrics *st_build(const AnSnapshot *s) {
             d->flags.interrupted += tu->intr;
             if (tu->corr && d->ncorr_turns < 2) d->corr_turns[d->ncorr_turns++] = d->rows[k].turn;
         }
-        ssort(d->rows, (size_t)d->nrows, sizeof *d->rows, cmp_rows_newest, &ctx);
+        ssort(d->rows, (size_t)d->nrows, sizeof *d->rows, cmp_rows_newest, tms);
 
         /* rework: lines written, then rewritten within ST_REWORK_TURNS turns */
         StRwPair *pairs = NULL;
@@ -453,11 +411,11 @@ StMetrics *st_build(const AnSnapshot *s) {
         for (int k = 0; k < t->nrw; k++) {
             const AnRw *w = &t->rw[k];
             if (w->origin < 0 || w->cid < 0) continue;
-            int to = s->changes[w->origin].turn, tc = s->changes[w->cid].turn, gap = rank[tc] - rank[to];
+            int to = s->changes[w->origin].turn, tc = s->changes[w->cid].turn, gap = m->turns[tc].rank - m->turns[to].rank;
             if (gap < 0 || gap > ST_REWORK_TURNS) continue;
             d->rework += w->n;
             if (!gap) d->rework_same += w->n;
-            int at = np, j = seen(&rws, to * (ST_REWORK_TURNS + 1) + gap, &at);
+            int j = seen(&rws, to * (ST_REWORK_TURNS + 1) + gap, np);
             if (j < 0) { PUSH(pairs, np, cp, ((StRwPair){to, tc, 0})); j = np - 1; }
             pairs[j].n += w->n;
         }
@@ -485,34 +443,29 @@ StMetrics *st_build(const AnSnapshot *s) {
         ncids = 0;
         cs.gen++;
         for (int k = 0; k < t->nch; k++) {
-            int c = t->ch[k].cid, at = ncids;
-            if (seen(&cs, c, &at) < 0) { PUSH(cids, ncids, ccids, c); acc[c] = 0; }
+            int c = t->ch[k].cid;
+            if (seen(&cs, c, ncids) < 0) { PUSH(cids, ncids, ccids, c); acc[c] = 0; }
             acc[c] += t->ch[k].add + t->ch[k].del;
         }
         d->ncids = ncids;
-        share = xrealloc(share, (size_t)(ncids ? ncids : 1) * sizeof *share);
         const Scratch *fx = d->level == ST_LV_DEF ? &sc[d->file] : NULL;
+        double sum[4] = {0};
         for (int k = 0; k < ncids; k++) {
-            share[k] = 1;
+            double share = 1;
             const int *all = fx && fx->ncid_lines ? bsearch(&cids[k], fx->cid_lines, (size_t)fx->ncid_lines, 2 * sizeof(int),
-                                                            cmp_cid_key) : NULL;
-            if (all && all[1]) share[k] = acc[cids[k]] < all[1] ? (double)acc[cids[k]] / all[1] : 1;
+                                                            cmp_int) : NULL;
+            if (all && all[1]) share = acc[cids[k]] < all[1] ? (double)acc[cids[k]] / all[1] : 1;
+            const AnChange *c = &s->changes[cids[k]];
+            for (int q = 0; q < 4; q++) sum[q] += (q < 3 ? (double)c->tok[q] : (double)c->secs) * share;
         }
-        for (int q = 0; q < 4; q++) {
-            double sum = 0;
-            for (int k = 0; k < ncids; k++) {
-                const AnChange *c = &s->changes[cids[k]];
-                sum += (q < 3 ? (double)c->tok[q] : (double)c->secs) * share[k];
-            }
-            d->tok[q] = (long long)jround(sum);
-        }
+        for (int q = 0; q < 4; q++) d->tok[q] = (long long)jround(sum[q]);
         d->per_turn = d->turns ? (double)d->tok[3] / d->turns : 0;
         if (d->kind == AN_FILE && ncids) { /* its defs come later (breadth-first) */
             Scratch *x = &sc[i];
             x->cid_lines = xmalloc((size_t)ncids * 2 * sizeof(int));
             for (int k = 0; k < ncids; k++) x->cid_lines[2 * k] = cids[k], x->cid_lines[2 * k + 1] = (int)acc[cids[k]];
             x->ncid_lines = ncids;
-            qsort(x->cid_lines, (size_t)ncids, 2 * sizeof(int), cmp_cid_key);
+            qsort(x->cid_lines, (size_t)ncids, 2 * sizeof(int), cmp_int);
         }
 
         /* trend: today's point when it differs from the last change's */
@@ -556,15 +509,15 @@ StMetrics *st_build(const AnSnapshot *s) {
             int nr = node_runs(m, i, runs), cb = 0;
             ts.gen++;
             for (int k = 0; k < nr; k++) {
-                int c = runs[k].origin, tu = c >= 0 ? s->changes[c].turn : -1, at = d->nblame;
+                int c = runs[k].origin, tu = c >= 0 ? s->changes[c].turn : -1;
                 add_who(d, &cw, &ws, c >= 0 ? s->changes[c].actor : -1, runs[k].n);
                 if (c >= 0) PUSH(x->ages, x->nages, ca, ((AgeRun){m->now - s->changes[c].epoch, runs[k].n}));
                 else x->unknown += runs[k].n;
-                int j = seen(&ts, tu < 0 ? nt : tu, &at);
+                int j = seen(&ts, tu < 0 ? nt : tu, d->nblame);
                 if (j < 0) { PUSH(d->blame, d->nblame, cb, ((StBlame){tu, 0})); j = d->nblame - 1; }
                 d->blame[j].n += runs[k].n;
             }
-            ssort(d->blame, (size_t)d->nblame, sizeof *d->blame, cmp_blame, &ctx);
+            ssort(d->blame, (size_t)d->nblame, sizeof *d->blame, cmp_blame, tms);
         }
         x->nages = age_runs_merge(x->ages, x->nages);
         d->owner = -1;
@@ -585,22 +538,13 @@ StMetrics *st_build(const AnSnapshot *s) {
             }
         if (d->kind >= AN_FUNC) free(x->ages), x->ages = NULL, x->nages = 0;
     }
-    /* owner colours: agents by lines in the whole tree */
-    {
-        StWho *w = xmalloc((size_t)(m->nodes[0].nwho ? m->nodes[0].nwho : 1) * sizeof *w);
-        int n = 0;
-        for (int j = 0; j < m->nodes[0].nwho; j++)
-            if (m->nodes[0].who[j].actor >= 0) w[n++] = m->nodes[0].who[j];
-        ssort(w, (size_t)n, sizeof *w, cmp_lines_desc, NULL);
-        m->actors = xmalloc((size_t)(n ? n : 1) * sizeof *m->actors);
-        for (int j = 0; j < n; j++) m->actors[j] = w[j].actor;
-        m->nactors = n;
-        free(w);
-    }
-    for (int i = 0; i < nn; i++) {
-        ssort(m->nodes[i].who, (size_t)m->nodes[i].nwho, sizeof(StWho), cmp_who, NULL);
-        m->nodes[i].owner_slot = st_actor_color(m, m->nodes[i].owner);
-    }
+    for (int i = 0; i < nn; i++) ssort(m->nodes[i].who, (size_t)m->nodes[i].nwho, sizeof(StWho), cmp_who, NULL);
+    /* owner colours: agents by lines in the whole tree (the root's, known ones first) */
+    const StNode *root = &m->nodes[0];
+    m->actors = xmalloc((size_t)root->nwho * sizeof *m->actors);
+    for (; m->nactors < root->nwho && root->who[m->nactors].actor >= 0; m->nactors++)
+        m->actors[m->nactors] = root->who[m->nactors].actor;
+    for (int i = 0; i < nn; i++) m->nodes[i].owner_slot = st_actor_color(m, m->nodes[i].owner);
 
     /* METRIC, MAX per level, slow, heat */
     for (int i = 0; i < nn; i++) {
@@ -647,19 +591,6 @@ StMetrics *st_build(const AnSnapshot *s) {
     /* Coupling: same-level nodes changed in 2+ of the same turns, counted
      * through each turn's list of nodes (an inverted index), not pairwise. */
     {
-        int *tin = xmalloc((size_t)nn * sizeof *tin), *tout = xmalloc((size_t)nn * sizeof *tout);
-        int *stack = xmalloc((size_t)nn * 2 * sizeof *stack), sp = 0, clock = 0;
-        stack[sp++] = 0;
-        while (sp) { /* pre/post order: ancestors without walking up */
-            int v = stack[--sp];
-            if (v < 0) {
-                tout[-1 - v] = clock++;
-                continue;
-            }
-            tin[v] = clock++;
-            stack[sp++] = -1 - v;
-            for (int k = m->nodes[v].nkids - 1; k >= 0; k--) stack[sp++] = m->nodes[v].kids[k];
-        }
         int *off[3] = {0}, *at[3] = {0}, *list[3] = {0}; /* per level: turn -> nodes, breadth-first */
         for (int lv = ST_LV_FILE; lv <= ST_LV_DEF; lv++) {
             off[lv] = xcalloc((size_t)nt + 1, sizeof(int));
@@ -671,7 +602,7 @@ StMetrics *st_build(const AnSnapshot *s) {
         for (int lv = ST_LV_FILE; lv <= ST_LV_DEF; lv++) {
             for (int t = 0; t < nt; t++) off[lv][t + 1] += off[lv][t];
             memcpy(at[lv], off[lv], (size_t)(nt + 1) * sizeof(int));
-            list[lv] = xmalloc((size_t)(off[lv][nt] ? off[lv][nt] : 1) * sizeof(int));
+            list[lv] = xmalloc((size_t)off[lv][nt] * sizeof(int));
         }
         for (int i = 0; i < nn; i++)
             if (m->nodes[i].level != ST_LV_DIR)
@@ -691,16 +622,15 @@ StMetrics *st_build(const AnSnapshot *s) {
             for (int k = 0; k < d->nrows; k++) {
                 int tu = d->rows[k].turn;
                 for (int q = off[lv][tu]; q < off[lv][tu + 1]; q++) {
-                    int p = list[lv][q], ph = nhit;
-                    if (seen(&ns, p, &ph) < 0) { PUSH(hit, nhit, chit, p); cnt[p] = 0; }
+                    int p = list[lv][q];
+                    if (seen(&ns, p, nhit) < 0) { PUSH(hit, nhit, chit, p); cnt[p] = 0; }
                     cnt[p]++;
                 }
             }
             if (nhit) qsort(hit, (size_t)nhit, sizeof *hit, cmp_int); /* PEERS order: breadth-first */
             for (int q = 0; q < nhit; q++) {
                 int p = hit[q], shared = cnt[p];
-                if (shared < 2 || p == i || (tin[p] > tin[i] && tout[p] < tout[i]) || (tin[i] > tin[p] && tout[i] < tout[p]))
-                    continue;
+                if (shared < 2 || p == i || is_anc(m, i, p) || is_anc(m, p, i)) continue;
                 const StNode *pd = &m->nodes[p];
                 int lo = d->turns < pd->turns ? d->turns : pd->turns;
                 bool cross = lv == ST_LV_FILE ? pd->parent != d->parent : pd->file != d->file;
@@ -717,15 +647,12 @@ StMetrics *st_build(const AnSnapshot *s) {
         free(hit);
         free(cnt);
         for (int lv = 0; lv < 3; lv++) free(off[lv]), free(at[lv]), free(list[lv]);
-        free(tin);
-        free(tout);
-        free(stack);
     }
 
     /* TINFO: per turn, what it changed. */
     {
-        int *cf = xcalloc((size_t)(nt ? nt : 1), sizeof *cf), *cd = xcalloc((size_t)(nt ? nt : 1), sizeof *cd);
-        int *cc = xcalloc((size_t)(nt ? nt : 1), sizeof *cc), *cn = xcalloc((size_t)(nt ? nt : 1), sizeof *cn);
+        int *cf = xcalloc((size_t)nt, sizeof *cf), *cd = xcalloc((size_t)nt, sizeof *cd);
+        int *cc = xcalloc((size_t)nt, sizeof *cc), *cn = xcalloc((size_t)nt, sizeof *cn);
         for (int i = 0; i < nn; i++) {
             StNode *d = &m->nodes[i];
             if (d->kind == AN_DIR) continue;
@@ -770,13 +697,13 @@ StMetrics *st_build(const AnSnapshot *s) {
             int *ids = NULL, nids = 0, cids_ = 0;
             ns.gen++;
             for (int k = 0; k < T->nnodes; k++)
-                for (int v = T->nodes[k], ph = nids; v >= 0 && seen(&ns, v, &ph) < 0; v = m->nodes[v].parent)
+                for (int v = T->nodes[k]; v >= 0 && seen(&ns, v, nids) < 0; v = m->nodes[v].parent)
                     PUSH(ids, nids, cids_, v);
             free(T->nodes);
             if (nids) qsort(ids, (size_t)nids, sizeof *ids, cmp_int);
             T->nodes = ids, T->nnodes = nids;
             T->survival_pct = T->add ? (int)jround(100 * (T->kept < T->add ? (double)T->kept / T->add : 1)) : 0;
-            int na = 0, ca = 0, *agents = NULL;
+            int na = 0, ca = 0, *agents = NULL, cnotes = 0;
             for (int k = 0; k < T->ncids; k++) {
                 const AnChange *c = &s->changes[T->cids[k]];
                 T->untested += c->verify == AN_UNTESTED;
@@ -789,10 +716,7 @@ StMetrics *st_build(const AnSnapshot *s) {
                 if (has_note(s, c->comment)) {
                     int q = 0;
                     while (q < T->nnotes && !same_note(T->notes[q], c->comment)) q++;
-                    if (q == T->nnotes) {
-                        T->notes = xrealloc(T->notes, (size_t)(T->nnotes + 1) * sizeof *T->notes);
-                        T->notes[T->nnotes++] = c->comment;
-                    }
+                    if (q == T->nnotes) PUSH(T->notes, T->nnotes, cnotes, c->comment);
                 }
             }
             free(agents);
@@ -827,11 +751,8 @@ StMetrics *st_build(const AnSnapshot *s) {
     free(bfs);
     free(cids);
     free(acc);
-    free(share);
     free(runs);
-    free(first);
     seen_free(&ts), seen_free(&cs), seen_free(&ps), seen_free(&ws), seen_free(&rws), seen_free(&ns);
-    free(rank);
     free(tms);
     strmap_free(&by_rel);
     return m;
@@ -880,6 +801,15 @@ int st_actor_color(const StMetrics *m, int actor) {
 /* ---- JSON (tests/metrics_parity.js reads it) ---- */
 
 static void jd(FILE *f, double v) { fprintf(f, "%.12g", v); } /* stable across libms; parity allows 1e-9 */
+
+static void j_doubles(FILE *f, const double *a, int n) {
+    fputc('[', f);
+    for (int i = 0; i < n; i++) {
+        if (i) fputc(',', f);
+        jd(f, a[i]);
+    }
+    fputc(']', f);
+}
 
 static void j_ints(FILE *f, const int *a, int n) {
     fputc('[', f);
@@ -937,18 +867,12 @@ static void j_mnode(FILE *f, const StNode *d) {
     else fprintf(f, "%lld", d->age_median);
     fputs(",\"ages\":", f);
     j_ints(f, d->ages, ST_NAGES);
-    fprintf(f, ",\"flags\":[%d,%d,%d,%d,%d,%d],\"kinds\":%d,\"metric\":[", d->flags.corrected, d->flags.interrupted,
+    fprintf(f, ",\"flags\":[%d,%d,%d,%d,%d,%d],\"kinds\":%d,\"metric\":", d->flags.corrected, d->flags.interrupted,
             d->flags.untested, d->flags.failing, d->flags.blind, d->flags.slow, d->kinds);
-    for (int k = 0; k < ST_NMODES; k++) {
-        if (k) fputc(',', f);
-        jd(f, d->metric[k]);
-    }
-    fputs("],\"heat\":[", f);
-    for (int k = 0; k < ST_NMODES; k++) {
-        if (k) fputc(',', f);
-        jd(f, d->heat[k]);
-    }
-    fputs("],\"partners\":[", f);
+    j_doubles(f, d->metric, ST_NMODES);
+    fputs(",\"heat\":", f);
+    j_doubles(f, d->heat, ST_NMODES);
+    fputs(",\"partners\":[", f);
     for (int k = 0; k < d->npartners; k++) {
         const StPartner *p = &d->partners[k];
         fprintf(f, "%s[%d,%d,", k ? "," : "", p->node, p->shared);
@@ -978,21 +902,14 @@ static void j_mnode(FILE *f, const StNode *d) {
 void st_json(FILE *f, const StMetrics *m) {
     fputs("{\"order\":", f);
     j_ints(f, m->order, m->nturns);
-    fprintf(f, ",\"now\":%lld,\"first\":%lld,\"ageSpan\":%lld,\"avgTime\":[", m->now, m->first, m->age_span);
-    for (int k = 0; k < 3; k++) {
-        if (k) fputc(',', f);
-        jd(f, m->avg_time[k]);
-    }
-    fputs("],\"turnAvg\":", f);
+    fprintf(f, ",\"now\":%lld,\"first\":%lld,\"ageSpan\":%lld,\"avgTime\":", m->now, m->first, m->age_span);
+    j_doubles(f, m->avg_time, 3);
+    fputs(",\"turnAvg\":", f);
     jd(f, m->turn_avg);
     fputs(",\"max\":[", f);
     for (int lv = 0; lv < 3; lv++) {
-        fputs(lv ? ",[" : "[", f);
-        for (int k = 0; k < ST_NMODES; k++) {
-            if (k) fputc(',', f);
-            jd(f, m->max[lv][k]);
-        }
-        fputc(']', f);
+        if (lv) fputc(',', f);
+        j_doubles(f, m->max[lv], ST_NMODES);
     }
     fputs("],\"actors\":", f);
     j_ints(f, m->actors, m->nactors);
@@ -1065,11 +982,6 @@ int st_blame_slot(const StNode *d, int turn) {
     return -1;
 }
 
-static int cmp_int_key(const void *k, const void *e) {
-    int a = *(const int *)k, b = *(const int *)e;
-    return (a > b) - (a < b);
-}
-
 bool st_turn_touches(const StTurn *T, int node) {
-    return T->nnodes && bsearch(&node, T->nodes, (size_t)T->nnodes, sizeof *T->nodes, cmp_int_key);
+    return T->nnodes && bsearch(&node, T->nodes, (size_t)T->nnodes, sizeof *T->nodes, cmp_int);
 }

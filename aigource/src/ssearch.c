@@ -27,7 +27,7 @@ static uint32_t dec(const char *s, size_t n, size_t i, int *len) {
     if (!k || (size_t)k > left) return 0x110000u + u[0];
     uint32_t c = u[0] & (0x7F >> k);
     for (int j = 1; j < k; j++) {
-        if ((u[j] & 0xC0) != 0x80) return 0x110000u + u[0];
+        if (!UTF8_CONT(u[j])) return 0x110000u + u[0];
         c = c << 6 | (u[j] & 0x3F);
     }
     if ((k == 3 && (c < 0x800 || (c >= 0xD800 && c <= 0xDFFF))) || (k == 4 && (c < 0x10000 || c > 0x10FFFF)))
@@ -36,10 +36,12 @@ static uint32_t dec(const char *s, size_t n, size_t i, int *len) {
     return c;
 }
 
+static inline unsigned lc(unsigned c) { return c >= 'A' && c <= 'Z' ? c + 32 : c; } /* ASCII lowercase */
+
 /* Lowercase, one codepoint to one of the same UTF-8 length: ASCII, Latin-1,
  * Greek and Cyrillic capitals. */
 static uint32_t fold(uint32_t c) {
-    if (c < 0x80) return c >= 'A' && c <= 'Z' ? c + 32 : c;
+    if (c < 0x80) return lc(c);
     if ((c >= 0xC0 && c <= 0xDE && c != 0xD7) || (c >= 0x391 && c <= 0x3A9 && c != 0x3A2) || (c >= 0x410 && c <= 0x42F))
         return c + 32;
     if (c >= 0x400 && c <= 0x40F) return c + 80;
@@ -80,7 +82,7 @@ static void fold_bytes(const char *s, size_t n, char *out) {
     for (size_t i = 0; i < n;) {
         unsigned char b = (unsigned char)s[i];
         if (b < 0x80) { /* most of a path */
-            out[i++] = (char)(b >= 'A' && b <= 'Z' ? b + 32 : b);
+            out[i++] = (char)lc(b);
             continue;
         }
         int l;
@@ -385,7 +387,7 @@ static void pat_init(Pat *p, const char *q, bool cs) {
     for (size_t i = 0; i < p->qn; i++) {
         unsigned char c = (unsigned char)q[i];
         p->ascii &= c < 0x80;
-        p->lo[i] = c >= 'A' && c <= 'Z' ? c + 32 : c;
+        p->lo[i] = (unsigned char)lc(c);
     }
     for (size_t i = 0; !cs && !p->ascii && i < p->qn;) {
         int l;
@@ -408,18 +410,18 @@ static long pat_find(const Pat *p, const char *t, size_t n, size_t from, size_t 
         const unsigned char *u = (const unsigned char *)t, q0 = p->lo[0];
         for (size_t i = from; i < smax && i + p->qn <= n; i++) {
             unsigned char c = u[i];
-            if ((c >= 'A' && c <= 'Z' ? c + 32 : c) != q0) continue;
+            if (lc(c) != q0) continue;
             size_t k = 1;
             for (; k < p->qn; k++) {
                 c = u[i + k];
-                if ((c >= 'A' && c <= 'Z' ? c + 32 : c) != p->lo[k]) break;
+                if (lc(c) != p->lo[k]) break;
             }
             if (k == p->qn) { *mlen = p->qn; return (long)i; }
         }
         return -1;
     }
     for (size_t i = from; i < smax && i < n; i++) {
-        if (((unsigned char)t[i] & 0xC0) == 0x80) continue; /* inside a character */
+        if (UTF8_CONT(t[i])) continue; /* inside a character */
         size_t j = i;
         int k = 0, l;
         for (; k < p->ncp && j < n; k++, j += (size_t)l)
@@ -461,7 +463,7 @@ int ss_find(const char *t, size_t n, const char *q, bool cs, SsLine *out, int ma
 
 /* Back to the start of the character holding t[i]. */
 static size_t char_start(const char *t, size_t lo, size_t i) {
-    while (i > lo && ((unsigned char)t[i] & 0xC0) == 0x80) i--;
+    while (i > lo && UTF8_CONT(t[i])) i--;
     return i;
 }
 
@@ -526,10 +528,7 @@ static bool run(SsEngine *e, const char *q, bool cs, SsResult *r) {
         int room = SS_CAP - r->n, k = ss_find(t, len, q, cs, lines, room, &e->stop);
         if (k < 0) { ok = false; break; }
         for (int j = 0; j < k && j < room; j++) {
-            if (r->n == cap) {
-                cap = cap ? cap * 2 : 64;
-                r->hits = xrealloc(r->hits, sizeof *r->hits * (size_t)cap);
-            }
+            GROW(r->hits, r->n, cap);
             char snip[SS_SNIP + 16];
             SsHit *h = &r->hits[r->n++];
             ss_snip(t, len, &lines[j], snip, sizeof snip, &h->ms, &h->ml);
@@ -608,7 +607,7 @@ void ss_engine_files(SsEngine *e, const SsFile *f, int n) {
     e->pending = false;
     while (e->running) pthread_cond_wait(&e->cv, &e->mu);
     files_free(e);
-    e->files = xmalloc(sizeof *e->files * (size_t)(n ? n : 1));
+    e->files = xmalloc(sizeof *e->files * (size_t)n);
     if (n) memcpy(e->files, f, sizeof *f * (size_t)n);
     e->nfiles = n;
     ss_result_free(&e->res);

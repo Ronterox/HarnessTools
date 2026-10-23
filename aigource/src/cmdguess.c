@@ -16,6 +16,8 @@ typedef struct {
     bool dyn; /* built at run time: unquoted $, `, glob or brace */
 } Word;
 
+typedef struct { char *dir; bool lost; } Where; /* where cd had gone */
+
 typedef struct {
     GuessFn fn;
     void *ud;
@@ -25,9 +27,9 @@ typedef struct {
     int n, cap;
     struct Heredoc { char *delim; bool tabs; } hd[8]; /* bodies start at the next newline */
     int nhd;
-    struct { char *dir; bool lost; } sub[8]; /* ( subshells ): their cd doesn't last */
+    Where sub[8]; /* ( subshells ): their cd doesn't last */
     int nsub;
-    struct { char *dir; bool lost; } push[8]; /* pushd: where popd goes back to */
+    Where push[8]; /* pushd: where popd goes back to */
     int npush;
     bool test; /* inside [[ ]]: < and > compare */
     /* cmd_runs: each simple command's words joined by spaces, whether a single |
@@ -36,19 +38,7 @@ typedef struct {
     bool piped;
 } G;
 
-typedef struct {
-    char *s;
-    size_t n, cap;
-} Buf;
-
-static void put(Buf *b, char c) {
-    if (b->n + 2 > b->cap) {
-        b->cap = b->cap ? b->cap * 2 : 32;
-        b->s = xrealloc(b->s, b->cap);
-    }
-    b->s[b->n++] = c;
-    b->s[b->n] = 0;
-}
+static void put(Buf *b, char c) { buf_put(b, &c, 1); }
 
 static bool is_delim(char c) {
     return !c || c == ' ' || c == '\t' || c == '\n' || c == ';' || c == '&' || c == '|' || c == '(' || c == ')' ||
@@ -57,16 +47,16 @@ static bool is_delim(char c) {
 
 static size_t read_word(const char *s, size_t i, char **out, bool *dyn);
 
-/* Past a here-document body: the lines after s[i] (a newline) up to `delim`. */
+/* Past a here-document body: the lines from s[i] through the one that is `delim`. */
 static size_t skip_body(const char *s, size_t i, const char *delim, bool tabs) {
     while (s[i]) {
-        size_t b = s[i] == '\n' ? i + 1 : i, e = b;
+        size_t e = i;
         while (s[e] && s[e] != '\n') e++;
-        size_t c = b;
-        if (tabs) while (c < e && s[c] == '\t') c++;
-        if (e - c == strlen(delim) && !strncmp(s + c, delim, e - c)) return e;
-        i = e;
-        if (!s[i]) break;
+        size_t b = i;
+        if (tabs) while (b < e && s[b] == '\t') b++;
+        bool end = e - b == strlen(delim) && !strncmp(s + b, delim, e - b);
+        i = s[e] ? e + 1 : e;
+        if (end) break;
     }
     return i;
 }
@@ -78,10 +68,9 @@ static size_t skip_parens(const char *s, size_t i) {
     bool tabs = false, arith = s[i + 1] == '('; /* $((1<<2)): a shift, not a here-document */
     for (; s[i]; i++) {
         if (s[i] == '\n' && delim) { /* a here-document's body: its quotes mean nothing */
-            i = skip_body(s, i, delim, tabs);
+            i = skip_body(s, i + 1, delim, tabs) - 1; /* the loop steps past it */
             free(delim);
             delim = NULL;
-            if (!s[i]) break;
             continue;
         }
         if (s[i] == '<' && s[i + 1] == '<' && s[i + 2] != '<' && !delim && !arith) {
@@ -107,8 +96,7 @@ static size_t skip_parens(const char *s, size_t i) {
 /* One word from s[i]: quotes removed, escapes resolved. Returns the index after it. */
 static size_t read_word(const char *s, size_t i, char **out, bool *dyn) {
     Buf b = {0};
-    put(&b, 0);
-    b.n = 0;
+    buf_put(&b, "", 0);
     *dyn = false;
     while (!is_delim(s[i])) {
         char c = s[i];
@@ -188,8 +176,7 @@ static void cmd_cd(G *g, Word *a, int na) {
         nd = xstrdup(d);
         g->lost = false;
     } else {
-        nd = xmalloc(strlen(g->dir) + strlen(d) + 2);
-        sprintf(nd, "%s/%s", g->dir, d);
+        nd = xasprintf("%s/%s", g->dir, d);
     }
     free(g->dir);
     g->dir = nd;
@@ -366,16 +353,20 @@ static bool is_assignment(const Word *w) {
     return true;
 }
 
+static Where save(const G *g) { return (Where){dup_or_null(g->dir), g->lost}; }
+static void restore(G *g, Where w) {
+    free(g->dir);
+    g->dir = w.dir, g->lost = w.lost;
+}
+
 static void end_cmd(G *g) {
     Word *a = g->w;
     int n = g->n, k = 0;
     if (g->seg && n) {
-        size_t len = 1;
-        for (int i = 0; i < n; i++) len += strlen(a[i].s) + 1;
-        char *t = xmalloc(len), *p = t;
-        for (int i = 0; i < n; i++) p += sprintf(p, i ? " %s" : "%s", a[i].s);
-        g->seg(g->ud, t, g->piped, g->dir, g->lost);
-        free(t);
+        Buf t = {0};
+        for (int i = 0; i < n; i++) buf_puts(&t, i ? " " : ""), buf_puts(&t, a[i].s);
+        g->seg(g->ud, t.s, g->piped, g->dir, g->lost);
+        buf_free(&t);
     }
     g->piped = false;
     static const char *skip[] = {"if", "then", "else", "elif", "do", "while", "until", "!", "{", "}", "time",
@@ -400,19 +391,10 @@ static void end_cmd(G *g) {
                                                "--theme", "--style", "--tabs", "--wrap", "--terminal-width", NULL};
         if (!strcmp(cmd, "cd")) cmd_cd(g, args, na);
         else if (!strcmp(cmd, "pushd") && g->npush < 8) {
-            g->push[g->npush].dir = g->dir ? xstrdup(g->dir) : NULL;
-            g->push[g->npush++].lost = g->lost;
+            g->push[g->npush++] = save(g);
             cmd_cd(g, args, na);
-        } else if (!strcmp(cmd, "popd")) {
-            free(g->dir);
-            if (g->npush) {
-                g->dir = g->push[--g->npush].dir;
-                g->lost = g->push[g->npush].lost;
-            } else { /* back to somewhere from before this command */
-                g->dir = NULL;
-                g->lost = true;
-            }
-        }
+        } else if (!strcmp(cmd, "popd")) /* none pushed: back to somewhere from before this command */
+            restore(g, g->npush ? g->push[--g->npush] : (Where){NULL, true});
         else if (!strcmp(cmd, "sed") || !strcmp(cmd, "gsed")) cmd_inplace(g, args, na, false);
         else if (!strcmp(cmd, "perl")) cmd_inplace(g, args, na, true);
         else if (!strcmp(cmd, "tee")) cmd_operands(g, args, na, "", NULL, GUESS_CHANGE, 0, 0);
@@ -439,11 +421,7 @@ static void end_cmd(G *g) {
 static void push_word(G *g, char *s, bool dyn) {
     if (!strcmp(s, "[[")) g->test = true; /* after if, !, x=1 too; "[[" reads as a glob: dyn */
     else if (!strcmp(s, "]]")) g->test = false;
-    if (g->n == g->cap) {
-        g->cap = g->cap ? g->cap * 2 : 16;
-        g->w = xrealloc(g->w, (size_t)g->cap * sizeof *g->w);
-    }
-    g->w[g->n++] = (Word){s, dyn};
+    PUSH(g->w, g->n, g->cap, ((Word){s, dyn}));
 }
 
 static size_t skip_blank(const char *s, size_t i) {
@@ -465,34 +443,22 @@ static size_t redir_target(G *g, const char *s, size_t i, bool emit_it, GuessKin
 
 /* After a newline: the bodies of pending here-documents. */
 static size_t skip_heredocs(G *g, const char *s, size_t i) {
-    for (int h = 0; h < g->nhd; h++) {
-        while (s[i]) {
-            size_t e = i;
-            while (s[e] && s[e] != '\n') e++;
-            size_t b = i;
-            if (g->hd[h].tabs) while (b < e && s[b] == '\t') b++;
-            bool end = e - b == strlen(g->hd[h].delim) && !strncmp(s + b, g->hd[h].delim, e - b);
-            i = s[e] ? e + 1 : e;
-            if (end) break;
-        }
-        free(g->hd[h].delim);
-    }
+    for (int h = 0; h < g->nhd; h++) i = skip_body(s, i, g->hd[h].delim, g->hd[h].tabs), free(g->hd[h].delim);
     g->nhd = 0;
     return i;
 }
 
-static void lex(G *gp, const char *s) {
-    G g = *gp;
+static void lex(G *g, const char *s) {
     size_t i = 0;
     while (s[i]) {
         char c = s[i];
         if (c == ' ' || c == '\t') { i++; continue; }
         if (c == '\\' && s[i + 1] == '\n') { i += 2; continue; }
-        if (c == '\n') { end_cmd(&g); i = skip_heredocs(&g, s, i + 1); continue; }
+        if (c == '\n') { end_cmd(g); i = skip_heredocs(g, s, i + 1); continue; }
         if (c == '#') { while (s[i] && s[i] != '\n') i++; continue; }
         if (c == '&' && s[i + 1] == '>') { /* &> and &>>: stdout and stderr to a file */
             i += 2 + (s[i + 2] == '>');
-            i = redir_target(&g, s, i, true, GUESS_CHANGE);
+            i = redir_target(g, s, i, true, GUESS_CHANGE);
             continue;
         }
         if (c == '(' && s[i + 1] == '(') { /* (( arithmetic )): < and > compare */
@@ -503,35 +469,29 @@ static void lex(G *gp, const char *s) {
             if (c == ')') { /* (make) 2>&1 | tail: the subshell's last command is piped */
                 size_t j = skip_blank(s, i + 1);
                 if (s[j] == '2' && s[j + 1] == '>' && s[j + 2] == '&' && s[j + 3] == '1') j = skip_blank(s, j + 4);
-                g.piped = s[j] == '|' && s[j + 1] != '|';
+                g->piped = s[j] == '|' && s[j + 1] != '|';
             }
-            end_cmd(&g);
-            if (c == '(' && g.nsub < 8) {
-                g.sub[g.nsub].dir = g.dir ? xstrdup(g.dir) : NULL;
-                g.sub[g.nsub++].lost = g.lost;
-            } else if (c == ')' && g.nsub) {
-                free(g.dir);
-                g.dir = g.sub[--g.nsub].dir;
-                g.lost = g.sub[g.nsub].lost;
-            }
+            end_cmd(g);
+            if (c == '(' && g->nsub < 8) g->sub[g->nsub++] = save(g);
+            else if (c == ')' && g->nsub) restore(g, g->sub[--g->nsub]);
             i++;
             continue;
         }
         if (c == ';' || c == '&' || c == '|') {
-            g.piped = c == '|' && s[i + 1] != '|' && (!i || s[i - 1] != '|');
-            end_cmd(&g);
+            g->piped = c == '|' && s[i + 1] != '|' && (!i || s[i - 1] != '|');
+            end_cmd(g);
             i++;
             continue;
         }
-        if (g.test && (c == '<' || c == '>')) { /* [[ a < b ]] */
-            push_word(&g, xstrdup(c == '<' ? "<" : ">"), false);
+        if (g->test && (c == '<' || c == '>')) { /* [[ a < b ]] */
+            push_word(g, xstrdup(c == '<' ? "<" : ">"), false);
             i++;
             continue;
         }
         size_t j = i;
         while (s[j] >= '0' && s[j] <= '9') j++;
         if (s[j] == '<') {
-            if (s[j + 1] == '<' && s[j + 2] == '<') { i = redir_target(&g, s, j + 3, false, GUESS_READ); continue; } /* here-string */
+            if (s[j + 1] == '<' && s[j + 2] == '<') { i = redir_target(g, s, j + 3, false, GUESS_READ); continue; } /* here-string */
             if (s[j + 1] == '<') { /* here-document: its body follows the line */
                 size_t k = j + 2;
                 bool tabs = s[k] == '-';
@@ -539,13 +499,13 @@ static void lex(G *gp, const char *s) {
                 char *d;
                 bool dyn;
                 i = read_word(s, k, &d, &dyn);
-                if (g.nhd < 8) g.hd[g.nhd++] = (struct Heredoc){d, tabs};
+                if (g->nhd < 8) g->hd[g->nhd++] = (struct Heredoc){d, tabs};
                 else free(d);
                 continue;
             }
             if (s[j + 1] == '(') i = skip_parens(s, j + 1); /* <(cmd) */
-            else if (s[j + 1] == '&') i = redir_target(&g, s, j + 2, false, GUESS_READ); /* <&3 */
-            else i = redir_target(&g, s, j + 1, true, GUESS_READ);
+            else if (s[j + 1] == '&') i = redir_target(g, s, j + 2, false, GUESS_READ); /* <&3 */
+            else i = redir_target(g, s, j + 1, true, GUESS_READ);
             continue;
         }
         if (s[j] == '>') {
@@ -554,23 +514,23 @@ static void lex(G *gp, const char *s) {
             if (s[k] == '&') { /* >&2 duplicates a descriptor; >&file is &>file */
                 size_t t = skip_blank(s, k + 1);
                 bool fd = s[t] == '-' || (s[t] >= '0' && s[t] <= '9' && is_delim(s[t + 1]));
-                i = redir_target(&g, s, k + 1, !fd, GUESS_CHANGE);
+                i = redir_target(g, s, k + 1, !fd, GUESS_CHANGE);
                 continue;
             }
-            i = redir_target(&g, s, k, true, GUESS_CHANGE);
+            i = redir_target(g, s, k, true, GUESS_CHANGE);
             continue;
         }
         char *w;
         bool dyn;
         i = read_word(s, i, &w, &dyn);
-        push_word(&g, w, dyn);
+        push_word(g, w, dyn);
     }
-    end_cmd(&g);
-    for (int h = 0; h < g.nhd; h++) free(g.hd[h].delim);
-    for (int k = 0; k < g.nsub; k++) free(g.sub[k].dir);
-    for (int k = 0; k < g.npush; k++) free(g.push[k].dir);
-    free(g.w);
-    free(g.dir);
+    end_cmd(g);
+    for (int h = 0; h < g->nhd; h++) free(g->hd[h].delim);
+    for (int k = 0; k < g->nsub; k++) free(g->sub[k].dir);
+    for (int k = 0; k < g->npush; k++) free(g->push[k].dir);
+    free(g->w);
+    free(g->dir);
 }
 
 void cmd_guess(const char *s, GuessFn fn, void *ud) {
@@ -580,13 +540,12 @@ void cmd_guess(const char *s, GuessFn fn, void *ud) {
 
 /* ---- command segments (docs/STRUCTURE.md section 0) ---------------------- */
 
-static bool ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
 static const char *skip_ws(const char *p) {
-    while (ws(*p)) p++;
+    while (is_space(*p)) p++;
     return p;
 }
 static const char *tok_end(const char *p) {
-    while (*p && !ws(*p)) p++;
+    while (*p && !is_space(*p)) p++;
     return p;
 }
 
@@ -594,9 +553,9 @@ static const char *tok_end(const char *p) {
 static const char *timeout_args(const char *p) {
     if (*p == '-') {
         const char *e = tok_end(p);
-        if (e > p + 1 && ws(*e)) {
+        if (e > p + 1 && is_space(*e)) {
             const char *q = skip_ws(e), *e2 = tok_end(q);
-            if (e2 > q && ws(*e2)) {
+            if (e2 > q && is_space(*e2)) {
                 const char *r = timeout_args(skip_ws(e2));
                 if (r) return r;
             }
@@ -605,7 +564,7 @@ static const char *timeout_args(const char *p) {
         }
     }
     const char *e = tok_end(p);
-    return e > p && ws(*e) ? skip_ws(e) : NULL;
+    return e > p && is_space(*e) ? skip_ws(e) : NULL;
 }
 
 /* A segment without what only sets how it runs: `(`, env, VAR=x, sudo, time, timeout N. */
@@ -615,39 +574,17 @@ static const char *unwrap(const char *p) {
     for (;;) {
         const char *q = NULL, *w = p;
         while (isalnum((unsigned char)*w) || *w == '_') w++;
-        if (!strncmp(p, "env", 3) && ws(p[3])) q = skip_ws(p + 3);
+        if (!strncmp(p, "env", 3) && is_space(p[3])) q = skip_ws(p + 3);
         else if (w > p && *w == '=') {
             const char *e = tok_end(w + 1);
-            if (ws(*e)) q = skip_ws(e);
+            if (is_space(*e)) q = skip_ws(e);
         }
-        if (!q && !strncmp(p, "sudo", 4) && ws(p[4])) q = skip_ws(p + 4);
-        if (!q && !strncmp(p, "time", 4) && ws(p[4])) q = skip_ws(p + 4);
-        if (!q && !strncmp(p, "timeout", 7) && ws(p[7])) q = timeout_args(skip_ws(p + 7));
+        if (!q && !strncmp(p, "sudo", 4) && is_space(p[4])) q = skip_ws(p + 4);
+        if (!q && !strncmp(p, "time", 4) && is_space(p[4])) q = skip_ws(p + 4);
+        if (!q && !strncmp(p, "timeout", 7) && is_space(p[7])) q = timeout_args(skip_ws(p + 7));
         if (!q) return p;
         p = q;
     }
-}
-
-/* Lexically, like `cd` does: "." and ".." resolved, repeated slashes dropped. */
-static void norm_path(char *p) {
-    char *o = p;
-    for (const char *q = p; *q;) {
-        while (*q == '/') q++;
-        const char *e = q;
-        while (*e && *e != '/') e++;
-        size_t k = (size_t)(e - q);
-        if (k == 1 && *q == '.') {
-        } else if (k == 2 && q[0] == '.' && q[1] == '.') {
-            while (o > p && *--o != '/') {}
-        } else if (k) {
-            *o++ = '/';
-            memmove(o, q, k);
-            o += k;
-        }
-        q = e;
-    }
-    if (o == p) *o++ = '/';
-    *o = 0;
 }
 
 typedef struct {
@@ -665,14 +602,9 @@ static bool in_tree(const Runs *r, const char *dir, bool lost) {
     char *p;
     if (!dir) p = xstrdup(r->start);
     else if (dir[0] == '/') p = xstrdup(dir);
-    else if (dir[0] == '~' && home) {
-        p = xmalloc(strlen(home) + strlen(dir) + 1);
-        sprintf(p, "%s%s", home, dir + 1);
-    } else {
-        p = xmalloc(strlen(r->start) + strlen(dir) + 2);
-        sprintf(p, "%s/%s", r->start, dir);
-    }
-    norm_path(p);
+    else if (dir[0] == '~' && home) p = xasprintf("%s/%s", home, dir + 1);
+    else p = xasprintf("%s/%s", r->start, dir);
+    path_normalize(p);
     size_t n = strlen(r->root);
     bool in = !strncmp(p, r->root, n) && (!p[n] || p[n] == '/' || (n == 1 && r->root[0] == '/'));
     free(p);
@@ -691,7 +623,7 @@ static void on_seg(void *ud, const char *text, bool piped, const char *dir, bool
         }
     const char *s = unwrap(text);
     size_t n = strlen(s);
-    while (n && ws(s[n - 1])) n--;
+    while (n && is_space(s[n - 1])) n--;
     char *seg = xstrndup(s, n);
     bool hit = *seg && !regexec(r->re, seg, 0, NULL, 0);
     free(seg);
@@ -701,8 +633,8 @@ static void on_seg(void *ud, const char *text, bool piped, const char *dir, bool
 }
 
 int cmd_runs(const regex_t *re, const char *cmd, const char *root, const char *start) {
-    char *rt = root ? xstrdup(root) : NULL, *st = root ? xstrdup(start ? start : root) : NULL;
-    if (rt) norm_path(rt), norm_path(st);
+    char *rt = dup_or_null(root), *st = root ? path_join(root, start ? start : "") : NULL;
+    if (rt) path_normalize(rt), path_normalize(st);
     Runs r = {re, rt, st, 0, false};
     G g = {.ud = &r, .seg = on_seg};
     lex(&g, cmd);

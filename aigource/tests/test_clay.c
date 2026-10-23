@@ -229,7 +229,7 @@ static void on_fixture(const char *proj) {
     /* the stale changes' title, a line each */
     cl_stale_text(a, 8, 2, b, sizeof b);
     char t1[16], t2[16], want[512];
-    cl_clock(t1, sizeof t1, a->items[8].st[0].t), cl_clock(t2, sizeof t2, a->items[8].st[1].t);
+    fmt_clock(t1, sizeof t1, a->items[8].st[0].t, "%H:%M"), fmt_clock(t2, sizeof t2, a->items[8].st[1].t, "%H:%M");
     snprintf(want, sizeof want, "%s %s (its own edit)\n%s %s (its own command)", t1, a->items[8].st[0].label, t2,
              a->items[8].st[1].label);
     CHECK(!strcmp(b, want));

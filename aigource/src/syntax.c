@@ -280,12 +280,17 @@ static char *read_query(const char *dir, const char *lang, const char *file, int
     return all;
 }
 
+/* Neovim's data dir's parent: $XDG_DATA_HOME, else ~/.local/share. */
+static void data_home(char data[400]) {
+    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+    if (xdg && *xdg) snprintf(data, 400, "%s", xdg);
+    else snprintf(data, 400, "%s/.local/share", home ? home : "");
+}
+
 /* Where Neovim keeps grammars, each with the queries written for it. */
 static int search_dirs(char (*parser)[512], char (*query)[512]) {
-    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     char data[400];
-    if (xdg && *xdg) snprintf(data, sizeof data, "%s", xdg);
-    else snprintf(data, sizeof data, "%s/.local/share", home ? home : "");
+    data_home(data);
     int n = 0;
     snprintf(parser[n], 512, "%s/nvim/site/parser", data);
     snprintf(query[n++], 512, "%s/nvim/site/queries", data);
@@ -439,17 +444,17 @@ SynLang *syn_lang_for(const char *path) {
 
 /* ---- highlighting ------------------------------------------------------- */
 
-/* Is the fence on line l a bare one (``` or ~~~ with no info string)? */
-static bool bare_fence(const char *l, const char *end) {
-    while (l < end && *l == ' ') l++;
-    if (end - l < 3 || !(!strncmp(l, "```", 3) || !strncmp(l, "~~~", 3))) return false;
-    for (l += 3; l < end && (*l == '`' || *l == '~' || *l == ' ' || *l == '\r'); l++) {}
-    return l == end;
-}
-
 static bool is_fence(const char *l, const char *end) {
     while (l < end && *l == ' ') l++;
     return end - l >= 3 && (!strncmp(l, "```", 3) || !strncmp(l, "~~~", 3));
+}
+
+/* Is the fence on line l a bare one (``` or ~~~ with no info string)? */
+static bool bare_fence(const char *l, const char *end) {
+    if (!is_fence(l, end)) return false;
+    while (*l == ' ') l++;
+    for (l += 3; l < end && (*l == '`' || *l == '~' || *l == ' ' || *l == '\r'); l++) {}
+    return l == end;
 }
 
 const char *syn_fragment_prefix(const SynLang *l, const char *text, uint32_t len) {
@@ -536,6 +541,13 @@ static bool pred_ok(const char *text, const Pred *p, const TSQueryMatch *m) {
     return r != p->neg;
 }
 
+/* A match passes all of its pattern's predicates. */
+static bool match_ok(const char *text, const Pattern *pt, const TSQueryMatch *m) {
+    for (int i = 0; i < pt->n; i++)
+        if (!pred_ok(text, &pt->p[i], m)) return false;
+    return true;
+}
+
 void syn_highlight(SynDoc *d, uint32_t start, uint32_t end, unsigned char *out) {
     if (end > d->len) end = d->len;
     if (start >= end) return;
@@ -577,10 +589,7 @@ void syn_highlight(SynDoc *d, uint32_t start, uint32_t end, unsigned char *out) 
         const TSQueryCapture *c = &m.captures[ci];
         signed char cls = L->cls[c->index];
         const Pattern *pt = &L->pats[m.pattern_index];
-        if (cls < 0 || pt->dead) continue;
-        bool ok = true;
-        for (int i = 0; i < pt->n && ok; i++) ok = pred_ok(d->text, &pt->p[i], &m);
-        if (!ok) continue;
+        if (cls < 0 || pt->dead || !match_ok(d->text, pt, &m)) continue;
         uint32_t a = ts_node_start_byte(c->node), b = ts_node_end_byte(c->node);
         if (a < start) a = start;
         if (b > end) b = end;
@@ -621,10 +630,8 @@ enum { SYM_BRANCH = 1, SYM_BLOCK = 2, SYM_BINARY = 4, SYM_LOGIC = 8 };
 /* Where textobjects.scm lives: the plugin's own queries first, then the
  * places highlight queries come from. */
 static TextObj *load_textobjects(const SynLang *L) {
-    const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
     char data[400], dirs[6][512];
-    if (xdg && *xdg) snprintf(data, sizeof data, "%s", xdg);
-    else snprintf(data, sizeof data, "%s/.local/share", home ? home : "");
+    data_home(data);
     int nd = 0;
     snprintf(dirs[nd++], 512, "%s/nvim/lazy/nvim-treesitter-textobjects/queries", data);
     snprintf(dirs[nd++], 512, "%s/nvim/site/pack/packer/start/nvim-treesitter-textobjects/queries", data);
@@ -711,8 +718,7 @@ static void measure(const TextObj *to, TSNode def, int *cx, int *depth) {
             if (f & SYM_BINARY) /* && || and or */
                 for (uint32_t i = 0, k = ts_node_child_count(x); i < k; i++)
                     if (sym_flags(to, ts_node_child(x, i)) & SYM_LOGIC) { n++; break; }
-            if (lvl == cap) stack = xrealloc(stack, (size_t)(cap = cap ? cap * 2 : 64));
-            stack[lvl++] = blk;
+            PUSH(stack, lvl, cap, blk);
             d += blk;
             if (d > deep) deep = d;
             if (ts_tree_cursor_goto_first_child(&c)) continue;
@@ -800,11 +806,6 @@ static TSPoint point_at(const char *text, uint32_t off) {
     return p;
 }
 
-static void push_def(DefNode **dn, int *n, int *cap, DefNode d) {
-    if (*n == *cap) *dn = xrealloc(*dn, (size_t)(*cap = *cap ? *cap * 2 : 32) * sizeof **dn);
-    (*dn)[(*n)++] = d;
-}
-
 /* The query's function and class captures within [lo, hi) of the tree. */
 static void query_defs(const TextObj *to, TSTree *tree, const char *text, uint32_t lo, uint32_t hi, DefNode **dn, int *n,
                        int *cap) {
@@ -814,10 +815,7 @@ static void query_defs(const TextObj *to, TSTree *tree, const char *text, uint32
     TSQueryMatch m;
     while (ts_query_cursor_next_match(cur, &m)) {
         const Pattern *pt = &to->pats[m.pattern_index];
-        if (pt->dead) continue;
-        bool ok = true;
-        for (int i = 0; i < pt->n && ok; i++) ok = pred_ok(text, &pt->p[i], &m);
-        if (!ok) continue;
+        if (pt->dead || !match_ok(text, pt, &m)) continue;
         for (uint16_t i = 0; i < m.capture_count; i++) {
             int ci = (int)m.captures[i].index;
             if (ci != to->fcap && ci != to->ccap) continue;
@@ -831,7 +829,7 @@ static void query_defs(const TextObj *to, TSTree *tree, const char *text, uint32
             if (ci == to->fcap && tl >= 11 && !strcmp(t + tl - 11, "declaration") &&
                 ts_node_is_null(ts_node_child_by_field_name(x, "body", 4)))
                 continue;
-            push_def(dn, n, cap, (DefNode){x, a, b, ci == to->ccap, -1});
+            PUSH(*dn, *n, *cap, ((DefNode){x, a, b, ci == to->ccap, -1}));
         }
     }
     ts_query_cursor_delete(cur);
@@ -918,7 +916,7 @@ int syn_defs(const char *path, const char *text, uint32_t len, SynDef **out, Syn
             if (b > e.start_byte && a < e.old_end_byte) continue; /* edited */
             if (a >= e.old_end_byte) a = (uint32_t)(a + shift), b = (uint32_t)(b + shift);
             if (b > lo && a < hi) continue; /* changed: queried again */
-            push_def(&dn, &n, &cap, (DefNode){.a = a, .b = b, .cls = prev->defs[i].cls, .keep = i});
+            PUSH(dn, n, cap, ((DefNode){.a = a, .b = b, .cls = prev->defs[i].cls, .keep = i}));
         }
         ts_tree_delete(old);
     }

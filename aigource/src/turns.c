@@ -24,9 +24,8 @@ struct TurnStats {
     Rec *r;
     size_t n, cap;
     StrMap ix;  /* actor id -> index */
-    char **id;
-    int *parent; /* a subagent's session, -1 a session */
-    int nid, capid;
+    struct Actor { char *id; int parent; } *a; /* parent: a subagent's session, -1 a session */
+    int na, capa;
     bool dirty;
     TurnStat *t;
     int nt, big;
@@ -59,8 +58,8 @@ void ts_free(TurnStats *t) {
     drop_turns(t);
     for (size_t i = 0; i < t->n; i++) free(t->r[i].text);
     free(t->r);
-    for (int i = 0; i < t->nid; i++) free(t->id[i]);
-    free(t->id), free(t->parent);
+    for (int i = 0; i < t->na; i++) free(t->a[i].id);
+    free(t->a);
     strmap_free(&t->ix);
     free(t->root);
     free(t);
@@ -69,15 +68,9 @@ void ts_free(TurnStats *t) {
 static int intern(TurnStats *t, const char *id) {
     int k = strmap_get(&t->ix, id);
     if (k >= 0) return k;
-    if (t->nid == t->capid) {
-        t->capid = t->capid ? t->capid * 2 : 16;
-        t->id = xrealloc(t->id, (size_t)t->capid * sizeof *t->id);
-        t->parent = xrealloc(t->parent, (size_t)t->capid * sizeof *t->parent);
-    }
-    t->id[t->nid] = xstrdup(id);
-    t->parent[t->nid] = -1;
-    strmap_put(&t->ix, id, t->nid);
-    return t->nid++;
+    strmap_put(&t->ix, id, t->na);
+    PUSH(t->a, t->na, t->capa, ((struct Actor){xstrdup(id), -1}));
+    return t->na - 1;
 }
 
 void ts_add(TurnStats *t, const Event *evs, size_t n) {
@@ -97,21 +90,14 @@ void ts_add(TurnStats *t, const Event *evs, size_t n) {
             break;
         case EV_USAGE: r.kind = R_USAGE; break;
         case EV_INTERRUPT: r.kind = R_INTR; break;
-        case EV_BASH_END: {
+        case EV_BASH_END:
             if (e->not_run || !e->text) break; /* never ran: no verdict */
-            char *start = NULL; /* where it began, as the analysis takes it */
-            if (e->path && *e->path != '/') {
-                start = xmalloc(strlen(t->root) + strlen(e->path) + 2);
-                sprintf(start, "%s/%s", t->root, e->path);
-            }
-            if (an_verify_cmd(e->text, t->root, start ? start : e->path)) r.kind = R_RUN, r.err = e->err || e->failed_out;
-            free(start);
+            if (an_verify_cmd(e->text, t->root, e->path)) r.kind = R_RUN, r.err = e->err || e->failed_out;
             break;
-        }
         case EV_TITLE:
             if (e->who.session && *e->who.session) {
                 int sub = intern(t, e->actor), s = intern(t, e->who.session); /* both before parent moves */
-                if (s != sub) t->parent[sub] = s;
+                if (s != sub) t->a[sub].parent = s;
             }
             break;
         default: break;
@@ -119,8 +105,7 @@ void ts_add(TurnStats *t, const Event *evs, size_t n) {
         if (r.kind < 0) continue;
         r.actor = intern(t, e->actor);
         if (r.kind == R_PROMPT) r.text = xstrdup(e->text);
-        GROW(t->r, t->n, t->cap);
-        t->r[t->n++] = r;
+        PUSH(t->r, t->n, t->cap, r);
         t->dirty = true;
     }
 }
@@ -140,19 +125,19 @@ static void compute(TurnStats *t) {
     drop_turns(t);
     t->big = 1;
     qsort(t->r, t->n, sizeof *t->r, cmp_rec);
-    int ns = t->nid;
-    int *sess = xmalloc((size_t)(ns ? ns : 1) * sizeof *sess);
-    for (int a = 0; a < ns; a++) sess[a] = t->parent[a] >= 0 ? t->parent[a] : a;
+    int ns = t->na;
+    int *sess = xmalloc((size_t)ns * sizeof *sess);
+    for (int a = 0; a < ns; a++) sess[a] = t->a[a].parent >= 0 ? t->a[a].parent : a;
     /* prompts per session, in time order (records are), a repeat (same time and text) once */
     int *cnt = xcalloc((size_t)ns + 1, sizeof *cnt), *at = xcalloc((size_t)ns + 1, sizeof *at);
     for (size_t i = 0; i < t->n; i++)
-        if (t->r[i].kind == R_PROMPT && t->parent[t->r[i].actor] < 0) cnt[t->r[i].actor + 1]++;
+        if (t->r[i].kind == R_PROMPT && t->a[t->r[i].actor].parent < 0) cnt[t->r[i].actor + 1]++;
     for (int a = 0; a < ns; a++) cnt[a + 1] += cnt[a];
     int np = cnt[ns];
-    Pr *pr = xcalloc((size_t)(np ? np : 1), sizeof *pr);
+    Pr *pr = xcalloc((size_t)np, sizeof *pr);
     for (size_t i = 0; i < t->n; i++) {
         const Rec *r = &t->r[i];
-        if (r->kind != R_PROMPT || t->parent[r->actor] >= 0) continue;
+        if (r->kind != R_PROMPT || t->a[r->actor].parent >= 0) continue;
         int a = r->actor, k = cnt[a] + at[a];
         if (at[a] && pr[k - 1].p->ts == r->ts && !strcmp(pr[k - 1].p->text, r->text)) continue;
         pr[k].p = r, pr[k].end = r->ts, at[a]++;
@@ -170,14 +155,12 @@ static void compute(TurnStats *t) {
         Pr *p = &pr[lo - 1];
         switch (r->kind) {
         case R_CHANGE:
-            GROW(p->chg, p->nchg, p->capchg);
-            p->chg[p->nchg++] = r->ts;
+            PUSH(p->chg, p->nchg, p->capchg, r->ts);
             p->add += r->add, p->del += r->del;
             p->end = fmax(p->end, r->ts);
             break;
         case R_USAGE:
-            GROW(p->stamps, p->nstamps, p->capstamps);
-            p->stamps[p->nstamps++] = r->ts;
+            PUSH(p->stamps, p->nstamps, p->capstamps, r->ts);
             p->end = fmax(p->end, r->ts);
             break;
         case R_INTR: p->intr = true; break;
@@ -196,14 +179,12 @@ static void compute(TurnStats *t) {
                 if (!p->run || p->run_ts <= p->chg[c]) u.untested++;
                 else if (p->run_err) u.failing++;
             }
-            GROW(p->stamps, p->nstamps, p->capstamps);
-            p->stamps[p->nstamps++] = p->p->ts;
+            PUSH(p->stamps, p->nstamps, p->capstamps, p->p->ts);
             u.secs = an_active(p->stamps, p->nstamps);
             u.title = xstrdup(p->p->text);
-            u.actor = xstrdup(t->id[s]);
+            u.actor = xstrdup(t->a[s].id);
             if (u.add + u.del > t->big) t->big = u.add + u.del;
-            GROW(t->t, t->nt, cap);
-            t->t[t->nt++] = u;
+            PUSH(t->t, t->nt, cap, u);
         }
     if (t->nt) qsort(t->t, (size_t)t->nt, sizeof *t->t, cmp_turn);
     double sum = 0;

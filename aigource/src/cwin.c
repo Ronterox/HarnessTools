@@ -29,6 +29,7 @@ static const char *kind_upper(int k) {
 
 double cw_life(const CNode *n) { return n->gone > 0 && n->leave == LV_THINK ? 2 * CW_ANIM : CW_ANIM; }
 
+/* ease out, as the draft's cubic-bezier(.2,.7,.2,1) */
 static float ease(const CNode *n, double clock) {
     double p = n->t0 < 0 ? 1 : (clock - n->t0) / cw_life(n);
     return p >= 1 ? 1 : 1 - powf(1 - (float)fmax(0, p), 3);
@@ -41,9 +42,8 @@ float cw_scale(const CNode *n, double clock) {
 void cw_pos(const CNode *n, double clock, float *x, float *y, float *a) {
     bool gone = n->gone > 0;
     float tx = gone ? n->gx : n->x, ty = gone ? n->gy : n->y, ta = gone ? 0 : 1;
-    double p = n->t0 < 0 ? 1 : (clock - n->t0) / cw_life(n);
-    if (p >= 1) { *x = tx, *y = ty, *a = ta; return; }
-    float e = 1 - powf(1 - (float)fmax(0, p), 3); /* ease out, as the draft's cubic-bezier(.2,.7,.2,1) */
+    float e = ease(n, clock);
+    if (e >= 1) { *x = tx, *y = ty, *a = ta; return; }
     *x = n->ax + (tx - n->ax) * e, *y = n->ay + (ty - n->ay) * e, *a = n->aa + (ta - n->aa) * e;
 }
 
@@ -63,26 +63,21 @@ void cw_body_free(CNode *n) {
     CBody *b = n->body;
     if (!b) return;
     for (int i = 0; i < b->nstr; i++) free(b->str[i]), free(b->st[i]);
-    free(b->str), free(b->st), free(b->rows), free(b->nums), free(b->tool_open);
+    free(b->str), free(b->st), free(b->rows), free(b->tool_open);
     ui_code_free(&b->cv);
     free(b);
     n->body = NULL;
 }
 
 static int add_str(CBody *b, char *s, unsigned char *st) {
-    if (b->nstr == b->capstr) {
-        b->capstr = b->capstr ? b->capstr * 2 : 8;
-        b->str = xrealloc(b->str, sizeof *b->str * (size_t)b->capstr);
-        b->st = xrealloc(b->st, sizeof *b->st * (size_t)b->capstr);
-    }
+    int cap = b->capstr; /* str and st grow together */
+    GROW(b->str, b->nstr, b->capstr);
+    GROW(b->st, b->nstr, cap);
     b->str[b->nstr] = s, b->st[b->nstr] = st;
     return b->nstr++;
 }
 
-static void add_row(CBody *b, CRow r) {
-    GROW(b->rows, b->n, b->cap);
-    b->rows[b->n++] = r;
-}
+static void add_row(CBody *b, CRow r) { PUSH(b->rows, b->n, b->cap, r); }
 
 /* Text as a pre block: tabs as 4 spaces, \r dropped, NULs as spaces, lines
  * wrapped at cols cells (pre-wrap), from *y. */
@@ -105,7 +100,7 @@ static void pre(CBody *b, const char *t, size_t len, float *y, float x, int cols
             int z = a, cells = 0;
             while (z < e && cells < cols) {
                 z++;
-                while (z < e && ((unsigned char)s[z] & 0xC0) == 0x80) z++;
+                while (z < e && UTF8_CONT(s[z])) z++;
                 cells++;
             }
             add_row(b, (CRow){.y = *y, .h = CW_ROW, .x = x, .k = CR_MONO, .c = c, .s = si, .a = a, .n = z - a, .box = box});
@@ -134,7 +129,6 @@ static void wrapped(CBody *b, char *s, unsigned char *st, float *y, float x, flo
 static void note(CBody *b, const char *t, float *y, float w) {
     *y += 6;
     wrapped(b, xstrdup(t), NULL, y, 9, w - 18, 12, NOTE_ROW_H, F_SANS, C_FAINT);
-    for (int i = b->n - 1; i >= 0 && b->rows[i].s == b->nstr - 1; i--) b->rows[i].k = CR_NOTE;
     *y += 6;
 }
 
@@ -144,8 +138,13 @@ static bool blank(const char *t, size_t n) {
     return true;
 }
 
-/* One line of markdown source [s, e) for ui_md. */
-static char *line_dup(const char *s, const char *e) { return xstrndup(s, (size_t)(e - s)); }
+/* One line of markdown source [s, e): its text, markers dropped, and *st its styles (ui_md). */
+static char *md_line(const char *s, const char *e, unsigned char **st) {
+    char *src = xstrndup(s, (size_t)(e - s)), *o;
+    ui_md(src, &o, st);
+    free(src);
+    return o;
+}
 
 /* The draft's md(): headings, lists, fences, inline code, bold; a paragraph per line. */
 static void prose(CBody *b, const char *t, size_t len, float *y, float w, Color c) {
@@ -186,14 +185,12 @@ static void prose(CBody *b, const char *t, size_t len, float *y, float w, Color 
         int h = 0;
         while (p + h < e && p[h] == '#' && h < 5) h++;
         bool head = h >= 1 && h <= 4 && p + h < e && (p[h] == ' ' || p[h] == '\t');
-        char *src = NULL, *o;
+        char *o;
         unsigned char *st;
         if (li) {
             while (li < e && (*li == ' ' || *li == '\t')) li++;
             list = true;
-            src = line_dup(li, e);
-            ui_md(src, &o, &st);
-            free(src);
+            o = md_line(li, e, &st);
             add_row(b, (CRow){.y = *y, .h = PROSE_ROW, .x = 9 + 6, .k = CR_PROSE, .font = F_SANS, .size = 12.5f,
                               .c = c, .s = add_str(b, xstrdup("\xE2\x80\xA2"), NULL), .a = 0, .n = 3});
             wrapped(b, o, st, y, 9 + 18, w - 18 - 18, 12.5f, PROSE_ROW, F_SANS, c);
@@ -203,16 +200,12 @@ static void prose(CBody *b, const char *t, size_t len, float *y, float w, Color 
                 const char *q = p + h;
                 while (q < e && (*q == ' ' || *q == '\t')) q++;
                 if (!first) *y += 2;
-                src = line_dup(q, e);
-                ui_md(src, &o, &st);
-                free(src);
+                o = md_line(q, e, &st);
                 for (size_t i = 0; o[i]; i++) st[i] = st[i] == UI_CODE ? UI_CODE : UI_BOLD;
                 wrapped(b, o, st, y, 9, w - 18, 12.5f, PROSE_ROW, F_SANS, C_FG);
                 *y += 4;
             } else if (!blank(p, (size_t)(e - p))) {
-                src = line_dup(p, e);
-                ui_md(src, &o, &st);
-                free(src);
+                o = md_line(p, e, &st);
                 wrapped(b, o, st, y, 9, w - 18, 12.5f, PROSE_ROW, F_SANS, c);
                 *y += 6;
             }
@@ -223,28 +216,17 @@ static void prose(CBody *b, const char *t, size_t len, float *y, float w, Color 
     if (list) *y += 6;
 }
 
-/* Code lines with their numbers: a Read's (read), a Write's content. */
-static void code(CBody *b, const CtxItem *it, char **lines, const int *nums, int n, float *y, bool read) {
-    if (b->cv.d) goto rows; /* kept from the last layout: its rows don't depend on the width */
-    size_t len = 0;
-    for (int i = 0; i < n; i++) len += strlen(lines[i]) + 1;
-    char *t = xmalloc(len + 1), *o = t;
-    for (int i = 0; i < n; i++) {
-        size_t l = strlen(lines[i]);
-        memcpy(o, lines[i], l), o += l, *o++ = '\n';
+/* Code: t's n lines (each ending in \n), numbered by nums or from 1: a Read's (read), a Write's content. */
+static void code(CBody *b, const CtxItem *it, const char *t, int n, const int *nums, float *y, bool read) {
+    if (!b->cv.d) { /* else kept from the last layout: its rows don't depend on the width */
+        ui_code_init(&b->cv, it->path ? it->path : "", t, 1, n);
+        for (int i = 0; nums && i < b->cv.n && i < n; i++) b->cv.d->lines[i].no = nums[i];
+        b->read = read;
+        b->cols = ui_code_cols(&b->cv);
+        char last[16];
+        snprintf(last, sizeof last, "%d", !n ? 0 : nums ? nums[n - 1] : n);
+        b->gut = (float)strlen(last) * ui_code_cell() + 12;
     }
-    *o = 0;
-    ui_code_init(&b->cv, it->path ? it->path : "", t, 1, n);
-    free(t);
-    b->nums = xmalloc(sizeof *b->nums * (size_t)(n ? n : 1));
-    for (int i = 0; i < n; i++) b->nums[i] = nums[i];
-    for (int i = 0; i < b->cv.n && i < n; i++) b->cv.d->lines[i].no = nums[i];
-    b->read = read;
-    b->cols = ui_code_cols(&b->cv);
-    char last[16];
-    snprintf(last, sizeof last, "%d", n ? nums[n - 1] : 0);
-    b->gut = (float)strlen(last) * ui_code_cell() + 12;
-rows:
     *y += 6;
     for (int i = 0; i < b->cv.n; i++) {
         add_row(b, (CRow){.y = *y, .h = CW_ROW, .k = CR_CODE, .line = i});
@@ -256,17 +238,10 @@ rows:
 /* The content of item it at content width w (the draft's body()). */
 static void body_build(CNode *n, const CtxAgent *a, float w) {
     const CtxItem *it = &a->items[n->item];
-    CBody keep = {0}; /* what doesn't depend on the width: the code view, the tools shown */
-    if (n->body) {
-        CBody *o = n->body;
-        keep.cv = o->cv, keep.nums = o->nums, keep.cols = o->cols, keep.gut = o->gut, keep.read = o->read;
-        keep.tool_open = o->tool_open;
-        memset(&o->cv, 0, sizeof o->cv), o->nums = NULL, o->tool_open = NULL;
-    }
-    cw_body_free(n);
-    CBody *b = n->body = xcalloc(1, sizeof *b);
-    b->cv = keep.cv, b->nums = keep.nums, b->cols = keep.cols, b->gut = keep.gut, b->read = keep.read;
-    b->tool_open = keep.tool_open;
+    CBody *b = n->body ? n->body : (n->body = xcalloc(1, sizeof *b));
+    /* the rows and their texts again; the code view and the tools shown don't depend on the width */
+    for (int i = 0; i < b->nstr; i++) free(b->str[i]), free(b->st[i]);
+    b->n = b->nstr = 0;
     b->w = w;
     float y = 0;
     int cols = (int)((w - 16) / ui_code_cell());
@@ -279,7 +254,10 @@ static void body_build(CNode *n, const CtxAgent *a, float w) {
         const char *rest;
         int k = ctx_code_lines(it, &cb, &lines, &nums, &rest);
         if (k) {
-            code(b, it, lines, nums, k, &y, true);
+            Buf j = {0}; /* the lines as one text, the first time */
+            for (int i = 0; i < k && !b->cv.d; i++) buf_puts(&j, lines[i]), buf_put(&j, "\n", 1);
+            code(b, it, j.s, k, nums, &y, true);
+            buf_free(&j);
             size_t rl = strlen(rest);
             if (!blank(rest, rl)) y += 6, pre(b, rest, rl, &y, 8, cols, C_SOFT, false), y += 6;
             free(cb), free(lines), free(nums);
@@ -290,8 +268,7 @@ static void body_build(CNode *n, const CtxAgent *a, float w) {
     }
     case CK_ACTION:
         if (it->tool && !strcmp(it->tool, "Bash")) {
-            char *s = xmalloc(strlen(it->cmd ? it->cmd : "") + 3);
-            sprintf(s, "$ %s", it->cmd ? it->cmd : "");
+            char *s = xasprintf("$ %s", it->cmd ? it->cmd : "");
             y += 6, pre(b, s, strlen(s), &y, 8, cols, C_SOFT, false), y += 6;
             free(s);
             if (it->desc) note(b, it->desc, &y, w);
@@ -303,8 +280,7 @@ static void body_build(CNode *n, const CtxAgent *a, float w) {
                 for (const char *p = s ? s : "";;) {
                     const char *e = strchr(p, '\n');
                     size_t l = e ? (size_t)(e - p) : strlen(p);
-                    char *ln = xmalloc(l + 3);
-                    memcpy(ln, side ? "+ " : "- ", 2), memcpy(ln + 2, p, l), ln[l + 2] = 0;
+                    char *ln = xasprintf("%s%.*s", side ? "+ " : "- ", (int)l, p);
                     pre(b, ln, l + 2, &y, 8, cols, side ? C_ADD : C_DEL, false);
                     free(ln);
                     if (!e) break;
@@ -313,19 +289,9 @@ static void body_build(CNode *n, const CtxAgent *a, float w) {
             }
             y += 6;
         } else if (it->tool && !strcmp(it->tool, "Write") && it->content) {
-            char *s = xstrdup(it->content), **lines;
-            int nl = 1;
-            for (char *p = s; *p; p++) nl += *p == '\n';
-            lines = xmalloc(sizeof *lines * (size_t)nl);
-            int *nums = xmalloc(sizeof *nums * (size_t)nl), k = 0;
-            for (char *p = s; p; k++) {
-                char *e = strchr(p, '\n');
-                if (e) *e = 0;
-                lines[k] = p, nums[k] = k + 1;
-                p = e ? e + 1 : NULL;
-            }
-            code(b, it, lines, nums, k, &y, false);
-            free(s), free(lines), free(nums);
+            char *s = xasprintf("%s\n", it->content); /* each line ends in \n: a last empty one stays a line */
+            code(b, it, s, count_lines(s, strlen(s)), NULL, &y, false);
+            free(s);
         } else y += 6, pre(b, t, it->len, &y, 8, cols, C_SOFT, false), y += 6;
         break;
     case CK_THINKING:
@@ -344,7 +310,7 @@ static void body_build(CNode *n, const CtxAgent *a, float w) {
     case CK_TOOLS:
         snprintf(buf, sizeof buf, "%d tool definitions, in this order:", it->ntx);
         note(b, buf, &y, w);
-        if (!b->tool_open) b->tool_open = xcalloc((size_t)(it->ntx ? it->ntx : 1), 1);
+        if (!b->tool_open) b->tool_open = xcalloc((size_t)it->ntx, 1);
         for (int k = 0; k < it->ntx; k++) {
             snprintf(buf, sizeof buf, "%s %s", b->tool_open[k] ? "\xE2\x96\xBE" : "\xE2\x96\xB8", it->names[k]);
             add_row(b, (CRow){.y = y, .h = TOOL_ROW, .x = 8, .k = CR_TOOL, .c = C_FG, .s = add_str(b, xstrdup(buf), NULL),
@@ -529,24 +495,16 @@ static void draw_body(CNode *n, const CwCtx *x, const Geo *g, float al, bool tex
                 if (y > cr.y + cr.height) break;
                 if (w->k != CR_CODE) continue;
                 char no[16];
-                snprintf(no, sizeof no, "%d", b->nums[w->line]);
+                snprintf(no, sizeof no, "%d", b->cv.d->lines[w->line].no);
                 ui_draw_text(ui_mono, no, (Vector2){cr.x + b->gut - 6 - (float)strlen(no) * cw, y + 2}, DET_FONT, 0,
                              ui_fade(C_FAINT, al));
             }
     }
     float maxs = b->h - cr.height;
-    if (maxs > 0) {
-        float th = cr.height - 4, bh = fmaxf(16, th * cr.height / b->h);
-        DrawRectangleRounded((Rectangle){cr.x + cr.width - 5, cr.y + 2 + (th - bh) * n->scroll / maxs, 3, bh}, 1, 4,
-                             ui_fade(C_DIM, 0.5f * al));
-    }
-    if (hot >= 0 && cr.height >= 3 * 18 && text) { /* in a corner, away from the hovered row */
-        static const char hint[] = "click: open in nvim";
-        float hw = sv_tw(F_SANS, hint, 11) + 12, hx = cr.x + cr.width - hw - 10, hy = cr.y + cr.height - 18 - 6;
-        if (x->mw.y > cr.y + cr.height / 2) hy = cr.y + 6;
-        DrawRectangleRounded((Rectangle){hx, hy, hw, 18}, 0.4f, 6, ui_fade(C_RAISED, 0.95f * al));
-        sv_tx(F_SANS, hint, hx + 6, sv_mid(hy + 9, 11), 11, ui_fade(C_DIM, al));
-    }
+    if (maxs > 0)
+        ui_thumb(cr.x + cr.width - 5, cr.y + 2, 3, cr.height - 4, cr.height, b->h, n->scroll, maxs, 16, ui_fade(C_DIM, 0.5f * al));
+    if (hot >= 0 && cr.height >= 3 * 18 && text)
+        sv_nvim_hint(cr.x + cr.width, 10, cr.y, cr.y + cr.height, x->mw.y > cr.y + cr.height / 2, al);
     EndScissorMode();
 }
 
@@ -639,7 +597,7 @@ int cw_hit(CNode *n, float cx, float cy, Vector2 p, int *line) {
             Rectangle q = {g.meta.x + 7 + n->rx[i], g.meta.y + n->ry[i], sv_tw(F_MONO, n->meta[i].s, 10.5f), META_ROW};
             if (CheckCollisionPointRec(p, q)) return CW_STALE;
         }
-        return CW_META;
+        return CW_BODY;
     }
     CBody *b = n->body;
     if (!b || !CheckCollisionPointRec(p, g.content)) return CW_BODY;
@@ -647,7 +605,7 @@ int cw_hit(CNode *n, float cx, float cy, Vector2 p, int *line) {
     int r = row_at(b, y);
     if (r >= b->n || y < b->rows[r].y) return CW_BODY;
     if (b->rows[r].k == CR_CODE && b->read) {
-        *line = b->nums[b->rows[r].line];
+        *line = b->cv.d->lines[b->rows[r].line].no;
         return CW_CODE;
     }
     if (b->rows[r].k == CR_TOOL) {

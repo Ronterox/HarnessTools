@@ -111,25 +111,19 @@ static int structure_dump(Ingest *in, EvQueue *q, const char *root, const char *
         ingest_free(in);
         return 1;
     }
-    ingest_poll(in);
-    Event *evs;
-    size_t n = evq_drain(q, &evs);
     Analysis *a = an_new(root);
-    an_add(a, evs, n);
-    for (size_t i = 0; i < n; i++) ev_free(&evs[i]);
-    free(evs);
+    size_t n = 0;
     double t0 = 0, t1 = 0;
     AnSnapshot *s = NULL;
     for (int i = 0; i <= rebuild; i++) { /* --rebuild: again on the same analysis, new events first */
-        if (i) {
-            ingest_poll(in);
-            size_t k = evq_drain(q, &evs);
-            an_add(a, evs, k);
-            for (size_t j = 0; j < k; j++) ev_free(&evs[j]);
-            free(evs);
-            n += k;
-            an_snapshot_free(s);
-        }
+        ingest_poll(in);
+        Event *evs;
+        size_t k = evq_drain(q, &evs);
+        an_add(a, evs, k);
+        for (size_t j = 0; j < k; j++) ev_free(&evs[j]);
+        free(evs);
+        n += k;
+        an_snapshot_free(s);
         t0 = now_wall();
         s = an_build(a);
         t1 = now_wall();
@@ -263,28 +257,28 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; i++) {
         const char *a = argv[i];
         const char *v = i + 1 < argc ? argv[i + 1] : NULL;
-#define TAKES(s, l) ((!strcmp(a, s) || !strcmp(a, l)) && v && ++i)
-        if (TAKES("-r", "--root")) root_arg = v;
-        else if (TAKES("-s", "--since")) since_h = atof(v);
-        else if (TAKES("-x", "--speed")) vo.speed = atof(v);
-        else if (TAKES("-W", "--size")) sscanf(v, "%dx%d", &vo.width, &vo.height);
-        else if (TAKES("--shot", "--shot")) vo.shot = v;
-        else if (TAKES("--frames", "--frames")) vo.frames = atoi(v);
-        else if (TAKES("--seek", "--seek")) vo.seek = atof(v);
-        else if (TAKES("--mouse", "--mouse")) sscanf(v, "%f,%f", &vo.mouse_x, &vo.mouse_y);
-        else if (TAKES("--turn", "--turn")) vo.turn = v;
-        else if (TAKES("--step", "--step")) vo.step = v;
-        else if (TAKES("--file", "--file")) vo.file = v;
-        else if (TAKES("--structure", "--structure")) vo.structure = v;
-        else if (TAKES("--structure-turn", "--structure-turn")) vo.structure_turn = atoi(v);
-        else if (TAKES("--structure-search", "--structure-search")) vo.structure_search = v;
-        else if (TAKES("--structure-pick", "--structure-pick")) vo.structure_pick = atoi(v);
-        else if (TAKES("--follow", "--follow")) follow = atof(v);
-        else if (TAKES("--metrics", "--metrics")) metrics = v;
-        else if (TAKES("--rebuild", "--rebuild")) rebuild = atoi(v);
-        else if (TAKES("--context-dump", "--context-dump")) context = v;
-        else if (TAKES("--context-at", "--context-at")) context_at = v;
-        else if (TAKES("--context", "--context")) context_view = v;
+#define TAKES(o) (!strcmp(a, o) && v && ++i) /* an option and its value */
+        if (TAKES("-r") || TAKES("--root")) root_arg = v;
+        else if (TAKES("-s") || TAKES("--since")) since_h = atof(v);
+        else if (TAKES("-x") || TAKES("--speed")) vo.speed = atof(v);
+        else if (TAKES("-W") || TAKES("--size")) sscanf(v, "%dx%d", &vo.width, &vo.height);
+        else if (TAKES("--shot")) vo.shot = v;
+        else if (TAKES("--frames")) vo.frames = atoi(v);
+        else if (TAKES("--seek")) vo.seek = atof(v);
+        else if (TAKES("--mouse")) sscanf(v, "%f,%f", &vo.mouse_x, &vo.mouse_y);
+        else if (TAKES("--turn")) vo.turn = v;
+        else if (TAKES("--step")) vo.step = v;
+        else if (TAKES("--file")) vo.file = v;
+        else if (TAKES("--structure")) vo.structure = v;
+        else if (TAKES("--structure-turn")) vo.structure_turn = atoi(v);
+        else if (TAKES("--structure-search")) vo.structure_search = v;
+        else if (TAKES("--structure-pick")) vo.structure_pick = atoi(v);
+        else if (TAKES("--follow")) follow = atof(v);
+        else if (TAKES("--metrics")) metrics = v;
+        else if (TAKES("--rebuild")) rebuild = atoi(v);
+        else if (TAKES("--context-dump")) context = v;
+        else if (TAKES("--context-at")) context_at = v;
+        else if (TAKES("--context")) context_view = v;
         else if (!strcmp(a, "-a") || !strcmp(a, "--all")) all = 1;
         else if (!strcmp(a, "-l") || !strcmp(a, "--live")) vo.live = 1;
         else if (!strcmp(a, "-w") || !strcmp(a, "--watch")) watch = 1;

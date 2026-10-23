@@ -358,8 +358,8 @@ file's text but a window of it):
   The next requests' messages are found there (the response being written, the
   tool results after it); the window is parsed again at each reload;
 - per instance its message's hash (`ih`) and blocks' content keys (`keys`);
-  per call its shapeHash, request model and kept count (`csh`, `cpm`,
-  `ckept`, `cextra`): with the agent's public calls and instances this is the
+  per call its shapeHash, request model and kept count (`calls`: `sh`, `pm`,
+  `kept`, `extra`): with the agent's public calls and instances this is the
   build the next requests extend;
 - the request shapes (`shape_raw`), the responses before the window as
   metadata (`old`: their request ids, last usage, model, block keys), the
@@ -547,7 +547,7 @@ start.
 | `Agent.build_exact` | `build_exact` |
 | `Agent.build_estimated` | `build_estimated` |
 | `Agent.blocks_of`, `finish_item` | `blocks_of`, `emit`, `finish_item` |
-| `free_items` | `Free`, `free_add`, `free_pop`, `free_remove` |
+| `free_items` | `Free`, `free_add`, `free_take` |
 | `Agent.post` | `post` |
 | `usage_of` | `usage_of` |
 | `split_text`, `inj_source`, `INJ_RE` | `split_text`, `inj_source` |

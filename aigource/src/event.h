@@ -94,7 +94,6 @@ enum {
     PROMPT_HARNESS, /* written by Claude Code, e.g. a task notification; text = "(kind)" */
 };
 
-const char *ev_kind_name(EvKind k);
 static inline bool ev_staged(EvKind k) { return k < EV_USAGE; } /* drawn on the stage */
 void ev_free(Event *e);
 int ev_cmp(const void *a, const void *b); /* by ts, then seq */

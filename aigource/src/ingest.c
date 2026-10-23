@@ -33,8 +33,7 @@ typedef struct {
     dev_t dev;
     ino_t ino;
     off_t off;
-    char *buf; /* partial last line */
-    size_t blen, bcap;
+    Buf buf; /* partial last line */
     Transcript *tr;
 } Tail;
 
@@ -43,7 +42,7 @@ struct Ingest {
     double since;
     int explicit_files;
     char **projdirs;
-    int nproj;
+    int nproj, capproj;
     Tail *tails;
     int ntails, captails;
     StrMap tracked; /* path -> tail index */
@@ -93,10 +92,7 @@ static int duplicate(Ingest *in, Event *e) {
             e->ts = in->usage[k].ts;
             return 0;
         }
-        if (in->nusage == in->capusage) {
-            in->capusage = in->capusage ? in->capusage * 2 : 256;
-            in->usage = xrealloc(in->usage, (size_t)in->capusage * sizeof *in->usage);
-        }
+        GROW(in->usage, in->nusage, in->capusage);
         in->usage[in->nusage].out = e->tok.out;
         in->usage[in->nusage].ts = e->ts;
         strmap_put(&in->usage_ix, e->tool_id, in->nusage++);
@@ -117,6 +113,9 @@ static int duplicate(Ingest *in, Event *e) {
     return 0;
 }
 
+/* When an event's call started: its t0, else its time. */
+static double call_start(const Event *e) { return e->t0 > 0 && e->t0 < e->ts ? e->t0 : e->ts; }
+
 /* Transcript events; file ones are remembered so the watcher can tell the
  * agent's own writes from other changes. */
 static void on_event(void *ud, Event *e) {
@@ -125,10 +124,7 @@ static void on_event(void *ud, Event *e) {
     if (e->via == VIA_GUESS) { /* not a record: the watcher must still see the change */
         double now = now_wall();
         if (!in->watch || e->ts < now - BACKLOG) { push(in, e); return; }
-        if (in->nheld == in->capheld) {
-            in->capheld = in->capheld ? in->capheld * 2 : 16;
-            in->held = xrealloc(in->held, (size_t)in->capheld * sizeof *in->held);
-        }
+        GROW(in->held, in->nheld, in->capheld);
         in->held[in->nheld].e = *e;
         in->held[in->nheld++].until = now + GUESS_WAIT;
         return;
@@ -137,26 +133,14 @@ static void on_event(void *ud, Event *e) {
         int k = in->recent_head++ % RECENT;
         free(in->recent[k].path);
         in->recent[k].path = xstrdup(e->path);
-        in->recent[k].start = e->t0 > 0 && e->t0 < e->ts ? e->t0 : e->ts;
+        in->recent[k].start = call_start(e);
         in->recent[k].end = e->ts;
     }
     push(in, e);
 }
 
-
-static char *path_join(const char *a, const char *b) {
-    size_t na = strlen(a), nb = strlen(b);
-    char *p = xmalloc(na + nb + 2);
-    memcpy(p, a, na);
-    p[na] = '/';
-    memcpy(p + na + 1, b, nb + 1);
-    return p;
-}
-
-static int ends_with(const char *s, const char *suf) {
-    size_t n = strlen(s), m = strlen(suf);
-    return n >= m && !strcmp(s + n - m, suf);
-}
+/* A subagent's agent-<id>.jsonl -> its agent-<id>.meta.json. */
+static char *meta_path(const char *jsonl) { return xasprintf("%.*s.meta.json", (int)strlen(jsonl) - 6, jsonl); }
 
 /* Actor id/name from a transcript path: main session or subagents/agent-<id>.jsonl.
  * A subagent also gets *title: an EV_TITLE with its type, task and session (a
@@ -167,9 +151,7 @@ static void actor_for(const char *path, char **id, char **name, Event *title) {
     size_t n = strlen(base) - (ends_with(base, ".jsonl") ? 6 : 0);
     if (!strncmp(base, "agent-", 6) && strstr(path, "/subagents/")) {
         *id = xstrndup(base + 6, n - 6);
-        char *meta = xmalloc(strlen(path) + 16);
-        memcpy(meta, path, strlen(path) - 6);
-        strcpy(meta + strlen(path) - 6, ".meta.json");
+        char *meta = meta_path(path);
         char type[96] = "agent";
         yyjson_doc *doc = yyjson_read_file(meta, 0, NULL, NULL);
         const char *t = doc ? yyjson_get_str(yyjson_obj_get(yyjson_doc_get_root(doc), "agentType")) : NULL;
@@ -202,10 +184,7 @@ static void actor_for(const char *path, char **id, char **name, Event *title) {
 
 static void track(Ingest *in, const char *path) {
     if (strmap_get(&in->tracked, path) >= 0) return;
-    if (in->ntails == in->captails) {
-        in->captails = in->captails ? in->captails * 2 : 16;
-        in->tails = xrealloc(in->tails, in->captails * sizeof *in->tails);
-    }
+    GROW(in->tails, in->ntails, in->captails);
     char *id, *name;
     Event title = {0};
     actor_for(path, &id, &name, &title);
@@ -256,7 +235,7 @@ static void find_projdirs(Ingest *in) {
     char *base = cfg ? path_join(cfg, "projects") : NULL;
     if (!base) {
         const char *home = getenv("HOME");
-        base = path_join(home ? home : "", ".claude/projects");
+        base = xasprintf("%s/.claude/projects", home ? home : "");
     }
     char *want = slug(in->root);
     size_t wn = strlen(want);
@@ -285,8 +264,7 @@ static void find_projdirs(Ingest *in) {
             if (sd) closedir(sd);
         }
         if (ok) {
-            in->projdirs = xrealloc(in->projdirs, (in->nproj + 1) * sizeof *in->projdirs);
-            in->projdirs[in->nproj++] = dir;
+            PUSH(in->projdirs, in->nproj, in->capproj, dir);
         } else {
             strmap_put(&in->rejected, dir, mt);
             free(dir);
@@ -297,47 +275,26 @@ static void find_projdirs(Ingest *in) {
     free(base);
 }
 
-static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
-
-/* The .jsonl files in dir, sorted: which copy of a resumed session's records
- * is seen first (and kept) must not depend on the directory's order. */
-static int list_jsonl(const char *dir, char ***out) {
-    DIR *d = opendir(dir);
-    struct dirent *de;
-    char **names = NULL;
-    int n = 0;
-    while (d && (de = readdir(d))) {
-        if (!ends_with(de->d_name, ".jsonl")) continue;
-        names = xrealloc(names, (size_t)(n + 1) * sizeof *names);
-        names[n++] = xstrdup(de->d_name);
-    }
-    if (d) closedir(d);
-    if (n) qsort(names, (size_t)n, sizeof *names, cmp_str);
-    *out = names;
-    return n;
-}
-
-static void scan_subagents(Ingest *in, const char *projdir, const char *sid) {
-    char *sub = xmalloc(strlen(projdir) + strlen(sid) + 16);
-    sprintf(sub, "%s/%s/subagents", projdir, sid);
+/* A session's <dir>/<session>.jsonl, and its subagents' in <dir>/<session>/subagents. */
+static void track_session(Ingest *in, const char *f) {
+    track(in, f);
+    char *sub = xasprintf("%.*s/subagents", (int)strlen(f) - 6, f);
     char **names;
-    int nn = list_jsonl(sub, &names);
+    int nn = list_dir(sub, ".jsonl", &names);
     for (int k = 0; k < nn; k++) {
-        char *f = path_join(sub, names[k]);
+        char *a = path_join(sub, names[k]);
         free(names[k]);
-        if (strmap_get(&in->tracked, f) < 0) {
+        if (strmap_get(&in->tracked, a) < 0) {
             /* Name comes from the .meta.json; give it a moment to appear. */
-            char *meta = xmalloc(strlen(f) + 16);
-            memcpy(meta, f, strlen(f) - 6);
-            strcpy(meta + strlen(f) - 6, ".meta.json");
+            char *meta = meta_path(a);
             struct stat st;
             int ready = !access(meta, R_OK) ||
-                        (!stat(f, &st) && now_wall() - st.st_mtim.tv_sec > META_WAIT_SECS);
+                        (!stat(a, &st) && now_wall() - st.st_mtim.tv_sec > META_WAIT_SECS);
             free(meta);
-            if (ready) track(in, f);
+            if (ready) track(in, a);
             else in->meta_waiting = 1;
         }
-        free(f);
+        free(a);
     }
     free(names);
     free(sub);
@@ -348,35 +305,21 @@ static void rescan(Ingest *in) {
     char *newest = NULL;
     double newest_mt = 0;
     for (int p = 0; p < in->nproj; p++) {
-        char **names;
-        int nn = list_jsonl(in->projdirs[p], &names);
+        char **names; /* sorted: which copy of a resumed session's records is seen first (and kept) */
+        int nn = list_dir(in->projdirs[p], ".jsonl", &names);
         for (int k = 0; k < nn; k++) {
-            const char *name = names[k];
-            char *f = path_join(in->projdirs[p], name);
+            char *f = path_join(in->projdirs[p], names[k]);
             struct stat st;
             double mt = stat(f, &st) ? 0 : st.st_mtim.tv_sec + st.st_mtim.tv_nsec / 1e9;
             if (mt > newest_mt) { free(newest); newest = xstrdup(f); newest_mt = mt; }
-            if (strmap_get(&in->tracked, f) >= 0 || mt >= in->since) {
-                track(in, f);
-                char *sid = xstrndup(name, strlen(name) - 6);
-                scan_subagents(in, in->projdirs[p], sid);
-                free(sid);
-            }
+            if (strmap_get(&in->tracked, f) >= 0 || mt >= in->since) track_session(in, f);
             free(f);
             free(names[k]);
         }
         free(names);
     }
     /* Nothing active: show the most recent session rather than an empty screen. */
-    if (!in->ntails && newest) {
-        track(in, newest);
-        const char *slash = strrchr(newest, '/');
-        char *dir = xstrndup(newest, (size_t)(slash - newest));
-        char *sid = xstrndup(slash + 1, strlen(slash + 1) - 6);
-        scan_subagents(in, dir, sid);
-        free(dir);
-        free(sid);
-    }
+    if (!in->ntails && newest) track_session(in, newest);
     free(newest);
 }
 
@@ -388,7 +331,7 @@ static void read_tail(Ingest *in, Tail *t) {
         tr_free(t->tr);
         t->tr = tr_new(in->root, t->actor, t->actor_name, t->path, on_event, in);
         t->off = 0;
-        t->blen = 0;
+        t->buf.n = 0;
     }
     t->dev = st.st_dev;
     t->ino = st.st_ino;
@@ -406,28 +349,17 @@ static void read_tail(Ingest *in, Tail *t) {
             size_t i = (size_t)(nl - chunk);
             const char *line = chunk + start;
             size_t len = i - start;
-            if (t->blen) { /* complete the buffered partial line */
-                if (t->blen + len > t->bcap) {
-                    t->bcap = (t->blen + len) * 2;
-                    t->buf = xrealloc(t->buf, t->bcap);
-                }
-                memcpy(t->buf + t->blen, line, len);
-                tr_feed(t->tr, t->buf, t->blen + len, (long)(base - (off_t)t->blen));
-                t->blen = 0;
+            if (t->buf.n) { /* complete the buffered partial line */
+                long at = (long)(base - (off_t)t->buf.n);
+                buf_put(&t->buf, line, len);
+                tr_feed(t->tr, t->buf.s, t->buf.n, at);
+                t->buf.n = 0;
             } else if (len) {
                 tr_feed(t->tr, line, len, (long)(base + (off_t)start));
             }
             start = i + 1;
         }
-        size_t rest = (size_t)n - start;
-        if (rest) {
-            if (t->blen + rest > t->bcap) {
-                t->bcap = (t->blen + rest) * 2;
-                t->buf = xrealloc(t->buf, t->bcap);
-            }
-            memcpy(t->buf + t->blen, chunk + start, rest);
-            t->blen += rest;
-        }
+        if (start < (size_t)n) buf_put(&t->buf, chunk + start, (size_t)n - start);
     }
     close(fd);
 }
@@ -455,7 +387,7 @@ static int attribute(Ingest *in, WatchChange *c, double now) {
     /* A failed command's guess, confirmed: a real change, with what the watcher saw. */
     for (int i = 0; i < in->nheld; i++) {
         Event *h = &in->held[i].e;
-        double start = h->t0 > 0 && h->t0 < h->ts ? h->t0 : h->ts;
+        double start = call_start(h);
         if (strcmp(h->path, c->path) || c->ts < start - DUP_SLACK || c->ts > h->ts + DUP_SLACK) continue;
         Event e = *h;
         in->held[i] = in->held[--in->nheld];
@@ -579,11 +511,10 @@ void ingest_free(Ingest *in) {
     for (int i = 0; i < in->ntails; i++) {
         Tail *t = &in->tails[i];
         tr_free(t->tr);
-        free(t->path), free(t->actor), free(t->actor_name), free(t->buf);
+        free(t->path), free(t->actor), free(t->actor_name), buf_free(&t->buf);
     }
     free(in->tails);
-    for (int i = 0; i < in->nproj; i++) free(in->projdirs[i]);
-    free(in->projdirs);
+    strv_free(in->projdirs, in->nproj);
     strmap_free(&in->tracked), strmap_free(&in->rejected), strmap_free(&in->seen), strmap_free(&in->usage_ix);
     for (int i = 0; i < RECENT; i++) free(in->recent[i].path);
     for (int i = 0; i < in->nheld; i++) ev_free(&in->held[i].e);

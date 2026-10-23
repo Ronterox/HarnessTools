@@ -2,6 +2,7 @@
 #define AIG_SVIEW_INT_H
 /* Shared by sview.c (screen, stage, strip) and sinsp.c (the inspector). */
 #include <stdbool.h>
+#include <string.h>
 
 #include "analysis.h"
 #include "metrics.h"
@@ -47,6 +48,18 @@ void sv_txs(int f, const char *s, float x, float y, float css, float sp, Color c
 void sv_fit(int f, char *out, size_t n, const char *s, float css, float maxw);
 /* y of the top of a line whose middle is at cy */
 static inline float sv_mid(float cy, float css) { return cy - PX(css) * 0.5f; }
+void sv_txc(int f, const char *s, float cx, float cy, float css, Color c); /* centred at cx, its middle at cy */
+/* Text with a halo (8 copies in colour halo around it), for labels over lines and circles. */
+void sv_halo(int f, const char *s, float x, float y, float css, Color c, Color halo);
+void sv_hline(float x0, float x1, float y, Color c); /* a 1px line */
+/* "aigource · screen" from x 12, its middle at cy (drawn when draw): where it ends. */
+float sv_brand(const char *screen, float cy, bool draw);
+/* Key hints {keys, what they do} from x along cy, gap apart, while they end
+ * before right: where the next would start. */
+float sv_hints(const char *const (*keys)[2], int n, float x, float cy, float right, float gap);
+/* "click: open in nvim" at a box's right (inset px in), at its top or bottom,
+ * away from the hovered row; alpha al. */
+void sv_nvim_hint(float right, float inset, float top, float bottom, bool at_top, float al);
 
 Color sv_darker(Color c, float k);
 Color sv_brighter(Color c, float k);
@@ -57,7 +70,6 @@ Color sv_actor_col(int slot);
 Color sv_blame_col(int slot);
 Color sv_flag_col(int k); /* STK_* */
 
-double sv_jfix(double v, int digits); /* rounded as JavaScript's toFixed: half away from zero */
 void sv_fmt_k(char *b, size_t n, long long v);
 void sv_fmt_age(char *b, size_t n, double s);
 void sv_fmt_dur(char *b, size_t n, double s);
@@ -69,6 +81,11 @@ void sv_actor_name(const AnSnapshot *S, int a, bool first, char *b, size_t n);
 void sv_metric_word(const StMetrics *m, const StNode *d, int mode, char *b, size_t n);
 const char *sv_kind_word(int kind);
 bool sv_is_def(const StNode *d);
+/* A node's path below the root: its id past the first '/' ("" without one). */
+static inline const char *sv_rel(const char *id) {
+    const char *r = strchr(id, '/');
+    return r ? r + 1 : "";
+}
 /* A small dark box at `at` with a bold part and the rest (either may be NULL or ""). */
 void sv_tooltip(const char *bold, const char *rest, Vector2 at);
 
@@ -79,7 +96,7 @@ enum { IT_TEXT, IT_BOX, IT_DOT, IT_LINK, IT_LEGEND, IT_CODE, IT_CARD, IT_SPARK, 
 typedef struct {
     unsigned char k, font;
     bool hl;        /* text: takes its row's hover colour */
-    float x, y, w, h, size, sp, radius, bw;
+    float x, y, w, h, size, sp, radius;
     Color c, c2;    /* text or fill; border (a link: its hover background, then its hover text colour) */
     char *s;
     unsigned char *st; /* text: per byte UI_PLAIN/UI_BOLD/UI_CODE, NULL plain */
@@ -88,12 +105,13 @@ typedef struct {
     int aux;        /* legend: its turn (-1 unknown, INT_MIN none); note: its NoteView */
 } IItem;
 
+typedef struct { NoteView v; UiNoteStyle st; } DocNote; /* a note item's view and style */
+
 typedef struct {
     IItem *it;
     int n, cap;
     float h;
-    NoteView *nv;
-    UiNoteStyle *nvs;
+    DocNote *nv;
     int nnv, capnv;
     CodeView cv;
     int *orig, norig, line0, cols; /* code: each line's origin, first line number, longest line */

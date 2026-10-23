@@ -24,10 +24,7 @@
 /* ---- items ---------------------------------------------------------------- */
 
 static IItem *add(Doc *d, int k) {
-    if (d->n == d->cap) {
-        d->cap = d->cap ? d->cap * 2 : 128;
-        d->it = xrealloc(d->it, sizeof *d->it * (size_t)d->cap);
-    }
+    GROW(d->it, d->n, d->cap);
     IItem *it = &d->it[d->n++];
     memset(it, 0, sizeof *it);
     it->k = (unsigned char)k;
@@ -40,7 +37,7 @@ static void doc_reset(Doc *d) {
     for (int i = 0; i < d->n; i++) free(d->it[i].s), free(d->it[i].st), free(d->it[i].tip);
     d->n = 0;
     d->h = 0;
-    for (int i = 0; i < d->nnv; i++) ui_nv_clear(&d->nv[i]), free(d->nv[i].rows);
+    for (int i = 0; i < d->nnv; i++) ui_nv_clear(&d->nv[i].v), free(d->nv[i].v.rows);
     d->nnv = 0;
     ui_code_free(&d->cv);
     free(d->orig);
@@ -54,7 +51,6 @@ static void doc_free(Doc *d) {
     doc_reset(d);
     free(d->it);
     free(d->nv);
-    free(d->nvs);
     memset(d, 0, sizeof *d);
     d->card = -1;
 }
@@ -81,7 +77,7 @@ static float text(Doc *d, int f, float css, float sp, Color c, float x, float y,
 static IItem *box(Doc *d, float x, float y, float w, float h, Color fill, Color border, float radius) {
     IItem *it = add(d, IT_BOX);
     it->x = x, it->y = y, it->w = w, it->h = h;
-    it->c = fill, it->c2 = border, it->radius = radius, it->bw = 1;
+    it->c = fill, it->c2 = border, it->radius = radius;
     return it;
 }
 
@@ -127,7 +123,7 @@ static float wrap_md(Doc *d, int f, float css, Color c, Color bold, float x, flo
             if (ts) memset(ts + len, UI_PLAIN, 3), ts[len + 3] = 0;
             while (len > 0 && ui_rich_w(sv_font(f), sv_bold(f), t, ts, len + 3, PX(css)) > avail) {
                 int l = len - 1;
-                while (l > 0 && ((unsigned char)t[l] & 0xC0) == 0x80) l--;
+                while (l > 0 && UTF8_CONT(t[l])) l--;
                 memmove(t + l, t + len, 4);
                 if (ts) memmove(ts + l, ts + len, 4);
                 len = l;
@@ -196,6 +192,22 @@ static void flow_runs(Flow *f, const Run *r, int n, const char *title) {
 static void flow_text(Flow *f, int font, float css, Color c, const char *s) {
     Run r = {font, css, c, s};
     flow_runs(f, &r, 1, NULL);
+}
+
+/* A count in bold, its word dim. */
+static void flow_count(Flow *f, int v, const char *word) {
+    char a[32];
+    snprintf(a, sizeof a, "%d", v);
+    flow_runs(f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, word}}, 2, NULL);
+}
+
+/* "+add" and "−del", each a group. */
+static void flow_diff(Flow *f, int add, int del) {
+    char a[32];
+    snprintf(a, sizeof a, "+%d", add);
+    flow_text(f, F_MONO, 12.5f, C_ADD, a);
+    snprintf(a, sizeof a, "\xE2\x88\x92%d", del);
+    flow_text(f, F_MONO, 12.5f, C_DEL, a);
 }
 
 /* A chip: text in an outlined (or filled) small box. */
@@ -303,12 +315,8 @@ static void legend_row(Doc *d, float x, float *y, float w, Color sw, const char 
 /* An agent's comment as the draft's .note box (NoteView), its caption inside;
  * earlier: dashed and dim. who NULL: no caption. */
 static void note(Doc *d, float x, float *y, float w, const char *who, const char *s, bool earlier) {
-    if (d->nnv == d->capnv) {
-        d->capnv = d->capnv ? d->capnv * 2 : 8;
-        d->nv = xrealloc(d->nv, sizeof *d->nv * (size_t)d->capnv);
-        d->nvs = xrealloc(d->nvs, sizeof *d->nvs * (size_t)d->capnv);
-    }
-    NoteView *nv = &d->nv[d->nnv];
+    GROW(d->nv, d->nnv, d->capnv);
+    NoteView *nv = &d->nv[d->nnv].v;
     memset(nv, 0, sizeof *nv);
     ui_nv_set(nv, &s, 1);
     IItem *it = add(d, IT_NOTE);
@@ -317,13 +325,31 @@ static void note(Doc *d, float x, float *y, float w, const char *who, const char
         upper(u, sizeof u, who);
         it->s = xstrdup(u);
     }
-    d->nvs[d->nnv] = (UiNoteStyle){.bg = earlier ? BLANK : C_RAISED, .border = C_LINE, .dashed = earlier,
+    d->nv[d->nnv].st = (UiNoteStyle){.bg = earlier ? BLANK : C_RAISED, .border = C_LINE, .dashed = earlier,
                                    .text = earlier ? C_DIM : C_SOFT, .bold = earlier ? C_DIM : C_SOFT,
                                    .head_color = C_FAINT, .size = PX(13), .radius = 6, .pad = 7, .pad_x = 9,
                                    .head = it->s, .head_size = PX(10.5f), .head_h = 17};
-    it->x = x, it->y = *y, it->w = w, it->h = ui_nv_boxes_h(nv, w, &d->nvs[d->nnv]);
+    it->x = x, it->y = *y, it->w = w, it->h = ui_nv_boxes_h(nv, w, &d->nv[d->nnv].st);
     it->aux = d->nnv++;
     *y += it->h;
+}
+
+/* Comment c's index: c < 0 is one from earlier in the turn, stored as -1 - index. -1 out of range. */
+static int comment_of(const AnSnapshot *S, int c) {
+    int ix = c >= 0 ? c : -1 - c;
+    return ix < S->ncomments ? ix : -1;
+}
+
+/* Comment c as a note, gap above it: "agent, before <tool>", or dim from earlier in the turn. */
+static void note_for(Doc *d, float x, float *y, float w, int c, const char *tool, float gap) {
+    const AnSnapshot *S = d->m->snap;
+    int ix = comment_of(S, c);
+    if (ix < 0) return;
+    char who[128];
+    if (c < 0) snprintf(who, sizeof who, "earlier in the turn");
+    else snprintf(who, sizeof who, "agent, before %s", tool ? tool : "");
+    *y += gap;
+    note(d, x, y, w, who, S->comments[ix], c < 0);
 }
 
 static void stack_bar(Doc *d, float x, float *y, float w, const int *v, const Color *c, char *const *tips, int n) {
@@ -343,23 +369,23 @@ static void stack_bar(Doc *d, float x, float *y, float w, const int *v, const Co
 
 /* ---- sections ------------------------------------------------------------- */
 
-static const char *rel_of(const char *id) {
-    const char *s = strchr(id, '/');
-    return s ? s + 1 : "";
-}
-
 static const char *turn_title(const AnSnapshot *S, int t) {
     return t >= 0 && t < S->nturns && S->turns[t].title ? S->turns[t].title : "";
 }
 
+/* The kind in a chip, the title wrapped after it. */
+static void title_chip(Doc *d, float x, float *y, float w, const char *kind, const char *title) {
+    char u[32];
+    upper(u, sizeof u, kind);
+    float cw = sv_tws(F_MONO_B, u, 10.5f, 0.6f) + 10;
+    box(d, x, *y + 5, cw, 16, BLANK, C_LINE, 3);
+    text(d, F_MONO_B, 10.5f, 0.6f, C_DIM, x + 5, *y + 5, 16, u);
+    *y += wrap(d, F_MONO_B, 16, C_FG, x, *y, w, 24, cw + 6, title, 0);
+}
+
 static void header(Doc *d, const StMetrics *m, int node, float x, float *y, float w) {
     const StNode *n = &m->nodes[node];
-    char u[32];
-    upper(u, sizeof u, sv_kind_word(n->kind));
-    float cw = sv_tws(F_MONO_B, u, 10.5f, 0.6f) + 10, ch = 16;
-    box(d, x, *y + (24 - ch) / 2 + 1, cw, ch, BLANK, C_LINE, 3);
-    text(d, F_MONO_B, 10.5f, 0.6f, C_DIM, x + 5, *y + (24 - ch) / 2 + 1, ch, u);
-    *y += wrap(d, F_MONO_B, 16, C_FG, x, *y, w, 24, cw + 6, n->name, 0);
+    title_chip(d, x, y, w, sv_kind_word(n->kind), n->name);
     char path[2048] = "";
     int chain[64], nc = 0;
     for (int p = n->parent; p > 0 && nc < 64; p = m->nodes[p].parent) chain[nc++] = p; /* below the root */
@@ -372,16 +398,10 @@ static void header(Doc *d, const StMetrics *m, int node, float x, float *y, floa
 
 static void stats(Doc *d, const StNode *n, float x, float *y, float w) {
     Flow f = {d, x, w, x, *y, 12.5f * 1.5f, 14, 4};
-    char a[64], b[64];
-    snprintf(a, sizeof a, "%d", n->turns);
-    snprintf(b, sizeof b, " turn%s", n->turns == 1 ? "" : "s");
-    flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, b}}, 2, NULL);
-    snprintf(a, sizeof a, "%d", n->edits);
-    flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, " changes"}}, 2, NULL);
-    snprintf(a, sizeof a, "+%d", n->add);
-    flow_text(&f, F_MONO, 12.5f, C_ADD, a);
-    snprintf(a, sizeof a, "\xE2\x88\x92%d", n->del);
-    flow_text(&f, F_MONO, 12.5f, C_DEL, a);
+    char a[64];
+    flow_count(&f, n->turns, n->turns == 1 ? " turn" : " turns");
+    flow_count(&f, n->edits, " changes");
+    flow_diff(&f, n->add, n->del);
     snprintf(a, sizeof a, "%d lines", n->lines);
     flow_text(&f, F_MONO, 12.5f, C_DIM, a);
     if (sv_is_def(n)) {
@@ -402,6 +422,15 @@ static void flag_row(Doc *d, float x, float *y, float w, Color c, const char *t,
     *y += 6;
 }
 
+/* "<v> <unit>s<rest>" as a flag row */
+static void flag_n(Doc *d, float x, float *y, float w, Color c, long v, const char *unit, const char *rest,
+                   const char *small) {
+    char t[512], p[64];
+    sv_plural(p, sizeof p, v, unit);
+    snprintf(t, sizeof t, "%s%s", p, rest);
+    flag_row(d, x, y, w, c, t, small);
+}
+
 static void flags(Doc *d, const StMetrics *m, const StNode *n, float x, float *y, float w) {
     const AnSnapshot *S = m->snap;
     if (!n->flags.corrected && !n->flags.interrupted && !n->flags.failing && !n->flags.untested && !n->flags.blind &&
@@ -410,36 +439,22 @@ static void flags(Doc *d, const StMetrics *m, const StNode *n, float x, float *y
     h3(d, x, y, "Flags");
     char t[512], p[64], sm[1200];
     if (n->flags.corrected) {
-        sv_plural(p, sizeof p, n->flags.corrected, "turn");
-        snprintf(t, sizeof t, "%s followed by a prompt that reads like a correction", p);
         sm[0] = 0;
         for (int k = 0; k < n->ncorr_turns && k < 2; k++) {
             const char *c = S->turns[n->corr_turns[k]].corr;
             size_t l = strlen(sm);
             snprintf(sm + l, sizeof sm - l, "%s\xE2\x80\x9C%s\xE2\x80\x9D", k ? "\n" : "", c ? c : "");
         }
-        flag_row(d, x, y, w, C_CORR, t, sm);
+        flag_n(d, x, y, w, C_CORR, n->flags.corrected, "turn", " followed by a prompt that reads like a correction", sm);
     }
-    if (n->flags.interrupted) {
-        sv_plural(p, sizeof p, n->flags.interrupted, "turn");
-        snprintf(t, sizeof t, "%s you interrupted", p);
-        flag_row(d, x, y, w, C_CORR, t, NULL);
-    }
-    if (n->flags.failing) {
-        sv_plural(p, sizeof p, n->flags.failing, "change");
-        snprintf(t, sizeof t, "%s where the last build/test after it failed", p);
-        flag_row(d, x, y, w, C_TEST, t, NULL);
-    }
-    if (n->flags.untested) {
-        sv_plural(p, sizeof p, n->flags.untested, "change");
-        snprintf(t, sizeof t, "%s with no build or test after it in the turn", p);
-        flag_row(d, x, y, w, C_TEST, t, NULL);
-    }
-    if (n->flags.blind) {
-        sv_plural(p, sizeof p, n->flags.blind, "change");
-        snprintf(t, sizeof t, "%s made without reading that code first", p);
-        flag_row(d, x, y, w, C_BLIND, t, "No Read, cat or sed -n of it in the agent's context.");
-    }
+    if (n->flags.interrupted) flag_n(d, x, y, w, C_CORR, n->flags.interrupted, "turn", " you interrupted", NULL);
+    if (n->flags.failing)
+        flag_n(d, x, y, w, C_TEST, n->flags.failing, "change", " where the last build/test after it failed", NULL);
+    if (n->flags.untested)
+        flag_n(d, x, y, w, C_TEST, n->flags.untested, "change", " with no build or test after it in the turn", NULL);
+    if (n->flags.blind)
+        flag_n(d, x, y, w, C_BLIND, n->flags.blind, "change", " made without reading that code first",
+               "No Read, cat or sed -n of it in the agent's context.");
     if (n->flags.slow) {
         char a[64], b[64];
         if (n->kind == AN_DIR) {
@@ -448,10 +463,10 @@ static void flags(Doc *d, const StMetrics *m, const StNode *n, float x, float *y
             flag_row(d, x, y, w, C_SLOW, t, NULL);
         } else {
             double avg = m->avg_time[ST_LV_FILE];
-            sv_fmt_dur(a, sizeof a, sv_jfix(n->per_turn, 0));
+            sv_fmt_dur(a, sizeof a, jfix(n->per_turn, 0));
             snprintf(t, sizeof t, "Slow: %s per turn, %.1f\xC3\x97 the average file", a,
-                     sv_jfix(avg > 0 ? n->per_turn / avg : 0, 1));
-            sv_fmt_dur(b, sizeof b, sv_jfix(avg, 0));
+                     jfix(avg > 0 ? n->per_turn / avg : 0, 1));
+            sv_fmt_dur(b, sizeof b, jfix(avg, 0));
             snprintf(sm, sizeof sm, "Average %s: agent time on its changes, per turn that changed it.", b);
             flag_row(d, x, y, w, C_SLOW, t, sm);
         }
@@ -475,7 +490,7 @@ static int cmp_hot(const void *a, const void *b, void *ud) {
 
 static void hottest(Doc *d, const Color *fill, int mode, const StNode *n, float x, float *y, float w, const char *title) {
     const StMetrics *m = d->m;
-    int *k = xmalloc(sizeof *k * (size_t)(n->nkids ? n->nkids : 1)), nk = 0;
+    int *k = xmalloc(sizeof *k * (size_t)n->nkids), nk = 0;
     for (int i = 0; i < n->nkids; i++)
         if (m->nodes[n->kids[i]].turns) k[nk++] = n->kids[i];
     HotCtx c = {m, mode};
@@ -595,8 +610,8 @@ static void context(Doc *d, const StNode *n, float x, float *y, float w) {
     const StMetrics *m = d->m;
     h3(d, x, y, "Context cost");
     char t[256], p[64];
-    snprintf(t, sizeof t, "%.1f reads and %.1f searches before touching it, per turn", sv_jfix(n->ctx_reads, 1),
-             sv_jfix(n->ctx_searches, 1));
+    snprintf(t, sizeof t, "%.1f reads and %.1f searches before touching it, per turn", jfix(n->ctx_reads, 1),
+             jfix(n->ctx_searches, 1));
     big(d, x, y, w, t);
     sv_plural(p, sizeof p, n->ctx_turns, "turn");
     snprintf(t, sizeof t, "over %s: what the agent had read in the turn before its first change here", p);
@@ -604,7 +619,7 @@ static void context(Doc *d, const StNode *n, float x, float *y, float w) {
     if (n->nctx_rows) {
         *y += 10;
         h3(d, x, y, "Read to change it");
-        const char *self = n->kind == AN_DIR || n->file < 0 ? NULL : rel_of(m->nodes[n->file].id);
+        const char *self = n->kind == AN_DIR || n->file < 0 ? NULL : sv_rel(m->nodes[n->file].id);
         read_list(d, n->ctx_rows, n->nctx_rows, self, x, y, w);
     }
 }
@@ -653,8 +668,8 @@ static void cost(Doc *d, const StNode *n, float x, float *y, float w) {
     snprintf(t, sizeof t, "%s output tokens \xC2\xB7 %s of agent time", a, b);
     big(d, x, y, w, t);
     if (n->kind != AN_DIR && n->turns) {
-        sv_fmt_dur(a, sizeof a, sv_jfix(n->per_turn, 0));
-        sv_fmt_dur(b, sizeof b, sv_jfix(m->avg_time[n->level], 0));
+        sv_fmt_dur(a, sizeof a, jfix(n->per_turn, 0));
+        sv_fmt_dur(b, sizeof b, jfix(m->avg_time[n->level], 0));
         snprintf(t, sizeof t, "%s per turn \xC2\xB7 the average %s takes %s", a, n->level == ST_LV_DEF ? "function" : "file", b);
         more(d, x, y, w, t);
     }
@@ -688,7 +703,7 @@ static void owner(Doc *d, const StNode *n, float x, float *y, float w) {
         authors += a >= 0;
         if (i >= 6) continue;
         char pct[16];
-        snprintf(pct, sizeof pct, "%.0f%%", sv_jfix(100.0 * n->who[i].lines / (double)total, 0));
+        snprintf(pct, sizeof pct, "%.0f%%", jfix(100.0 * n->who[i].lines / (double)total, 0));
         legend_row(d, x, y, w, c[i], names[i], a >= 0 ? (m->snap->actors[a].sub ? "subagent" : "session") : NULL, pct,
                    INT_MIN);
     }
@@ -696,8 +711,7 @@ static void owner(Doc *d, const StNode *n, float x, float *y, float w) {
     sv_plural(p, sizeof p, authors, "author");
     snprintf(t, sizeof t, "%s: sessions and subagents", p);
     more(d, x, y, w, t);
-    for (int i = 0; i < n->nwho; i++) free(names[i]);
-    free(names);
+    strv_free(names, n->nwho);
     free(v);
     free(c);
 }
@@ -843,18 +857,13 @@ static void turns(Doc *d, int node, bool notes, int maxt, float x, float *y, flo
         *y = flow_end(&f);
         if (notes)
             for (int k = 0; k < r->nnotes; k++) {
-                int c = r->notes[k], ix = c >= 0 ? c : -1 - c;
-                if (ix < 0 || ix >= S->ncomments) continue;
-                const char *tool = "";
+                int c = r->notes[k];
+                const char *tool = NULL;
                 for (int j = 0; j < an->nch; j++) {
                     const AnChange *C = &S->changes[an->ch[j].cid];
-                    if (C->turn == r->turn && C->comment == c) { tool = C->tool ? C->tool : ""; break; }
+                    if (C->turn == r->turn && C->comment == c) { tool = C->tool; break; }
                 }
-                char who[128];
-                if (c < 0) snprintf(who, sizeof who, "earlier in the turn");
-                else snprintf(who, sizeof who, "agent, before %s", tool);
-                *y += 6;
-                note(d, x, y, w, who, S->comments[ix], c < 0);
+                note_for(d, x, y, w, c, tool, 6);
             }
         *y += 2;
     }
@@ -872,6 +881,20 @@ static void turns(Doc *d, int node, bool notes, int maxt, float x, float *y, flo
         if (d->n > n0_) y += GAP;                                                                                      \
     } while (0)
 
+/* The sections every node has, in the draft's order; lv (functions and files) adds the trend and partners. */
+static void history(Doc *d, const StNode *n, int node, bool lv, float x, float *yp, float w) {
+    float y = *yp;
+    if (lv) SECTION(trend(d, n, node, x, &y, w));
+    SECTION(fixes(d, n, x, &y, w));
+    SECTION(rework(d, n, x, &y, w));
+    SECTION(context(d, n, x, &y, w));
+    if (lv) SECTION(partners(d, n, x, &y, w));
+    SECTION(cost(d, n, x, &y, w));
+    SECTION(owner(d, n, x, &y, w));
+    SECTION(age(d, n, x, &y, w));
+    *yp = y;
+}
+
 static void build_node(Doc *d, const Color *fill, int mode, int node, float x, float w) {
     const StNode *n = &d->m->nodes[node];
     float y = 0;
@@ -885,26 +908,12 @@ static void build_node(Doc *d, const Color *fill, int mode, int node, float x, f
             blame_legend(d, n, x, &y, w);
             y += GAP;
         }
-        SECTION(trend(d, n, node, x, &y, w));
-        SECTION(fixes(d, n, x, &y, w));
-        SECTION(rework(d, n, x, &y, w));
-        SECTION(context(d, n, x, &y, w));
-        SECTION(partners(d, n, x, &y, w));
-        SECTION(cost(d, n, x, &y, w));
-        SECTION(owner(d, n, x, &y, w));
-        SECTION(age(d, n, x, &y, w));
+        history(d, n, node, true, x, &y, w);
         if (n->nkids) SECTION(hottest(d, fill, mode, n, x, &y, w, n->kind == AN_CLASS ? "Methods" : "Nested functions"));
         SECTION(turns(d, node, true, 8, x, &y, w));
     } else if (n->kind == AN_FILE) {
         SECTION(hottest(d, fill, mode, n, x, &y, w, "Hottest functions"));
-        SECTION(trend(d, n, node, x, &y, w));
-        SECTION(fixes(d, n, x, &y, w));
-        SECTION(rework(d, n, x, &y, w));
-        SECTION(context(d, n, x, &y, w));
-        SECTION(partners(d, n, x, &y, w));
-        SECTION(cost(d, n, x, &y, w));
-        SECTION(owner(d, n, x, &y, w));
-        SECTION(age(d, n, x, &y, w));
+        history(d, n, node, true, x, &y, w);
         SECTION(code(d, node, x, &y, w));
         if (n->nblame) {
             char t[128];
@@ -916,12 +925,7 @@ static void build_node(Doc *d, const Color *fill, int mode, int node, float x, f
         SECTION(turns(d, node, true, 6, x, &y, w));
     } else {
         SECTION(hottest(d, fill, mode, n, x, &y, w, "Hottest inside"));
-        SECTION(fixes(d, n, x, &y, w));
-        SECTION(rework(d, n, x, &y, w));
-        SECTION(context(d, n, x, &y, w));
-        SECTION(cost(d, n, x, &y, w));
-        SECTION(owner(d, n, x, &y, w));
-        SECTION(age(d, n, x, &y, w));
+        history(d, n, node, false, x, &y, w);
         SECTION(turns(d, node, false, 10, x, &y, w));
     }
     d->h = y;
@@ -949,10 +953,7 @@ static void build_turn(Doc *d, int t, float x, float w) {
     float y = 0;
     char a[128], b[200], c[256], buf[1024];
     /* header */
-    float cw = sv_tws(F_MONO_B, "TURN", 10.5f, 0.6f) + 10;
-    box(d, x, y + 5, cw, 16, BLANK, C_LINE, 3);
-    text(d, F_MONO_B, 10.5f, 0.6f, C_DIM, x + 5, y + 5, 16, "TURN");
-    y += wrap(d, F_MONO_B, 16, C_FG, x, y, w, 24, cw + 6, T->title ? T->title : "", 0);
+    title_chip(d, x, &y, w, "turn", T->title ? T->title : "");
     sv_when(a, sizeof a, T->ts);
     sv_actor_name(S, T->actor, false, b, sizeof b);
     snprintf(buf, sizeof buf, "%s \xC2\xB7 %d of %d \xC2\xB7 %s", a, I->rank + 1, m->nturns, b);
@@ -960,18 +961,12 @@ static void build_turn(Doc *d, int t, float x, float w) {
     y += GAP;
     /* stats */
     Flow f = {d, x, w, x, y, 18.75f, 14, 4};
-    snprintf(a, sizeof a, "%d", I->ncids);
-    flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, " changes"}}, 2, NULL);
-    snprintf(a, sizeof a, "%d", I->nfiles);
-    flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, " files"}}, 2, NULL);
-    snprintf(a, sizeof a, "%d", I->ndefs);
-    flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, " functions"}}, 2, NULL);
-    snprintf(a, sizeof a, "+%d", I->add);
-    flow_text(&f, F_MONO, 12.5f, C_ADD, a);
-    snprintf(a, sizeof a, "\xE2\x88\x92%d", I->del);
-    flow_text(&f, F_MONO, 12.5f, C_DEL, a);
+    flow_count(&f, I->ncids, " changes");
+    flow_count(&f, I->nfiles, " files");
+    flow_count(&f, I->ndefs, " functions");
+    flow_diff(&f, I->add, I->del);
     sv_fmt_dur(a, sizeof a, (double)T->secs);
-    sv_fmt_dur(b, sizeof b, sv_jfix(m->turn_avg, 0));
+    sv_fmt_dur(b, sizeof b, jfix(m->turn_avg, 0));
     snprintf(c, sizeof c, " (avg %s)", b);
     flow_runs(&f, (Run[]){{F_MONO_B, 12.5f, C_FG, a}, {F_MONO, 12.5f, C_DIM, c}}, 2,
               "From the prompt to the agent's last response");
@@ -988,7 +983,7 @@ static void build_turn(Doc *d, int t, float x, float w) {
         flag_chip(&g, b, C_TEST, false, NULL);
     }
     if (I->slow) {
-        snprintf(b, sizeof b, "slow: %.1f\xC3\x97 the average turn", sv_jfix(I->slow_x, 1));
+        snprintf(b, sizeof b, "slow: %.1f\xC3\x97 the average turn", jfix(I->slow_x, 1));
         flag_chip(&g, b, C_SLOW, false, NULL);
     }
     if (I->untested) {
@@ -1044,16 +1039,11 @@ static void build_turn(Doc *d, int t, float x, float w) {
         y += 4;
         h3(d, x, &y, "What the agent said, in order");
         for (int k = 0; k < I->nnotes && k < 8; k++) {
-            int cm = I->notes[k], ix = cm >= 0 ? cm : -1 - cm;
-            if (ix < 0 || ix >= S->ncomments) continue;
-            const char *tool = "";
+            int cm = I->notes[k];
+            const char *tool = NULL;
             for (int j = 0; j < I->ncids; j++)
                 if (S->changes[I->cids[j]].comment == cm) { tool = S->changes[I->cids[j]].tool; break; }
-            char who[128];
-            if (cm < 0) snprintf(who, sizeof who, "earlier in the turn");
-            else snprintf(who, sizeof who, "agent, before %s", tool ? tool : "");
-            if (k) y += 6;
-            note(d, x, &y, w, who, S->comments[ix], cm < 0);
+            note_for(d, x, &y, w, cm, tool, k ? 6 : 0);
         }
         if (I->nnotes > 8) {
             snprintf(buf, sizeof buf, "\xE2\x80\xA6 %d more", I->nnotes - 8);
@@ -1065,13 +1055,6 @@ static void build_turn(Doc *d, int t, float x, float w) {
 }
 
 static float gutter_w(const Doc *d);
-
-/* Cells (characters) of s before byte b */
-static int cells(const char *s, long b) {
-    int c = 0;
-    for (long i = 0; i < b && s[i]; i++) c += ((unsigned char)s[i] & 0xC0) != 0x80;
-    return c;
-}
 
 /* The marked line into view: the panel scrolled to the code, the code to
  * the line (centred), sideways to its first match. */
@@ -1088,8 +1071,8 @@ static void mark_jump(Insp *in) {
         size_t ml;
         long at = *in->mark.q ? ss_match(s, strlen(s), 0, in->mark.q, in->mark.cs, &ml) : -1;
         float cw = ui_code_cell(), room = it->w - 6 - gutter_w(d) - 10 - 12;
-        if (at >= 0 && (float)(cells(s, at) + cells(s + at, (long)ml)) * cw > room)
-            d->code_hscroll = fmaxf(0, (float)cells(s, at) * cw - room / 3);
+        if (at >= 0 && (float)(utf8_count(s, (size_t)at) + utf8_count(s + at, ml)) * cw > room)
+            d->code_hscroll = fmaxf(0, (float)utf8_count(s, (size_t)at) * cw - room / 3);
         return;
     }
 }
@@ -1162,8 +1145,8 @@ static void card_build(Insp *in, float w) {
     snprintf(buf, sizeof buf, " \xC2\xB7 %s \xC2\xB7 %s (%s before the last change) \xC2\xB7 %s", C->tool ? C->tool : "", wh, ag, who);
     y += wrap(c, F_SANS, 12.5f, C_DIM, 12, y, w - 12, 18.75f, lw, buf, 0);
     y += wrap(c, F_SANS_B, 12.5f, C_FG, 12, y, w - 12, 18.75f, 0, turn_title(S, C->turn), 0);
-    int ix = C->comment >= 0 ? C->comment : -1 - C->comment;
-    if (ix >= 0 && ix < S->ncomments && S->comments[ix] && *S->comments[ix]) {
+    int ix = comment_of(S, C->comment);
+    if (ix >= 0 && S->comments[ix] && *S->comments[ix]) {
         snprintf(buf, sizeof buf, "%s%s", C->comment < 0 ? "(earlier in the turn) " : "", S->comments[ix]);
         y += 2 + wrap_md(c, F_SANS, 12.5f, C_SOFT, C_FG, 12, y + 2, w - 12, 18.75f, 0, buf, 5, true);
     }
@@ -1258,8 +1241,7 @@ static void spark(Insp *in, const IItem *it, float x, float y, Vector2 mp) {
 static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle clip, Vector2 mp) {
     Doc *d = &in->doc;
     Rectangle b = {x, y, it->w, it->h};
-    DrawRectangleRounded(b, 5 / fminf(b.width, b.height), 6, C_BG);
-    DrawRectangleRoundedLinesEx(b, 5 / fminf(b.width, b.height), 6, 1, C_LINE);
+    ui_box(b, 5 / fminf(b.width, b.height), C_BG, 1, C_LINE);
     float ix0 = fmaxf(clip.x, b.x + 1), iy0 = fmaxf(clip.y, b.y + 1);
     float ix1 = fminf(clip.x + clip.width, b.x + b.width - 1), iy1 = fminf(clip.y + clip.height, b.y + b.height - 1);
     if (ix1 <= ix0 || iy1 <= iy0) return;
@@ -1282,7 +1264,7 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
             float cw = ui_code_cell();
             for (long at = 0; *in->mark.q && (at = ss_match(ls, len, (size_t)at, in->mark.q, in->mark.cs, &ml)) >= 0;
                  at += (long)(ml ? ml : 1)) {
-                float mx = sx - d->code_hscroll + (float)cells(ls, at) * cw, mw = (float)cells(ls + at, (long)ml) * cw;
+                float mx = sx - d->code_hscroll + (float)utf8_count(ls, (size_t)at) * cw, mw = (float)utf8_count(ls + at, ml) * cw;
                 if (mx < sx) mw -= sx - mx, mx = sx; /* not over the gutter */
                 if (mw <= 0) continue;
                 DrawRectangleRec((Rectangle){mx, ry + 1, mw, CODE_ROW - 2}, ui_fade(C_HOT, 0.35f));
@@ -1301,21 +1283,12 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
                       ui_fade(t < 0 ? C_UNKNOWN : sv_blame_col(st_blame_slot(n, t)), a));
     }
     DrawRectangle((int)(b.x + 6 + gw), (int)b.y, 1, (int)b.height, C_LINE);
-    float hh = 18;
-    if (in->nvim && iy1 - iy0 >= 3 * hh) { /* in a corner of what shows, away from the hovered row */
-        static const char hint[] = "click: open in nvim";
-        float hw = sv_tw(F_SANS, hint, 11) + 12, hx = b.x + b.width - hw - 8, hy = iy1 - hh - 6;
-        if (mp.y > (iy0 + iy1) / 2) hy = iy0 + 6;
-        DrawRectangleRounded((Rectangle){hx, hy, hw, hh}, 0.4f, 6, ui_fade(C_RAISED, 0.95f));
-        sv_tx(F_SANS, hint, hx + 6, sv_mid(hy + hh / 2, 11), 11, C_DIM);
-    }
+    if (in->nvim && iy1 - iy0 >= 3 * 18) sv_nvim_hint(b.x + b.width, 8, iy0, iy1, mp.y > (iy0 + iy1) / 2, 1); /* of what shows */
     EndScissorMode();
     BeginScissorMode((int)clip.x, (int)clip.y, (int)clip.width, (int)clip.height);
-    if (max_scroll > 0) {
-        float th = it->h - 4, bh = fmaxf(16, th * it->h / ((float)d->cv.n * CODE_ROW + 12));
-        DrawRectangleRounded((Rectangle){b.x + b.width - 5, b.y + 2 + (th - bh) * d->code_scroll / max_scroll, 3, bh}, 1,
-                             4, ui_fade(C_DIM, 0.5f));
-    }
+    if (max_scroll > 0)
+        ui_thumb(b.x + b.width - 5, b.y + 2, 3, it->h - 4, it->h, (float)d->cv.n * CODE_ROW + 12, d->code_scroll, max_scroll, 16,
+                 ui_fade(C_DIM, 0.5f));
 }
 
 static void draw_text_item(const IItem *it, float x, float y, Color c) {
@@ -1382,8 +1355,8 @@ void si_draw(Insp *in, Rectangle r, Vector2 mp) {
                 else DrawRectangleRec(q, it->c);
             }
             if (it->c2.a) {
-                if (rr > 0) DrawRectangleRoundedLinesEx(q, rr, 6, it->bw, it->c2);
-                else DrawRectangleLinesEx(q, it->bw, it->c2);
+                if (rr > 0) DrawRectangleRoundedLinesEx(q, rr, 6, 1, it->c2);
+                else DrawRectangleLinesEx(q, 1, it->c2);
             }
             break;
         }
@@ -1393,7 +1366,7 @@ void si_draw(Insp *in, Rectangle r, Vector2 mp) {
             if (i == hot && it->c.a) DrawRectangleRounded((Rectangle){x, y, it->w, it->h}, 4 / fmaxf(8, it->h), 6, it->c);
             break;
         case IT_LINE: DrawRectangle((int)x, (int)y, (int)it->w, 1, it->c); break;
-        case IT_NOTE: ui_nv_boxes(&d->nv[it->aux], (Rectangle){x, y, it->w, it->h}, &d->nvs[it->aux]); break;
+        case IT_NOTE: ui_nv_boxes(&d->nv[it->aux].v, (Rectangle){x, y, it->w, it->h}, &d->nv[it->aux].st); break;
         case IT_SPARK: spark(in, it, x, y, mp); break;
         case IT_CODE: draw_code(in, it, x, y, (Rectangle){r.x + 1, r.y, r.width - 1, r.height}, mp); break;
         case IT_CARD: {
@@ -1414,11 +1387,8 @@ void si_draw(Insp *in, Rectangle r, Vector2 mp) {
         }
     }
     EndScissorMode();
-    if (maxs > 0) {
-        float th = r.height - 8, bh = fmaxf(24, th * r.height / (d->h + extra + 28));
-        DrawRectangleRounded((Rectangle){r.x + r.width - 6, r.y + 4 + (th - bh) * in->scroll / maxs, 3, bh}, 1, 4,
-                             ui_fade(C_DIM, 0.45f));
-    }
+    if (maxs > 0)
+        ui_thumb(r.x + r.width - 6, r.y + 4, 3, r.height - 8, r.height, d->h + extra + 28, in->scroll, maxs, 24, ui_fade(C_DIM, 0.45f));
 }
 
 SiAct si_click(Insp *in, Rectangle r, Vector2 mp) {
