@@ -70,15 +70,6 @@ extern char **environ;
 #define TOP_READS 8
 #define WORKERS 8          /* threads finding functions, file by file */
 
-#define PUSH(a, n, cap, v)                                                   \
-    do {                                                                     \
-        if ((n) == (cap)) {                                                  \
-            (cap) = (cap) ? (cap) * 2 : 8;                                   \
-            (a) = xrealloc((a), (size_t)(cap) * sizeof *(a));                \
-        }                                                                    \
-        (a)[(n)++] = (v);                                                    \
-    } while (0)
-
 enum { K_NOTE = EV_KIND_COUNT }; /* an event kept only for the comments before its call */
 
 typedef struct {
@@ -100,9 +91,8 @@ typedef struct {
  * remembers the last build that used it; after a build the others go
  * (cache_sweep), so a cache holds about one build's working set. */
 typedef struct {
-    StrMap ix;      /* key -> slot */
-    void **val;     /* owned; freed with drop */
-    unsigned *used; /* the build that last used it */
+    StrMap ix; /* key -> slot */
+    struct Slot { void *val; unsigned used; } *e; /* val owned, freed with drop; used: the build that last used it */
     int n, cap;
     void (*drop)(void *);
 } Cache;
@@ -110,7 +100,7 @@ typedef struct {
 /* key's slot, marked used by build; -1 when absent. */
 static int cache_find(Cache *c, const char *key, unsigned build) {
     int k = strmap_get(&c->ix, key);
-    if (k >= 0) c->used[k] = build;
+    if (k >= 0) c->e[k].used = build;
     return k;
 }
 
@@ -119,34 +109,27 @@ static void *cache_put(Cache *c, const char *key, void *v, unsigned build) {
     int k = strmap_get(&c->ix, key);
     if (k >= 0) {
         c->drop(v);
-        c->used[k] = build;
-        return c->val[k];
+        c->e[k].used = build;
+        return c->e[k].val;
     }
-    if (c->n == c->cap) {
-        c->cap = c->cap ? c->cap * 2 : 64;
-        c->val = xrealloc(c->val, (size_t)c->cap * sizeof *c->val);
-        c->used = xrealloc(c->used, (size_t)c->cap * sizeof *c->used);
-    }
-    c->val[c->n] = v;
-    c->used[c->n] = build;
-    strmap_put(&c->ix, key, c->n++);
+    strmap_put(&c->ix, key, c->n);
+    PUSH(c->e, c->n, c->cap, ((struct Slot){v, build}));
     return v;
 }
 
 /* Drops what build didn't use. */
 static void cache_sweep(Cache *c, unsigned build) {
     int kept = 0;
-    while (kept < c->n && c->used[kept] == build) kept++;
+    while (kept < c->n && c->e[kept].used == build) kept++;
     if (kept == c->n) return; /* all used */
-    int *to = xmalloc((size_t)(c->n + 1) * sizeof *to), n = 0;
+    int *to = xmalloc((size_t)c->n * sizeof *to), n = 0;
     for (int k = 0; k < c->n; k++) {
-        if (c->used[k] != build) {
-            c->drop(c->val[k]);
+        if (c->e[k].used != build) {
+            c->drop(c->e[k].val);
             to[k] = -1;
             continue;
         }
-        c->val[n] = c->val[k];
-        c->used[n] = build;
+        c->e[n] = c->e[k];
         to[k] = n++;
     }
     StrMap ix = {0};
@@ -159,10 +142,9 @@ static void cache_sweep(Cache *c, unsigned build) {
 }
 
 static void cache_free(Cache *c) {
-    for (int k = 0; k < c->n; k++) c->drop(c->val[k]);
+    for (int k = 0; k < c->n; k++) c->drop(c->e[k].val);
     strmap_free(&c->ix);
-    free(c->val);
-    free(c->used);
+    free(c->e);
 }
 
 struct Analysis {
@@ -608,11 +590,9 @@ static char *git(Analysis *an, const char *const *args, size_t *len, int *status
     size_t cap = 1 << 14, got = 0;
     out = xmalloc(cap);
     bool killed = false;
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
+    double t0 = mono();
     for (;;) {
-        clock_gettime(CLOCK_MONOTONIC, &t1);
-        long left = GIT_TIMEOUT_MS - ((t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000);
+        long left = GIT_TIMEOUT_MS - (long)((mono() - t0) * 1000);
         struct pollfd p = {fd[0], POLLIN, 0};
         if (left <= 0 || (poll(&p, 1, (int)left) < 0 && errno != EINTR)) {
             kill(pid, SIGKILL);
@@ -658,8 +638,7 @@ static char *git_ok(Analysis *an, const char *const *args, size_t *len) {
 
 /* A file's commits, newest first, as `git log --format="%H %ct"` lists them. */
 typedef struct {
-    char **commit;
-    long long *ct;
+    struct Commit { char *id; long long ct; } *c;
     int n;
 } GitLog;
 
@@ -668,21 +647,22 @@ static const GitLog no_log; /* no repo, no HEAD, or git failed */
 static void log_drop(void *p) {
     GitLog *l = p;
     if (!l) return;
-    for (int i = 0; i < l->n; i++) free(l->commit[i]);
-    free(l->commit), free(l->ct), free(l);
+    for (int i = 0; i < l->n; i++) free(l->c[i].id);
+    free(l->c), free(l);
 }
-
-static bool ws(char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v'; }
 
 /* ---- the accumulator ----------------------------------------------------- */
 
-static int intern(Analysis *a, const char *s) {
-    int k = strmap_get(&a->nameix, s);
+/* s's index among names (ix maps them to it), a copy added when new. */
+static int name_ix(StrMap *ix, char ***names, int *n, int *cap, const char *s) {
+    int k = strmap_get(ix, s);
     if (k >= 0) return k;
-    PUSH(a->name, a->nname, a->capname, xstrdup(s));
-    strmap_put(&a->nameix, s, a->nname - 1);
-    return a->nname - 1;
+    PUSH(*names, *n, *cap, xstrdup(s));
+    strmap_put(ix, s, *n - 1);
+    return *n - 1;
 }
+
+static int intern(Analysis *a, const char *s) { return name_ix(&a->nameix, &a->name, &a->nname, &a->capname, s); }
 
 static void defs_drop(void *d);
 /* A change's record, its texts shared by reference: c->original and c->created
@@ -784,10 +764,10 @@ void an_add(Analysis *a, const Event *evs, size_t n) {
                   .src = e->src ? intern(a, e->src) : -1, .src_off = e->src_off, .note_off = e->note_off,
                   .notes = e->notes, .via = e->via};
         if (kind != K_NOTE) {
-            v.path = e->path ? xstrdup(e->path) : NULL;
-            v.text = e->text ? xstrdup(e->text) : NULL;
+            v.path = dup_or_null(e->path);
+            v.text = dup_or_null(e->text);
         }
-        v.tool_id = e->tool_id ? xstrdup(e->tool_id) : NULL;
+        v.tool_id = dup_or_null(e->tool_id);
         if (kind == EV_READ) v.first = e->range.first, v.last = e->range.last;
         if (kind == EV_USAGE) v.tok[0] = e->tok.out, v.tok[1] = e->tok.in, v.tok[2] = e->tok.cached;
         if (kind == EV_TURN || kind == EV_TURN_COPY) v.prompt = e->prompt;
@@ -808,8 +788,7 @@ void an_free(Analysis *a) {
         free(v->path), free(v->text), free(v->tool_id), free(v->type), free(v->session);
     }
     free(a->ev);
-    for (int i = 0; i < a->nname; i++) free(a->name[i]);
-    free(a->name);
+    strv_free(a->name, a->nname);
     strmap_free(&a->nameix);
     regfree(&a->search);
     pthread_mutex_destroy(&a->mu);
@@ -919,6 +898,22 @@ typedef struct {
     int nshown, capshown;
 } File;
 
+typedef struct { /* per name: an actor id, a transcript path or a session id */
+    int sess;      /* its session's name index */
+    bool sub;
+    char *title;   /* session: its last AI title */
+    char *type, *task;
+    Prompt *pr;    /* session: its prompts, sorted by (ts, title) */
+    int npr, cappr;
+    /* comments: an actor's calls with text before them, by position */
+    struct NoteCall { long off, note_off; int notes; double start; const char *id; } *calls;
+    int ncalls, capcalls;
+    double *resets; /* an actor's prompts and compactions, by time */
+    int nresets, capresets;
+    Ctx ctx;
+    int out;       /* snapshot actor index, -1 */
+} Name;
+
 typedef struct {
     Analysis *an;
     const char *root;
@@ -927,17 +922,11 @@ typedef struct {
     char **name; /* actor ids, transcript paths, and session ids added here */
     int nname, capname;
     StrMap nameix;
-    int *sess;   /* per name: its session's name index */
-    bool *sub;
-    char **title; /* session: its last AI title */
-    char **type, **task;
-    Prompt **pr;  /* per session name, sorted by (ts, title) */
-    int *npr, *cappr;
+    Name *nm;    /* per name */
     StrMap keyix; /* prompt "(ts, title)" -> key */
     int nkeys;
     int *turn_of_key;
     int capkeys;
-    Ctx *ctx;     /* per name (actor) */
     File *files;
     int nfiles, capfiles;
     StrMap fileix;
@@ -949,15 +938,9 @@ typedef struct {
     StrMap noteix;  /* tool id -> comment (cached result) */
     int *note_val;
     int nnote_val, capnote_val;
-    /* comments: per actor, its calls with text before them, by position */
-    struct NoteCall { long off, note_off; int notes; double start; const char *id; } **calls;
-    int *ncalls, *capcalls;
-    double **resets; /* per actor: prompts and compactions, by time */
-    int *nresets, *capresets;
     AnSnapshot *s;
     int capturns, capchanges, capcomments, cappaths;
     StrMap commentix;
-    int *actor_out; /* name index -> snapshot actor index, -1 */
     int capactors;
     int *chs;       /* per change: its session, */
     double *cht;    /* and time */
@@ -1010,8 +993,8 @@ static int cmp_prompt(const void *pa, const void *pb) {
 
 /* The prompt (turn key) running in session at ts: the latest at or before it. */
 static int prompt_at(const B *b, int session, double ts, int *idx) {
-    const Prompt *p = b->pr[session];
-    int lo = 0, hi = b->npr[session];
+    const Prompt *p = b->nm[session].pr;
+    int lo = 0, hi = b->nm[session].npr;
     while (lo < hi) {
         int m = (lo + hi) / 2;
         if (p[m].ts <= ts) lo = m + 1;
@@ -1027,8 +1010,8 @@ static int turn_of(B *b, int session, double ts, bool make) {
     if (key < 0) return -1;
     if (b->turn_of_key[key] >= 0 || !make) return b->turn_of_key[key];
     AnSnapshot *s = b->s;
-    const Prompt *p = &b->pr[session][i];
-    const char *nxt = i + 1 < b->npr[session] ? b->pr[session][i + 1].title : NULL;
+    const Prompt *p = &b->nm[session].pr[i];
+    const char *nxt = i + 1 < b->nm[session].npr ? b->nm[session].pr[i + 1].title : NULL;
     AnTurn t = {.title = xstrdup(p->title), .ts = p->ts, .actor = session,
                 .corr = an_corr_prompt(nxt) ? xstrdup(nxt) : NULL, .fix = an_fix_prompt(p->title)};
     PUSH(s->turns, s->nturns, b->capturns, t);
@@ -1036,29 +1019,29 @@ static int turn_of(B *b, int session, double ts, bool make) {
 }
 
 static int actor_out(B *b, int name) {
-    if (b->actor_out[name] >= 0) return b->actor_out[name];
+    Name *n = &b->nm[name];
+    if (n->out >= 0) return n->out;
     AnSnapshot *s = b->s;
-    AnActor a = {.sub = b->sub[name], .id = xstrndup(b->name[name], strnlen(b->name[name], 8))};
+    AnActor a = {.sub = n->sub, .id = xstrndup(b->name[name], strnlen(b->name[name], 8))};
     if (a.sub) {
-        a.name = xstrdup(b->type[name] && *b->type[name] ? b->type[name] : "subagent");
-        a.task = xstrdup(b->task[name] ? b->task[name] : "");
-    } else if (b->title[name] && *b->title[name]) {
-        a.name = xstrdup(b->title[name]);
+        a.name = xstrdup(n->type && *n->type ? n->type : "subagent");
+        a.task = xstrdup(n->task ? n->task : "");
+    } else if (n->title && *n->title) {
+        a.name = xstrdup(n->title);
     } else {
-        a.name = xmalloc(strlen(a.id) + 9);
-        sprintf(a.name, "session %s", a.id);
+        a.name = xasprintf("session %s", a.id);
     }
     PUSH(s->actors, s->nactors, b->capactors, a);
-    return b->actor_out[name] = s->nactors - 1;
+    return n->out = s->nactors - 1;
 }
 
 /* ---- comments ----------------------------------------------------------- */
 
 static void strip(char **s) {
     char *p = *s;
-    while (*p && (ws(*p) || (*p >= 0x1c && *p <= 0x1f))) p++;
+    while (*p && (is_space(*p) || (*p >= 0x1c && *p <= 0x1f))) p++;
     size_t n = strlen(p);
-    while (n && (ws(p[n - 1]) || (p[n - 1] >= 0x1c && p[n - 1] <= 0x1f))) n--;
+    while (n && (is_space(p[n - 1]) || (p[n - 1] >= 0x1c && p[n - 1] <= 0x1f))) n--;
     memmove(*s, p, n);
     (*s)[n] = 0;
 }
@@ -1087,15 +1070,14 @@ static int cmp_call(const void *pa, const void *pb) {
  * them are written. A copy (comment_of strips them in place). */
 static Notes notes_of(B *b, const char *src, long off, int n, const char *id) {
     Analysis *an = b->an;
-    char *key = xmalloc(strlen(src) + strlen(id) + 48);
-    sprintf(key, "%s\x1f%ld\x1f%d\x1f%s", src, off, n, id);
+    char *key = xasprintf("%s\x1f%ld\x1f%d\x1f%s", src, off, n, id);
     int k = cache_find(&an->notes, key, an->builds);
-    const Notes *c = k >= 0 ? an->notes.val[k] : NULL;
-    Notes ns = c ? (Notes){xmalloc((size_t)(c->n + 1) * sizeof *ns.s), c->n} : tr_notes(src, off, n, id);
+    const Notes *c = k >= 0 ? an->notes.e[k].val : NULL;
+    Notes ns = c ? (Notes){xmalloc((size_t)c->n * sizeof *ns.s), c->n} : tr_notes(src, off, n, id);
     for (int i = 0; c && i < c->n; i++) ns.s[i] = xstrdup(c->s[i]);
     if (!c && ns.n == n) {
         Notes *keep = xmalloc(sizeof *keep);
-        *keep = (Notes){xmalloc((size_t)(n + 1) * sizeof *keep->s), n};
+        *keep = (Notes){xmalloc((size_t)n * sizeof *keep->s), n};
         for (int i = 0; i < n; i++) keep->s[i] = xstrdup(ns.s[i]);
         cache_put(&an->notes, key, keep, an->builds);
     }
@@ -1122,18 +1104,18 @@ static int comment_of(B *b, const AnEv *e) {
     strip(&text);
     bool own = *text;
     if (!own) { /* said: the latest text before the call since the prompt (or compaction) */
-        int a = e->actor, lo = 0, hi = b->ncalls[a];
+        const Name *a = &b->nm[e->actor];
+        int lo = 0, hi = a->ncalls;
         while (lo < hi) {
             int m = (lo + hi) / 2;
-            if (b->calls[a][m].off < e->src_off) lo = m + 1;
+            if (a->calls[m].off < e->src_off) lo = m + 1;
             else hi = m;
         }
         double xs = e->t0 > 0 ? e->t0 : e->ts;
         if (lo) {
-            const struct NoteCall *y = &b->calls[a][lo - 1];
+            const struct NoteCall *y = &a->calls[lo - 1];
             bool reset = false;
-            for (int r = 0; r < b->nresets[a] && !reset; r++)
-                reset = b->resets[a][r] > y->start && b->resets[a][r] <= xs;
+            for (int r = 0; r < a->nresets && !reset; r++) reset = a->resets[r] > y->start && a->resets[r] <= xs;
             if (!reset) {
                 Notes ys = notes_of(b, src, y->note_off, y->notes, y->id);
                 if (ys.n) {
@@ -1178,8 +1160,7 @@ static File *file_add(B *b, const char *rel) {
 }
 
 static Text *read_text(const char *root, const char *rel, bool skip_binary, struct stat *out) {
-    char *p = xmalloc(strlen(root) + strlen(rel) + 2);
-    sprintf(p, "%s/%s", root, rel);
+    char *p = xasprintf("%s/%s", root, rel);
     struct stat st;
     FILE *fp = !stat(p, &st) && S_ISREG(st.st_mode) && st.st_size <= FILE_MAX ? fopen(p, "rb") : NULL;
     free(p);
@@ -1199,8 +1180,7 @@ static Text *read_text(const char *root, const char *rel, bool skip_binary, stru
 static void defs_drop(void *p) {
     Defs *d = p;
     if (!d) return;
-    for (int i = 0; i < d->n; i++) free(d->key[i]);
-    free(d->key);
+    strv_free(d->key, d->n);
     syn_defs_free(d->d, d->n);
     free(d);
 }
@@ -1214,7 +1194,7 @@ static const Defs *defs_of(Analysis *an, File *f, const Text *t) {
     snprintf(key, sizeof key, "%s\x1f%016llx\x1f%zu", lang, (unsigned long long)t->h, t->len);
     pthread_mutex_lock(&an->cmu);
     int k = cache_find(&an->defs, key, an->builds);
-    const Defs *hit = k >= 0 ? an->defs.val[k] : NULL;
+    const Defs *hit = k >= 0 ? an->defs.e[k].val : NULL;
     pthread_mutex_unlock(&an->cmu);
     if (hit) return hit;
     Defs *d = xcalloc(1, sizeof *d);
@@ -1222,14 +1202,10 @@ static const Defs *defs_of(Analysis *an, File *f, const Text *t) {
     double c0 = mono();
     d->n = f->no_defs ? 0 : syn_defs(f->rel, t->s, (uint32_t)t->len, &d->d, f->parse);
     double c1 = mono();
-    d->key = xcalloc((size_t)(d->n ? d->n : 1), sizeof *d->key);
+    d->key = xcalloc((size_t)d->n, sizeof *d->key);
     for (int i = 0; i < d->n; i++) {
         int p = d->d[i].parent;
-        if (p < 0) d->key[i] = xstrdup(d->d[i].name);
-        else {
-            d->key[i] = xmalloc(strlen(d->key[p]) + strlen(d->d[i].name) + 2);
-            sprintf(d->key[i], "%s.%s", d->key[p], d->d[i].name);
-        }
+        d->key[i] = p < 0 ? xstrdup(d->d[i].name) : xasprintf("%s.%s", d->key[p], d->d[i].name);
     }
     pthread_mutex_lock(&an->cmu);
     an->clk.parsed++;
@@ -1253,12 +1229,11 @@ static Acc *acc_of(File *f, const char *key) {
 static const GitLog *git_log(B *b, const char *rel) {
     if (!b->head) return &no_log;
     Analysis *an = b->an;
-    char *key = xmalloc(strlen(b->head) + strlen(rel) + 2);
-    sprintf(key, "%s\x1f%s", b->head, rel);
+    char *key = xasprintf("%s\x1f%s", b->head, rel);
     int k = cache_find(&an->logs, key, an->builds);
     if (k >= 0) {
         free(key);
-        return an->logs.val[k];
+        return an->logs.e[k].val;
     }
     const char *args[] = {"log", "--format=%H %ct", b->head, "--", rel, NULL};
     char *out = git_ok(an, args, NULL);
@@ -1267,16 +1242,12 @@ static const GitLog *git_log(B *b, const char *rel) {
         return &no_log;
     }
     GitLog *l = xcalloc(1, sizeof *l);
+    int cap = 0;
     for (char *line = out, *nl; *line; line = nl + 1) {
         nl = strchr(line, '\n');
         if (!nl) nl = line + strlen(line) - 1;
         char *sp = memchr(line, ' ', (size_t)(nl - line));
-        if (sp) {
-            l->commit = xrealloc(l->commit, (size_t)(l->n + 1) * sizeof *l->commit);
-            l->ct = xrealloc(l->ct, (size_t)(l->n + 1) * sizeof *l->ct);
-            l->commit[l->n] = xstrndup(line, (size_t)(sp - line));
-            l->ct[l->n++] = atoll(sp + 1);
-        }
+        if (sp) PUSH(l->c, l->n, cap, ((struct Commit){xstrndup(line, (size_t)(sp - line)), atoll(sp + 1)}));
         if (!nl[1]) break;
     }
     free(out);
@@ -1289,12 +1260,11 @@ static const GitLog *git_log(B *b, const char *rel) {
  * commit holds never changes: cached by commit and path. */
 static Text *git_show(B *b, const char *commit, const char *rel) {
     Analysis *an = b->an;
-    char *key = xmalloc(strlen(commit) + strlen(rel) + 4);
-    sprintf(key, "%s:./%s", commit, rel);
+    char *key = xasprintf("%s:./%s", commit, rel);
     int k = cache_find(&an->shows, key, an->builds);
     if (k >= 0) {
         free(key);
-        return text_ref(an->shows.val[k]);
+        return text_ref(an->shows.e[k].val);
     }
     const char *args[] = {"show", key, NULL};
     size_t len = 0;
@@ -1311,12 +1281,12 @@ static const Text *git_text(B *b, File *f, double ts) {
     const GitLog *l = f->log;
     long long sec = (long long)floor(epoch(ts));
     int i = 0;
-    while (i < l->n && l->ct[i] > sec) i++;
+    while (i < l->n && l->c[i].ct > sec) i++;
     if (i == l->n) return NULL;
-    int k = strmap_get(&f->shownix, l->commit[i]);
+    int k = strmap_get(&f->shownix, l->c[i].id);
     if (k < 0) {
-        PUSH(f->shown, f->nshown, f->capshown, git_show(b, l->commit[i], f->rel));
-        strmap_put(&f->shownix, l->commit[i], k = f->nshown - 1);
+        PUSH(f->shown, f->nshown, f->capshown, git_show(b, l->c[i].id, f->rel));
+        strmap_put(&f->shownix, l->c[i].id, k = f->nshown - 1);
     }
     return f->shown[k];
 }
@@ -1359,10 +1329,9 @@ static int cmp_known(const void *pa, const void *pb, void *ud) {
 static const Record *change_of(B *b, const AnEv *e) {
     Analysis *an = b->an;
     const char *src = b->name[e->src];
-    char *key = xmalloc(strlen(src) + strlen(e->tool_id) + strlen(e->path) + 32);
-    sprintf(key, "%s\x1f%ld\x1f%s\x1f%s", src, e->src_off, e->tool_id, e->path);
+    char *key = xasprintf("%s\x1f%ld\x1f%s\x1f%s", src, e->src_off, e->tool_id, e->path);
     int k = cache_find(&an->changes, key, an->builds);
-    Record *r = k >= 0 ? an->changes.val[k] : NULL;
+    Record *r = k >= 0 ? an->changes.e[k].val : NULL;
     if (k < 0) {
         Change *c = tr_change(src, e->src_off, e->tool_id, b->root, e->path);
         if (c->state == 0) {
@@ -1380,7 +1349,7 @@ static const Record *change_of(B *b, const AnEv *e) {
 /* later_text: the first known text of the file after ts holding every hunk's
  * new side; the hunks moved there (into *moved, caller frees). */
 static const Text *later_text(B *b, File *f, double ts, const Hunk *h, int nh, Hunk **moved) {
-    int *st = xmalloc((size_t)(nh ? nh : 1) * sizeof *st);
+    int *st = xmalloc((size_t)nh * sizeof *st);
     for (int i = 0; i < f->nknown; i++) {
         Known *k = &f->known[i];
         if (k->sub != 2 && !(b->ev[k->ev].ts > ts || (b->ev[k->ev].ts == ts && k->sub == 1))) continue;
@@ -1423,37 +1392,23 @@ static Touch *touch(Touch **t, int *n, int *cap, const char *key) {
 
 static void seen_key(char *buf, size_t n, int actor, const char *key) { snprintf(buf, n, "%d\x1f%s", actor, key); }
 
-static int path_ix(B *b, const char *p) {
-    int k = strmap_get(&b->pathix, p);
-    if (k >= 0) return k;
-    PUSH(b->pathname, b->npathname, b->cappathname, xstrdup(p));
-    strmap_put(&b->pathix, p, b->npathname - 1);
-    return b->npathname - 1;
-}
+static int path_ix(B *b, const char *p) { return name_ix(&b->pathix, &b->pathname, &b->npathname, &b->cappathname, p); }
 
 /* A read's shown path, for one outside the repo: ~/... or absolute. */
 static char *shown_path(const char *p) {
     const char *home = getenv("HOME");
     size_t hn = home ? strlen(home) : 0;
-    if (hn && !strncmp(p, home, hn) && p[hn] == '/') {
-        char *s = xmalloc(strlen(p) - hn + 2);
-        sprintf(s, "~%s", p + hn);
-        return s;
-    }
-    return xstrdup(p);
+    return hn && !strncmp(p, home, hn) && p[hn] == '/' ? xasprintf("~%s", p + hn) : xstrdup(p);
 }
 
-static void count_read(B *b, Ctx *c, const AnEv *e, int key, const char *shown) {
-    Item it = {e->ts, key, path_ix(b, shown)};
-    PUSH(c->items, c->nitems, c->capitems, it);
-}
+static void gather(Ctx *c, double ts, int key, int path) { PUSH(c->items, c->nitems, c->capitems, ((Item){ts, key, path})); }
 
 /* A read: what's read in this agent's context (for "changed unread"); its
  * functions are found in the second pass. */
 static void replay_read(B *b, const AnEv *e, File *f, int key) {
-    Ctx *c = &b->ctx[e->actor];
+    Ctx *c = &b->nm[e->actor].ctx;
     char *shown = *e->path == '/' ? shown_path(e->path) : NULL; /* outside the repo */
-    count_read(b, c, e, key, shown ? shown : e->path);
+    gather(c, e->ts, key, path_ix(b, shown ? shown : e->path));
     free(shown);
     if (!f) return;
     Text *t = f->text && !f->unplaced ? f->text : (Text *)git_text(b, f, e->ts);
@@ -1499,7 +1454,7 @@ static void replay_change(B *b, int ei) {
         s->stats.dups++; /* an edit made while a command ran: Claude Code credits it to the command too */
         return;
     }
-    int session = b->sess[e->actor];
+    int session = b->nm[e->actor].sess;
     int t = turn_of(b, session, e->ts, true);
     if (t < 0) return;
     int key = prompt_at(b, session, e->ts, NULL);
@@ -1509,7 +1464,7 @@ static void replay_change(B *b, int ei) {
     ch.epoch = (long long)nearbyint(epoch(e->ts));
     s->stats.no_text_before += !cmd && !create && !chg->original;
     /* Context cost: what this agent read and searched in this turn before it. */
-    Ctx *c = &b->ctx[e->actor];
+    Ctx *c = &b->nm[e->actor].ctx;
     int ni = 0;
     for (int i = 0; i < c->nitems; i++)
         if (c->items[i].key == key) c->items[ni++] = c->items[i];
@@ -1533,15 +1488,8 @@ static void replay_change(B *b, int ei) {
             AnRead x = top[j]; top[j] = top[j - 1]; top[j - 1] = x;
         }
     if (ntop > TOP_READS) ntop = TOP_READS;
-    for (int i = 0; i < ntop; i++) { /* paths indexed in the order they're first shown */
-        const char *p = b->pathname[top[i].path];
-        int k = strmap_get(&b->spathix, p);
-        if (k < 0) {
-            PUSH(s->paths, s->npaths, b->cappaths, xstrdup(p));
-            strmap_put(&b->spathix, p, k = s->npaths - 1);
-        }
-        top[i].path = k;
-    }
+    for (int i = 0; i < ntop; i++) /* paths indexed in the order they're first shown */
+        top[i].path = name_ix(&b->spathix, &s->paths, &s->npaths, &b->cappaths, b->pathname[top[i].path]);
     ch.top = top;
     ch.ntop = ntop;
     /* Cost: this agent's responses in this turn since its last change, and the time since then. */
@@ -1556,19 +1504,16 @@ static void replay_change(B *b, int ei) {
     stamps[nst++] = since;
     stamps[nst++] = e->ts;
     for (int i = 0; i < c->nspent; i++)
-        if (c->spent[i].key == key && since <= c->spent[i].ts && c->spent[i].ts <= e->ts) {
-            if (nst == c->nspent + 2) break;
-            stamps[nst++] = c->spent[i].ts;
-        }
+        if (c->spent[i].key == key && since <= c->spent[i].ts && c->spent[i].ts <= e->ts) stamps[nst++] = c->spent[i].ts;
     ch.secs = an_active(stamps, nst);
     free(stamps);
     c->nspent = 0;
     c->last_turn = t;
     c->last_ts = e->ts;
     PUSH(s->changes, s->nchanges, b->capchanges, ch);
-    int nchs = s->nchanges - 1, ncht = s->nchanges - 1;
-    PUSH(b->chs, nchs, b->capchs, session);
-    PUSH(b->cht, ncht, b->capcht, e->ts);
+    GROW(b->chs, cid, b->capchs);
+    GROW(b->cht, cid, b->capcht);
+    b->chs[cid] = session, b->cht[cid] = e->ts;
 
     /* The replay: the text after, with its lines' origins. */
     Text *old = NULL, *new = NULL; /* the text before, when known; after */
@@ -1640,11 +1585,9 @@ static void work_change(Analysis *an, File *f, Work *w) {
         for (int i = 0; i < d->n; i++) touch(&touched, &ntouched, &captouched, d->key[i])->add += d->d[i].b - d->d[i].a + 1;
     }
     bool old_set = w->old && w->old->len; /* build_data's `if old`: a non-empty text */
+    /* cached Defs stay put until the build's sweep */
     const Defs *od = old_set ? defs_of(an, f, w->old) : w->t ? defs_of(an, f, w->t) : NULL;
     int nod = od ? od->n : 0;
-    int *oa = xmalloc((size_t)(nod + 1) * sizeof *oa), *ob = xmalloc((size_t)(nod + 1) * sizeof *ob);
-    char **ok = xmalloc((size_t)(nod + 1) * sizeof *ok);
-    for (int i = 0; i < nod; i++) oa[i] = od->d[i].a, ob[i] = od->d[i].b, ok[i] = xstrdup(od->key[i]);
     int fa = 0, fd = 0;
     if (have_hunks && nh) {
         const Defs *nd = w->t ? defs_of(an, f, w->t) : NULL;
@@ -1660,7 +1603,7 @@ static void work_change(Analysis *an, File *f, Work *w) {
                 } else if (x == '-') {
                     fd++;
                     for (int i = 0; i < nod; i++)
-                        if (oa[i] <= o && o <= ob[i]) touch(&touched, &ntouched, &captouched, ok[i])->del++;
+                        if (od->d[i].a <= o && o <= od->d[i].b) touch(&touched, &ntouched, &captouched, od->key[i])->del++;
                     o++;
                 } else {
                     o++, n++;
@@ -1677,7 +1620,7 @@ static void work_change(Analysis *an, File *f, Work *w) {
             if (origin < 0) continue;
             add_rw(acc_of(f, ""), origin, cid);
             for (int i = 0; i < nod; i++)
-                if (oa[i] <= line && line <= ob[i]) add_rw(acc_of(f, ok[i]), origin, cid);
+                if (od->d[i].a <= line && line <= od->d[i].b) add_rw(acc_of(f, od->key[i]), origin, cid);
         }
     /* Trend: each def it touched, its size and complexity right after; the file's
      * length. Not from a later text it was lined up with: that isn't the file right after it. */
@@ -1700,16 +1643,13 @@ static void work_change(Analysis *an, File *f, Work *w) {
     /* Blind: an existing def changed with none of it read (or written) in this context since its compaction. */
     char buf[1200];
     bool any_blind = false;
-    unsigned char *blind = xcalloc((size_t)ntouched + 1, 1);
+    unsigned char *blind = xcalloc((size_t)ntouched, 1);
     for (int q = 0; q < ntouched; q++) {
         bool existed = false;
-        for (int i = 0; old_set && i < nod && !existed; i++) existed = !strcmp(ok[i], touched[q].key);
-        seen_key(buf, sizeof buf, w->actor, touched[q].key);
+        for (int i = 0; old_set && i < nod && !existed; i++) existed = !strcmp(od->key[i], touched[q].key);
+        seen_key(buf, sizeof buf, w->actor, touched[q].key); /* keys are distinct: one doesn't see another */
         blind[q] = existed && strmap_get(&f->seen, buf) != w->gen;
         any_blind |= blind[q];
-    }
-    for (int q = 0; q < ntouched; q++) {
-        seen_key(buf, sizeof buf, w->actor, touched[q].key);
         strmap_put(&f->seen, buf, w->gen);
     }
     AnCh fc = {cid, fa, fd, any_blind};
@@ -1722,8 +1662,6 @@ static void work_change(Analysis *an, File *f, Work *w) {
     }
     f->blind += any_blind;
     free(blind);
-    for (int i = 0; i < nod; i++) free(ok[i]);
-    free(ok), free(oa), free(ob);
     for (int q = 0; q < ntouched; q++) free(touched[q].key);
     free(touched);
 }
@@ -1770,7 +1708,7 @@ static int cmp_work(const void *pa, const void *pb, void *ud) {
 
 /* Files' second passes on worker threads, the busiest first. */
 static void work_all(B *b) {
-    Pool p = {.an = b->an, .files = b->files, .order = xmalloc((size_t)(b->nfiles + 1) * sizeof(int)), .n = b->nfiles};
+    Pool p = {.an = b->an, .files = b->files, .order = xmalloc((size_t)b->nfiles * sizeof(int)), .n = b->nfiles};
     for (int i = 0; i < b->nfiles; i++) p.order[i] = i;
     qsort_r(p.order, (size_t)p.n, sizeof *p.order, cmp_work, b->files);
     atomic_init(&p.next, 0);
@@ -1793,14 +1731,13 @@ static int node_add(AnSnapshot *s, int *cap, int parent, const char *name, int k
     int ix = s->nnodes - 1;
     if (parent >= 0) {
         AnNode *p = &s->nodes[parent];
-        p->kids = xrealloc(p->kids, (size_t)(p->nkids + 1) * sizeof *p->kids);
-        p->kids[p->nkids++] = ix;
+        PUSH(p->kids, p->nkids, p->capkids, ix);
     }
     return ix;
 }
 
 static void *dup_arr(const void *p, int n, size_t sz) {
-    void *d = xmalloc((size_t)(n + 1) * sz);
+    void *d = xmalloc((size_t)n * sz);
     if (n) memcpy(d, p, (size_t)n * sz);
     return d;
 }
@@ -1811,8 +1748,6 @@ static void node_fill(AnNode *n, Acc *a) {
     n->rw = dup_arr(a->rw, n->nrw = a->nrw, sizeof *n->rw);
     n->tr = dup_arr(a->tr, n->ntr = a->ntr, sizeof *n->tr);
 }
-
-static int cmp_str(const void *a, const void *b) { return strcmp(*(char *const *)a, *(char *const *)b); }
 
 static void build_tree(B *b, char **tree, int ntree) {
     AnSnapshot *s = b->s;
@@ -1859,7 +1794,7 @@ static void build_tree(B *b, char **tree, int ntree) {
         fn->blame = runs;
         fn->nblame = nr;
         const Defs *d = defs_of(b->an, f, f->today);
-        int *ix = xmalloc((size_t)(d->n + 1) * sizeof *ix), cx = 0;
+        int *ix = xmalloc((size_t)d->n * sizeof *ix), cx = 0;
         for (int j = 0; j < d->n; j++) {
             const SynDef *sd = &d->d[j];
             ix[j] = node_add(s, &cap, sd->parent >= 0 ? ix[sd->parent] : fi, sd->name, sd->cls ? AN_CLASS : AN_FUNC);
@@ -1910,26 +1845,17 @@ static void setup_actors(B *b) {
         if (b->ev[i].kind == EV_TITLE && b->ev[i].session && strmap_get(&b->nameix, b->ev[i].session) < 0)
             b_name(b, xstrdup(b->ev[i].session));
     int nn = b->nname;
-    b->sess = xmalloc((size_t)nn * sizeof *b->sess);
-    b->sub = xcalloc((size_t)nn, sizeof *b->sub);
-    b->title = xcalloc((size_t)nn, sizeof *b->title);
-    b->type = xcalloc((size_t)nn, sizeof *b->type);
-    b->task = xcalloc((size_t)nn, sizeof *b->task);
-    for (int i = 0; i < nn; i++) b->sess[i] = i;
+    b->nm = xcalloc((size_t)nn, sizeof *b->nm);
+    for (int i = 0; i < nn; i++) b->nm[i].sess = i, b->nm[i].ctx.last_turn = -1, b->nm[i].out = -1;
     for (int i = 0; i < b->nev; i++) {
         AnEv *e = &b->ev[i];
         if (e->kind != EV_TITLE) continue;
-        if (e->session) {
-            b->sub[e->actor] = true;
-            b->sess[e->actor] = strmap_get(&b->nameix, e->session);
-            b->type[e->actor] = e->type;
-            b->task[e->actor] = e->text;
-        } else {
-            b->title[e->actor] = e->text;
-        }
+        Name *n = &b->nm[e->actor];
+        if (e->session) n->sub = true, n->sess = strmap_get(&b->nameix, e->session), n->type = e->type, n->task = e->text;
+        else n->title = e->text;
     }
     /* Usage: the last per response (the most output). */
-    b->drop = xcalloc((size_t)b->nev + 1, sizeof *b->drop);
+    b->drop = xcalloc((size_t)b->nev, sizeof *b->drop);
     StrMap usage = {0};
     for (int i = 0; i < b->nev; i++) {
         AnEv *e = &b->ev[i];
@@ -1945,53 +1871,38 @@ static void setup_actors(B *b) {
  * count for it too), what resets comments, calls with comments, Bash calls. */
 static void setup_prompts(B *b) {
     int nn = b->nname;
-    b->pr = xcalloc((size_t)nn, sizeof *b->pr);
-    b->npr = xcalloc((size_t)nn, sizeof *b->npr);
-    b->cappr = xcalloc((size_t)nn, sizeof *b->cappr);
-    b->calls = xcalloc((size_t)nn, sizeof *b->calls);
-    b->ncalls = xcalloc((size_t)nn, sizeof *b->ncalls);
-    b->capcalls = xcalloc((size_t)nn, sizeof *b->capcalls);
-    b->resets = xcalloc((size_t)nn, sizeof *b->resets);
-    b->nresets = xcalloc((size_t)nn, sizeof *b->nresets);
-    b->capresets = xcalloc((size_t)nn, sizeof *b->capresets);
     StrMap callseen = {0};
     for (int i = 0; i < b->nev; i++) {
         AnEv *e = &b->ev[i];
         bool prompt = (e->kind == EV_TURN || e->kind == EV_TURN_COPY) && e->text &&
                       (e->prompt == PROMPT_HUMAN || e->prompt == PROMPT_PASTED);
-        if (prompt && !b->sub[e->actor]) {
-            Prompt p = {e->ts, e->text, -1};
-            PUSH(b->pr[e->actor], b->npr[e->actor], b->cappr[e->actor], p);
-        }
-        if (prompt || e->kind == EV_COMPACT) PUSH(b->resets[e->actor], b->nresets[e->actor], b->capresets[e->actor], e->ts);
+        Name *n = &b->nm[e->actor];
+        if (prompt && !n->sub) PUSH(n->pr, n->npr, n->cappr, ((Prompt){e->ts, e->text, -1}));
+        if (prompt || e->kind == EV_COMPACT) PUSH(n->resets, n->nresets, n->capresets, e->ts);
         if (e->tool_id && e->src >= 0 && e->notes > 0 && e->kind != EV_USAGE) {
             char k[600];
             snprintf(k, sizeof k, "%d\x1f%s", e->actor, e->tool_id);
             if (strmap_get(&callseen, k) < 0) {
                 strmap_put(&callseen, k, 1);
                 struct NoteCall nc = {e->src_off, e->note_off, e->notes, e->t0 > 0 ? e->t0 : e->ts, e->tool_id};
-                PUSH(b->calls[e->actor], b->ncalls[e->actor], b->capcalls[e->actor], nc);
+                PUSH(n->calls, n->ncalls, n->capcalls, nc);
             }
         }
         if (e->kind == EV_BASH_END && e->tool_id) strmap_put(&b->bashids, e->tool_id, 1);
     }
     strmap_free(&callseen);
     for (int i = 0; i < nn; i++) {
-        if (b->ncalls[i]) qsort(b->calls[i], (size_t)b->ncalls[i], sizeof *b->calls[i], cmp_call);
-        if (!b->npr[i]) continue;
-        qsort(b->pr[i], (size_t)b->npr[i], sizeof *b->pr[i], cmp_prompt);
-        for (int k = 0; k < b->npr[i]; k++) {
-            Prompt *p = &b->pr[i][k];
-            char *key = xmalloc(strlen(p->title) + 32);
-            sprintf(key, "%lld\x1f%s", micros(p->ts), p->title);
+        Name *n = &b->nm[i];
+        if (n->ncalls) qsort(n->calls, (size_t)n->ncalls, sizeof *n->calls, cmp_call);
+        if (!n->npr) continue;
+        qsort(n->pr, (size_t)n->npr, sizeof *n->pr, cmp_prompt);
+        for (int k = 0; k < n->npr; k++) {
+            Prompt *p = &n->pr[k];
+            char *key = xasprintf("%lld\x1f%s", micros(p->ts), p->title);
             p->key = strmap_get(&b->keyix, key);
             if (p->key < 0) {
-                strmap_put(&b->keyix, key, p->key = b->nkeys++);
-                if (b->nkeys > b->capkeys) {
-                    b->capkeys = b->capkeys ? b->capkeys * 2 : 64;
-                    b->turn_of_key = xrealloc(b->turn_of_key, (size_t)b->capkeys * sizeof *b->turn_of_key);
-                }
-                b->turn_of_key[p->key] = -1;
+                strmap_put(&b->keyix, key, p->key = b->nkeys);
+                PUSH(b->turn_of_key, b->nkeys, b->capkeys, -1);
             }
             free(key);
         }
@@ -2038,8 +1949,8 @@ static void setup_files(B *b) {
         if (out && *out) out[strcspn(out, "\n")] = 0, b->head = out;
         else free(out);
     }
-    char **tree = xmalloc((size_t)(n + 1) * sizeof *tree);
-    bool *took = xcalloc((size_t)n + 1, sizeof *took);
+    char **tree = xmalloc((size_t)n * sizeof *tree);
+    bool *took = xcalloc((size_t)n, sizeof *took);
     b->ntree = 0;
     for (int pass = 0; pass < 2; pass++)
         for (int i = 0; i < n && b->ntree < TREE_MAX; i++) {
@@ -2071,8 +1982,7 @@ static void setup_files(B *b) {
         const char *rel = changed.keys[i];
         if (!rel || file_get(b, rel)) continue;
         struct stat st;
-        char *p = xmalloc(strlen(b->root) + strlen(rel) + 2);
-        sprintf(p, "%s/%s", b->root, rel);
+        char *p = xasprintf("%s/%s", b->root, rel);
         bool there = !stat(p, &st);
         free(p);
         if (!is_git) {
@@ -2137,14 +2047,14 @@ static void setup_files(B *b) {
 }
 
 /* cmd_runs of a command: a test or build run under the root from start
- * (verify), or a search anywhere. A function of the strings alone: cached by them. */
+ * (verify; relative to the root), or a search anywhere. A function of the
+ * strings alone (the root is fixed): cached by them. */
 static int runs(B *b, bool verify, const char *cmd, const char *start) {
     Analysis *an = b->an;
-    const char *st = verify ? start ? start : an->root : "";
-    char *key = xmalloc(strlen(st) + strlen(cmd) + 32);
-    sprintf(key, "%c%zu:%s%s", verify ? 'v' : 's', strlen(st), st, cmd);
+    const char *st = verify && start ? start : ""; /* none: the root, as "" is */
+    char *key = xasprintf("%c%zu:%s%s", verify ? 'v' : 's', strlen(st), st, cmd);
     int k = cache_find(&an->cmds, key, an->builds), r;
-    if (k >= 0) r = (int)(intptr_t)an->cmds.val[k];
+    if (k >= 0) r = (int)(intptr_t)an->cmds.e[k].val;
     else {
         pthread_once(&re_once, re_init);
         r = verify ? cmd_runs(&re_verify, cmd, an->root, start) : cmd_runs(&an->search, cmd, NULL, NULL);
@@ -2154,31 +2064,21 @@ static int runs(B *b, bool verify, const char *cmd, const char *start) {
     return r;
 }
 
-static void gather(Ctx *c, double ts, int key) {
-    Item it = {ts, key, -1};
-    PUSH(c->items, c->nitems, c->capitems, it);
-}
-
 /* The replay, in time order: texts, origins, turns, costs; what needs the
  * functions goes to the files' work for the second pass. */
 static void replay(B *b) {
-    int nn = b->nname;
-    b->ctx = xcalloc((size_t)nn, sizeof *b->ctx);
-    for (int i = 0; i < nn; i++) b->ctx[i].last_turn = -1;
-    b->actor_out = xmalloc((size_t)nn * sizeof *b->actor_out);
-    for (int i = 0; i < nn; i++) b->actor_out[i] = -1;
     for (int i = 0; i < b->nev; i++) {
         if (!(i & 63) && atomic_load(&b->an->cancel)) break; /* work_all still frees what was queued */
         AnEv *e = &b->ev[i];
-        Ctx *c = &b->ctx[e->actor];
-        int session = b->sess[e->actor];
+        Ctx *c = &b->nm[e->actor].ctx;
+        int session = b->nm[e->actor].sess;
         switch (e->kind) {
         case EV_COMPACT: c->gen++; break;
-        case EV_SEARCH: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
+        case EV_SEARCH:
+        case EV_TOOL: gather(c, e->ts, prompt_at(b, session, e->ts, NULL), -1); break;
         case EV_BASH_END:
-            if (e->text && (runs(b, false, e->text, NULL) & CMD_RUN)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL));
+            if (e->text && (runs(b, false, e->text, NULL) & CMD_RUN)) gather(c, e->ts, prompt_at(b, session, e->ts, NULL), -1);
             break;
-        case EV_TOOL: gather(c, e->ts, prompt_at(b, session, e->ts, NULL)); break;
         case EV_USAGE:
             if (!b->drop[i]) {
                 Spend sp = {e->ts, prompt_at(b, session, e->ts, NULL), {e->tok[0], e->tok[1], e->tok[2]}};
@@ -2201,47 +2101,38 @@ static void replay(B *b) {
  * that session; the last one's result. */
 static void verify(B *b) {
     AnSnapshot *s = b->s;
-    /* runs[turn]: the session's test runs in that turn, in time order */
-    int **runs_of = xcalloc((size_t)s->nturns + 1, sizeof *runs_of), *nruns = xcalloc((size_t)s->nturns + 1, sizeof *nruns);
-    int *capruns = xcalloc((size_t)s->nturns + 1, sizeof *capruns);
+    /* runs_of[turn]: the session's test runs in that turn, in time order */
+    struct { int *ev, n, cap; } *runs_of = xcalloc((size_t)s->nturns, sizeof *runs_of);
     for (int i = 0; i < b->nev; i++) {
         const AnEv *e = &b->ev[i];
         if (e->kind != EV_BASH_END || !e->text || e->not_run) continue; /* never ran: no verdict */
-        char *start = NULL; /* where it began: the event's path (cwd), relative to the repo */
-        if (e->path && *e->path != '/') {
-            start = xmalloc(strlen(b->an->root) + strlen(e->path) + 2);
-            sprintf(start, "%s/%s", b->an->root, e->path);
-        }
-        /* a run in another tree (a worktree, a scratch copy) doesn't verify this one: ignored */
-        bool run = runs(b, true, e->text, start ? start : e->path) & CMD_RUN;
-        free(start);
-        if (!run) continue;
-        int t = turn_of(b, b->sess[e->actor], e->ts, false);
-        if (t >= 0) PUSH(runs_of[t], nruns[t], capruns[t], i);
+        /* where it began: the event's path (cwd). A run in another tree (a
+         * worktree, a scratch copy) doesn't verify this one: ignored. */
+        if (!(runs(b, true, e->text, e->path) & CMD_RUN)) continue;
+        int t = turn_of(b, b->nm[e->actor].sess, e->ts, false);
+        if (t >= 0) PUSH(runs_of[t].ev, runs_of[t].n, runs_of[t].cap, i);
     }
     for (int k = 0; k < s->nchanges; k++) {
         AnChange *ch = &s->changes[k];
         int t = ch->turn, last = -1;
-        for (int v = 0; v < nruns[t]; v++) {
-            const AnEv *e = &b->ev[runs_of[t][v]];
-            if (b->sess[e->actor] == b->chs[k] && e->ts > b->cht[k]) last = runs_of[t][v];
+        for (int v = 0; v < runs_of[t].n; v++) {
+            const AnEv *e = &b->ev[runs_of[t].ev[v]];
+            if (b->nm[e->actor].sess == b->chs[k] && e->ts > b->cht[k]) last = runs_of[t].ev[v];
         }
         ch->verify = last < 0 ? AN_UNTESTED : b->ev[last].err ? AN_FAILING : AN_PASSED;
     }
-    for (int t = 0; t < s->nturns; t++) free(runs_of[t]);
-    free(runs_of), free(nruns), free(capruns);
+    for (int t = 0; t < s->nturns; t++) free(runs_of[t].ev);
+    free(runs_of);
 }
 
 /* Turns: tokens, interrupts, time (prompt to its last response), actor. */
 static void finish_turns(B *b) {
     AnSnapshot *s = b->s;
-    double **stamps = xcalloc((size_t)s->nturns + 1, sizeof *stamps);
-    int *nstamps = xcalloc((size_t)s->nturns + 1, sizeof *nstamps);
-    int *capstamps = xcalloc((size_t)s->nturns + 1, sizeof *capstamps);
+    struct { double *ts; int n, cap; } *stamps = xcalloc((size_t)s->nturns, sizeof *stamps);
     for (int i = 0; i < b->nev; i++) {
         const AnEv *e = &b->ev[i];
         if ((e->kind != EV_USAGE || b->drop[i]) && e->kind != EV_INTERRUPT) continue;
-        int t = turn_of(b, b->sess[e->actor], e->ts, false);
+        int t = turn_of(b, b->nm[e->actor].sess, e->ts, false);
         if (t < 0) continue;
         AnTurn *tn = &s->turns[t];
         if (e->kind == EV_INTERRUPT) {
@@ -2250,17 +2141,16 @@ static void finish_turns(B *b) {
         }
         tn->has_tok = true;
         for (int k = 0; k < 3; k++) tn->tok[k] += e->tok[k];
-        PUSH(stamps[t], nstamps[t], capstamps[t], e->ts);
+        PUSH(stamps[t].ts, stamps[t].n, stamps[t].cap, e->ts);
     }
     for (int t = 0; t < s->nturns; t++) {
         AnTurn *tn = &s->turns[t];
-        int ns = nstamps[t];
-        PUSH(stamps[t], nstamps[t], capstamps[t], tn->ts);
-        tn->secs = an_active(stamps[t], ns + 1);
-        free(stamps[t]);
+        PUSH(stamps[t].ts, stamps[t].n, stamps[t].cap, tn->ts);
+        tn->secs = an_active(stamps[t].ts, stamps[t].n);
+        free(stamps[t].ts);
         tn->actor = actor_out(b, tn->actor); /* was its session's name index */
     }
-    free(stamps), free(nstamps), free(capstamps);
+    free(stamps);
 }
 
 static void file_free(File *f) {
@@ -2286,30 +2176,26 @@ static void file_free(File *f) {
 }
 
 static void b_free(B *b) {
-    for (int i = 0; i < b->ntree; i++) free(b->tree[i]);
-    free(b->tree);
+    strv_free(b->tree, b->ntree);
     free(b->drop);
     for (int i = 0; i < b->nfiles; i++) file_free(&b->files[i]);
     free(b->files);
     strmap_free(&b->fileix);
     for (int i = 0; i < b->nname; i++) {
-        if (b->ctx) free(b->ctx[i].items), free(b->ctx[i].spent);
-        free(b->pr[i]), free(b->calls[i]), free(b->resets[i]);
+        Name *n = &b->nm[i];
+        free(n->ctx.items), free(n->ctx.spent), free(n->pr), free(n->calls), free(n->resets);
     }
-    free(b->ctx), free(b->pr), free(b->npr), free(b->cappr), free(b->calls), free(b->ncalls), free(b->capcalls);
-    free(b->resets), free(b->nresets), free(b->capresets);
+    free(b->nm);
     strmap_free(&b->keyix);
     free(b->turn_of_key);
     strmap_free(&b->pathix);
     strmap_free(&b->spathix);
-    for (int i = 0; i < b->npathname; i++) free(b->pathname[i]);
-    free(b->pathname);
+    strv_free(b->pathname, b->npathname);
     strmap_free(&b->bashids);
     strmap_free(&b->noteix);
     free(b->note_val);
     strmap_free(&b->commentix);
-    free(b->actor_out), free(b->chs), free(b->cht);
-    free(b->sess), free(b->sub), free(b->title), free(b->type), free(b->task);
+    free(b->chs), free(b->cht);
     for (int i = b->owned_from; i < b->nname; i++) free(b->name[i]);
     free(b->name);
     strmap_free(&b->nameix);
@@ -2338,7 +2224,7 @@ AnSnapshot *an_build(Analysis *an) {
     an->builds++; /* one build at a time: sview's worker, or the caller's thread */
     pthread_mutex_lock(&an->mu); /* a copy of what was added; its strings stay put */
     b->nev = (int)an->nev;
-    b->ev = xmalloc((size_t)(b->nev + 1) * sizeof *b->ev);
+    b->ev = xmalloc((size_t)b->nev * sizeof *b->ev);
     memcpy(b->ev, an->ev, (size_t)b->nev * sizeof *b->ev);
     for (int i = 0; i < an->nname; i++) b_name(b, an->name[i]);
     b->owned_from = b->nname;
@@ -2392,10 +2278,8 @@ void an_snapshot_free(AnSnapshot *s) {
     free(s->nodes);
     for (int i = 0; i < s->nturns; i++) free(s->turns[i].title), free(s->turns[i].corr);
     free(s->turns);
-    for (int i = 0; i < s->ncomments; i++) free(s->comments[i]);
-    free(s->comments);
-    for (int i = 0; i < s->npaths; i++) free(s->paths[i]);
-    free(s->paths);
+    strv_free(s->comments, s->ncomments);
+    strv_free(s->paths, s->npaths);
     for (int i = 0; i < s->nactors; i++) free(s->actors[i].id), free(s->actors[i].name), free(s->actors[i].task);
     free(s->actors);
     for (int i = 0; i < s->nchanges; i++) free(s->changes[i].tool), free(s->changes[i].top);
@@ -2444,6 +2328,15 @@ static void j_node(FILE *f, const AnSnapshot *s, int i) {
     fputc('}', f);
 }
 
+static void j_strs(FILE *f, char *const *s, int n) {
+    fputc('[', f);
+    for (int i = 0; i < n; i++) {
+        if (i) fputc(',', f);
+        json_str(f, s[i]);
+    }
+    fputc(']', f);
+}
+
 static void iso(char *buf, size_t n, double ts) {
     long long us = micros(ts);
     time_t sec = (time_t)(us / 1000000);
@@ -2471,17 +2364,11 @@ void an_snapshot_json(FILE *f, const AnSnapshot *s) {
         if (t->has_tok) fprintf(f, ",\"tok\":[%lld,%lld,%lld]", t->tok[0], t->tok[1], t->tok[2]);
         fprintf(f, ",\"actor\":%d,\"secs\":%ld}", t->actor, t->secs);
     }
-    fputs("],\"comments\":[", f);
-    for (int i = 0; i < s->ncomments; i++) {
-        if (i) fputc(',', f);
-        json_str(f, s->comments[i]);
-    }
-    fputs("],\"paths\":[", f);
-    for (int i = 0; i < s->npaths; i++) {
-        if (i) fputc(',', f);
-        json_str(f, s->paths[i]);
-    }
-    fputs("],\"actors\":[", f);
+    fputs("],\"comments\":", f);
+    j_strs(f, s->comments, s->ncomments);
+    fputs(",\"paths\":", f);
+    j_strs(f, s->paths, s->npaths);
+    fputs(",\"actors\":[", f);
     for (int i = 0; i < s->nactors; i++) {
         const AnActor *a = &s->actors[i];
         fprintf(f, "%s{\"kind\":\"%s\",\"id\":", i ? "," : "", a->sub ? "subagent" : "session");

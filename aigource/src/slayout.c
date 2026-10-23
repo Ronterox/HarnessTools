@@ -26,22 +26,18 @@ static void dice(const StNode *nodes, const int *kids, int n, double value, floa
     }
 }
 
+/* Depth-first below node i: the array order is parents first, but a
+ * subtree's nodes aren't contiguous, so walk it. */
+static void partition(const StNode *nodes, int i, float *x0, float *x1) {
+    const StNode *d = &nodes[i];
+    dice(nodes, d->kids, d->nkids, d->value, x0[i], x1[i], x0, x1);
+    for (int k = 0; k < d->nkids; k++) partition(nodes, d->kids[k], x0, x1);
+}
+
 void lay_partition(const StNode *nodes, int root, float *x0, float *x1) {
     x0[root] = 0;
     x1[root] = 1;
-    /* breadth-first below root: the array order is parents first, but a
-     * subtree's nodes aren't contiguous, so walk it */
-    int *stack = xmalloc(sizeof *stack * 64), cap = 64, sp = 0;
-    stack[sp++] = root;
-    while (sp) {
-        int i = stack[--sp];
-        const StNode *d = &nodes[i];
-        if (!d->nkids) continue;
-        dice(nodes, d->kids, d->nkids, d->value, x0[i], x1[i], x0, x1);
-        if (sp + d->nkids > cap) cap = (sp + d->nkids) * 2, stack = xrealloc(stack, sizeof *stack * (size_t)cap);
-        for (int k = 0; k < d->nkids; k++) stack[sp++] = d->kids[k];
-    }
-    free(stack);
+    partition(nodes, root, x0, x1);
 }
 
 /* ---- treemap ------------------------------------------------------------ */
@@ -338,14 +334,14 @@ void lay_sim_free(LSim *s) {
 #define SEED_PAD 12
 #define SEED_CELL 256
 
-float lay_win_angle(unsigned id) { return (float)((double)(uint32_t)((id + 1u) * 2654435761u) / 4294967296.0 * 2 * M_PI); }
+/* A fresh window's angle, radians, from its id. */
+static float lay_win_angle(unsigned id) { return (float)((double)(uint32_t)((id + 1u) * 2654435761u) / 4294967296.0 * 2 * M_PI); }
 
 /* A fresh window's free spot: a grid of the placed rects by cell, searched
  * ring by ring from its target distance, alternating sides of its angle. */
 typedef struct {
-    int *head, nb;       /* buckets: first entry, -1 */
-    int *rect, *next;    /* entries: the rect, the next in its bucket */
-    long long *cell;     /* entries: their cell */
+    int *head, nb; /* buckets: first entry, -1 */
+    struct { int rect, next; long long cell; } *ent; /* the rect, the next in its bucket, its cell */
     int n, cap;
 } SeedGrid;
 
@@ -360,15 +356,10 @@ static void seed_add(SeedGrid *g, const LWin *w, int k) {
     const LWin *m = &w[k];
     for (int i = (int)floorf((m->x - m->w / 2 - SEED_PAD) / SEED_CELL); i <= (int)floorf((m->x + m->w / 2 + SEED_PAD) / SEED_CELL); i++)
         for (int j = (int)floorf((m->y - m->h / 2 - SEED_PAD) / SEED_CELL); j <= (int)floorf((m->y + m->h / 2 + SEED_PAD) / SEED_CELL); j++) {
-            if (g->n == g->cap) {
-                g->cap = g->cap ? g->cap * 2 : 256;
-                g->rect = xrealloc(g->rect, sizeof *g->rect * (size_t)g->cap);
-                g->next = xrealloc(g->next, sizeof *g->next * (size_t)g->cap);
-                g->cell = xrealloc(g->cell, sizeof *g->cell * (size_t)g->cap);
-            }
+            GROW(g->ent, g->n, g->cap);
             long long c = cell_key(i, j);
             unsigned b = bucket(g, c);
-            g->rect[g->n] = k, g->cell[g->n] = c, g->next[g->n] = g->head[b];
+            g->ent[g->n].rect = k, g->ent[g->n].cell = c, g->ent[g->n].next = g->head[b];
             g->head[b] = g->n++;
         }
 }
@@ -377,9 +368,9 @@ static bool seed_free(const SeedGrid *g, const LWin *w, const LWin *n, float x, 
     for (int i = (int)floorf((x - n->w / 2 - SEED_PAD) / SEED_CELL); i <= (int)floorf((x + n->w / 2 + SEED_PAD) / SEED_CELL); i++)
         for (int j = (int)floorf((y - n->h / 2 - SEED_PAD) / SEED_CELL); j <= (int)floorf((y + n->h / 2 + SEED_PAD) / SEED_CELL); j++) {
             long long c = cell_key(i, j);
-            for (int e = g->head[bucket(g, c)]; e >= 0; e = g->next[e]) {
-                if (g->cell[e] != c) continue;
-                const LWin *m = &w[g->rect[e]];
+            for (int e = g->head[bucket(g, c)]; e >= 0; e = g->ent[e].next) {
+                if (g->ent[e].cell != c) continue;
+                const LWin *m = &w[g->ent[e].rect];
                 if (fabsf(m->x - x) * 2 < m->w + n->w + SEED_PAD * 2 && fabsf(m->y - y) * 2 < m->h + n->h + SEED_PAD * 2)
                     return false;
             }
@@ -415,7 +406,7 @@ static void seed(LWin *w, int n) {
         }
         seed_add(&g, w, k);
     }
-    free(g.head), free(g.rect), free(g.next), free(g.cell);
+    free(g.head), free(g.ent);
 }
 
 static int cmp_left(const void *a, const void *b, void *ud) {

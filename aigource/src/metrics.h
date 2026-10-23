@@ -42,9 +42,9 @@ typedef struct { int node, add, del; } StTouch;
 
 typedef struct {       /* the node's changes in one turn (inspector "Turns") */
     int turn, changes, add, del, flags; /* STT_* */
-    int *notes, nnotes;                 /* file/def: comments with text, as AnChange.comment (distinct, in order) */
+    int *notes, nnotes, cnotes;         /* file/def: comments with text, as AnChange.comment (distinct, in order) */
     const char **tools;                 /* distinct, in order */
-    int ntools;
+    int ntools, ctools;
 } StNodeTurn;
 
 typedef struct {

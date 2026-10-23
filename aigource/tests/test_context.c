@@ -102,7 +102,7 @@ static void test_dumps(void) {
         yyjson_doc *doc = yyjson_read_opts((char *)JS[i].in, strlen(JS[i].in), PYJ_READ, NULL, NULL);
         CHECK(doc != NULL);
         if (!doc) continue;
-        PyBuf b = {0};
+        Buf b = {0};
         static const int flags[] = {PYJ_CANON, 0, PYJ_INDENT1};
         const char *want[] = {JS[i].canon, JS[i].plain, JS[i].indent};
         for (int k = 0; k < 3; k++) {
@@ -117,7 +117,7 @@ static void test_dumps(void) {
         pyj_dumps(&b, yyjson_doc_get_root(doc), PYJ_CANON);
         hex_of(b.s, b.n, hex);
         CHECK(!strcmp(hex, JS[i].sha));
-        pyb_free(&b);
+        buf_free(&b);
         yyjson_doc_free(doc);
     }
     what = "float repr";
@@ -125,10 +125,10 @@ static void test_dumps(void) {
         {1, "1.0"}, {0.1, "0.1"}, {1e16, "1e+16"}, {9999999999999998.0, "9999999999999998.0"}, {1e-4, "0.0001"},
         {1.5e-5, "1.5e-05"}, {-2.5, "-2.5"}, {123.456, "123.456"}, {1e100, "1e+100"}, {0.30000000000000004, "0.30000000000000004"}};
     for (size_t i = 0; i < sizeof F / sizeof *F; i++) {
-        PyBuf b = {0};
+        Buf b = {0};
         pyj_float(&b, F[i].d);
         CHECK(!strcmp(b.s, F[i].s));
-        pyb_free(&b);
+        buf_free(&b);
     }
 }
 

@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 
 #include "util.h"
 
@@ -42,31 +41,32 @@ bool cl_open_default(const CtxItem *it, int c, bool linked, int nlinked) {
 typedef struct {
     const CtxAgent *a;
     const int *shown;
+    const unsigned char *linked;
     int c;
-} OpenCmp;
+} RankCmp;
 
-/* this call's response first, then the newest entered, then the call's order */
-static int cmp_newest(const void *x, const void *y, void *ud) {
-    const OpenCmp *o = ud;
-    int i = *(const int *)x, j = *(const int *)y;
-    const CtxItem *p = &o->a->items[o->shown[i]], *q = &o->a->items[o->shown[j]];
-    int rp = p->made == o->c, rq = q->made == o->c;
+/* this call's response first, then the linked, then the newest entered, then the order shown */
+static int cmp_rank(const void *x, const void *y, void *ud) {
+    const RankCmp *o = ud;
+    int i = *(const int *)x, j = *(const int *)y, p = o->shown[i], q = o->shown[j];
+    int rp = o->a->items[p].made == o->c, rq = o->a->items[q].made == o->c;
     if (rp != rq) return rq - rp;
-    if (p->enter != q->enter) return q->enter - p->enter;
+    if (o->linked[p] != o->linked[q]) return o->linked[q] - o->linked[p];
+    if (o->a->items[p].enter != o->a->items[q].enter) return o->a->items[q].enter - o->a->items[p].enter;
     return i - j;
 }
 
 void cl_open(const CtxAgent *a, int c, const int *shown, int n, const signed char *ov, const unsigned char *linked,
              int nlinked, bool *open) {
-    int *def = xmalloc(sizeof *def * (size_t)(n ? n : 1)), nd = 0;
+    int *def = xmalloc(sizeof *def * (size_t)n), nd = 0;
     for (int k = 0; k < n; k++) {
         int i = shown[k];
         open[k] = ov[i] >= 0 ? ov[i] == 1 : cl_open_default(&a->items[i], c, linked[i], nlinked);
         if (open[k] && ov[i] < 0 && !linked[i]) def[nd++] = k;
     }
-    if (nd > CL_OPEN_MAX) { /* a busy call stays readable: the newest stay open */
-        OpenCmp o = {a, shown, c};
-        qsort_r(def, (size_t)nd, sizeof *def, cmp_newest, &o);
+    if (nd > CL_OPEN_MAX) { /* a busy call stays readable: the newest stay open (none is linked) */
+        RankCmp o = {a, shown, linked, c};
+        qsort_r(def, (size_t)nd, sizeof *def, cmp_rank, &o);
         for (int k = CL_OPEN_MAX; k < nd; k++) open[def[k]] = false;
     }
     free(def);
@@ -76,19 +76,13 @@ void cl_title(const CtxItem *it, char *b, size_t n) {
     snprintf(b, n, "%s%s", it->kind == CK_RESULT && it->err ? "error \xC2\xB7 " : "", it->src ? it->src : "");
 }
 
-static int nchars(const char *s) {
-    int n = 0;
-    for (; *s; s++) n += ((unsigned char)*s & 0xC0) != 0x80;
-    return n;
-}
-
 static bool tool_is(const CtxItem *it, const char *t) { return it->tool && !strcmp(it->tool, t); }
 
 void cl_size(const CtxItem *it, bool open, float *w, float *h) {
     if (!open) {
         char t[1024];
         cl_title(it, t, sizeof t);
-        *w = fminf(300, 64 + (float)nchars(t) * 6.6f + 44), *h = CL_CHIP_H;
+        *w = fminf(300, 64 + (float)utf8_count(t, sizeof t) * 6.6f + 44), *h = CL_CHIP_H;
     } else if (it->kind == CK_RESULT && (tool_is(it, "Read") || tool_is(it, "Bash") || tool_is(it, "Grep")))
         *w = 460, *h = 270;
     else if (it->kind == CK_ACTION && (tool_is(it, "Edit") || tool_is(it, "Write")))
@@ -101,25 +95,8 @@ void cl_size(const CtxItem *it, bool open, float *w, float *h) {
         *w = 360, *h = 180;
 }
 
-typedef struct {
-    const CtxAgent *a;
-    const int *shown;
-    const unsigned char *linked;
-    int c;
-} RankCmp;
-
-static int cmp_rank(const void *x, const void *y, void *ud) {
-    const RankCmp *o = ud;
-    int i = *(const int *)x, j = *(const int *)y, p = o->shown[i], q = o->shown[j];
-    int rp = o->a->items[p].made == o->c, rq = o->a->items[q].made == o->c;
-    if (rp != rq) return rq - rp;
-    if (o->linked[p] != o->linked[q]) return o->linked[q] - o->linked[p];
-    if (o->a->items[p].enter != o->a->items[q].enter) return o->a->items[q].enter - o->a->items[p].enter;
-    return i - j;
-}
-
 void cl_targets(const CtxAgent *a, int c, const int *shown, int n, const unsigned char *linked, LWin *w) {
-    int *ix = xmalloc(sizeof *ix * (size_t)(n ? n : 1));
+    int *ix = xmalloc(sizeof *ix * (size_t)n);
     for (int k = 0; k < n; k++) ix[k] = k;
     RankCmp o = {a, shown, linked, c};
     qsort_r(ix, (size_t)n, sizeof *ix, cmp_rank, &o);
@@ -185,12 +162,6 @@ void cl_facts(const CtxAgent *a, int item, int c, const int *by_item, ClFacts *f
     f->known = known;
 }
 
-/* JavaScript's toFixed, near enough: half away from zero */
-static double jfix(double v, int digits) {
-    double p = pow(10, digits), r = floor(fabs(v) * p + 0.5) / p;
-    return v < 0 ? -r : r;
-}
-
 void cl_fmt_k(char *b, size_t n, double v) {
     if (v >= 1e6) snprintf(b, n, "%.*fM", v >= 1e7 ? 0 : 1, jfix(v / 1e6, v >= 1e7 ? 0 : 1));
     else if (v >= 1e3) snprintf(b, n, "%.*fk", v >= 1e4 ? 0 : 1, jfix(v / 1e3, v >= 1e4 ? 0 : 1));
@@ -213,13 +184,6 @@ void cl_fmt_min(char *b, size_t n, double s) {
 void cl_fmt_pct(char *b, size_t n, double share) {
     int d = share < 0.01 ? 2 : 1;
     snprintf(b, n, "%.*f%%", d, jfix(share * 100, d));
-}
-
-void cl_clock(char *b, size_t n, double t) {
-    time_t s = (time_t)t;
-    struct tm tm;
-    localtime_r(&s, &tm);
-    strftime(b, n, "%H:%M", &tm);
 }
 
 static void run(ClRun *r, int *n, bool part, unsigned char style, const char *fmt, ...)
@@ -245,7 +209,7 @@ int cl_meta(const CtxAgent *a, const ClFacts *f, ClRun *r) {
     if (f->in_order) cl_fmt_pct(x, sizeof x, f->share), run(r, &n, false, CLS_FAINT, " \xC2\xB7 %s", x);
     else run(r, &n, false, CLS_FAINT, " out \xC2\xB7 this call's response");
     if (f->enter >= 0) {
-        cl_clock(x, sizeof x, a->calls[f->enter].t);
+        fmt_clock(x, sizeof x, a->calls[f->enter].t, "%H:%M");
         run(r, &n, true, CLS_FAINT, "in #%d %s", f->enter, x);
         cl_fmt_min(x, sizeof x, f->age_s);
         run(r, &n, true, CLS_FAINT, "age %d calls \xC2\xB7 %s", f->age_calls, x);
@@ -270,7 +234,7 @@ void cl_stale_text(const CtxAgent *a, int item, int nstale, char *b, size_t n) {
     for (int k = 0; k < nstale && k < it->nst && o + 1 < n; k++) {
         char t[16];
         int kind = it->st[k].kind >= 0 && it->st[k].kind <= CST_NOTICED ? it->st[k].kind : CST_NOTICED;
-        cl_clock(t, sizeof t, it->st[k].t);
+        fmt_clock(t, sizeof t, it->st[k].t, "%H:%M");
         int w = snprintf(b + o, n - o, "%s%s %s (%s)", k ? "\n" : "", t, it->st[k].label ? it->st[k].label : "", by[kind]);
         if (w < 0) break;
         o += (size_t)w < n - o ? (size_t)w : n - o - 1;
@@ -288,7 +252,7 @@ void cl_by_kind(const CtxAgent *a, int c, double *by) {
 void cl_inout(const CtxAgent *a, int c, int *in, int *out) {
     const CtxCall *C = &a->calls[c];
     int b = C->base >= 0 ? C->base : c - 1; /* no base: against the call before */
-    unsigned char *mark = xcalloc((size_t)(a->nitems ? a->nitems : 1), 1);
+    unsigned char *mark = xcalloc((size_t)a->nitems, 1);
     if (b >= 0)
         for (int p = 0; p < a->calls[b].norder; p++) mark[a->calls[b].order[p]] = 1;
     *in = *out = 0;
@@ -328,7 +292,7 @@ static int cmp_key(const void *x, const void *y, void *ud) {
 
 /* nw's items sorted by key, each of old's looked up in them */
 void cl_key_map(const CtxAgent *old, const CtxAgent *nw, int *map) {
-    int *ix = xmalloc(sizeof *ix * (size_t)(nw->nitems ? nw->nitems : 1));
+    int *ix = xmalloc(sizeof *ix * (size_t)nw->nitems);
     for (int j = 0; j < nw->nitems; j++) ix[j] = j;
     qsort_r(ix, (size_t)nw->nitems, sizeof *ix, cmp_key, nw->items);
     for (int i = 0; i < old->nitems; i++) {

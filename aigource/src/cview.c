@@ -35,6 +35,22 @@
 enum { D_NONE, D_EAT, D_PAN, D_MOVE, D_RESIZE, D_SCRUB };
 enum { FIT_RECENT, FIT_ALL, FIT_LINKS };
 
+/* An open's ask (cv_open's): the transcript, where to open it. */
+typedef struct {
+    char *path;
+    int call, sel;
+    double t;
+} Ask;
+
+/* A job's result: handed over under mu. */
+typedef struct {
+    CtxAgent *a;
+    CtxRef *refs;
+    int nrefs;
+    char *err;
+    double ms; /* how long it took */
+} Result;
+
 struct CView {
     char *root;
     CtxProject *proj;
@@ -43,23 +59,15 @@ struct CView {
     bool running;
     atomic_int cancel;
     pthread_mutex_t mu;
-    char *loading;           /* the transcript it reads */
+    Ask load;                /* the transcript it reads, where to open it */
     const CtxAgent *reloading; /* a reload: of this agent (the one shown, kept until it's in); NULL a load */
-    int load_call, load_sel; /* where to open it (cv_open's) */
-    double load_t;
     long long load_size;     /* the transcript's size and time when the job started */
     double load_mtime;
     bool done;               /* under mu: its result is in */
-    CtxAgent *new_a;
-    CtxRef *new_refs;
-    int new_nrefs;
-    char *new_err;
-    double new_ms;           /* how long it took */
+    Result res;
     /* the latest ask, loaded once the worker is free */
     bool want_due;
-    char *want;
-    int want_call, want_sel;
-    double want_t;
+    Ask want;
     /* the agent shown */
     CtxAgent *a;
     CtxRef *refs;
@@ -138,12 +146,11 @@ static void *worker(void *arg) {
     char *err = NULL;
     double t0 = now_wall();
     CtxAgent *a = c->reloading ? ctx_reload(c->reloading, c->proj, &c->cancel, &err)
-                               : ctx_load(c->root, c->loading, c->proj, &c->cancel, &err);
+                               : ctx_load(c->root, c->load.path, c->proj, &c->cancel, &err);
     CtxRef *refs = NULL;
-    int nrefs = a ? ctx_session_agents(c->loading, &refs) : 0;
+    int nrefs = a ? ctx_session_agents(c->load.path, &refs) : 0;
     pthread_mutex_lock(&c->mu);
-    c->new_a = a, c->new_refs = refs, c->new_nrefs = nrefs, c->new_err = err;
-    c->new_ms = (now_wall() - t0) * 1e3;
+    c->res = (Result){a, refs, nrefs, err, (now_wall() - t0) * 1e3};
     c->done = true;
     pthread_mutex_unlock(&c->mu);
     return NULL;
@@ -157,7 +164,7 @@ static void file_stat(const char *path, long long *size, double *mtime) {
 }
 
 static void start_job(CView *c) {
-    file_stat(c->loading, &c->load_size, &c->load_mtime);
+    file_stat(c->load.path, &c->load_size, &c->load_mtime);
     atomic_store(&c->cancel, 0);
     c->done = false;
     if (pthread_create(&c->th, NULL, worker, c)) {
@@ -171,17 +178,16 @@ static void start_job(CView *c) {
 
 /* The latest ask. */
 static void start_load(CView *c) {
-    free(c->loading);
-    c->loading = c->want, c->want = NULL, c->want_due = false;
-    c->load_call = c->want_call, c->load_sel = c->want_sel, c->load_t = c->want_t;
+    free(c->load.path);
+    c->load = c->want, c->want.path = NULL, c->want_due = false;
     c->reloading = NULL;
     start_job(c);
 }
 
 /* The agent shown again, its transcript having grown (live). */
 static void start_reload(CView *c) {
-    free(c->loading);
-    c->loading = xstrdup(c->a->path);
+    free(c->load.path);
+    c->load.path = xstrdup(c->a->path);
     c->reloading = c->a;
     start_job(c);
 }
@@ -210,48 +216,33 @@ static void free_node(CNode *n) {
     free(n);
 }
 
-/* Every window, as an agent goes. */
-static void drop_windows(CView *c) {
-    for (int k = 0; k < c->nshown && c->zs; k++) free_node(c->zs[k]);
+/* The agent shown and every window, as it goes (install sets them all again). */
+static void free_agent(CView *c) {
+    for (int k = 0; k < c->nshown; k++) free_node(c->zs[k]);
     for (int k = 0; k < c->ngone; k++) free_node(c->gone[k]);
     c->ngone = c->nshown = 0;
-    if (c->a) memset(c->node, 0, sizeof *c->node * (size_t)c->a->nitems);
     c->drag = D_NONE, c->dn = c->hov = -1;
-}
-
-static void free_agent(CView *c) {
-    drop_windows(c);
     free(c->by_item), free(c->linked), free(c->ov), free(c->pin), free(c->size), free(c->node), free(c->shown);
     free(c->open_tmp), free(c->mark), free(c->zs), free(c->acts), free(c->fil);
-    c->by_item = c->shown = c->acts = c->fil = NULL;
-    c->linked = c->mark = NULL;
-    c->ov = NULL, c->pin = c->size = NULL, c->node = c->zs = NULL, c->open_tmp = NULL;
     ctx_free(c->a);
-    c->a = NULL;
     ctx_refs_free(c->refs, c->nrefs);
-    c->refs = NULL, c->nrefs = 0;
-}
-
-static void take_result(CView *c, CtxAgent **a, CtxRef **refs, int *nrefs, char **err, double *ms) {
-    *a = c->new_a, *refs = c->new_refs, *nrefs = c->new_nrefs, *err = c->new_err, *ms = c->new_ms;
-    c->new_a = NULL, c->new_refs = NULL, c->new_nrefs = 0, c->new_err = NULL, c->done = false;
 }
 
 void cv_free(CView *c) {
     if (!c) return;
     if (c->running) atomic_store(&c->cancel, 1), pthread_join(c->th, NULL);
-    ctx_free(c->new_a), ctx_refs_free(c->new_refs, c->new_nrefs), free(c->new_err);
+    ctx_free(c->res.a), ctx_refs_free(c->res.refs, c->res.nrefs), free(c->res.err);
     free_agent(c);
     free(c->gone);
     ctx_project_free(c->proj);
     pthread_mutex_destroy(&c->mu);
     free(c->bench.show), free(c->bench.frame);
-    free(c->loading), free(c->want), free(c->err), free(c->reload_err), free(c->root);
+    free(c->load.path), free(c->want.path), free(c->err), free(c->reload_err), free(c->root);
     free(c);
 }
 
 static void install(CView *c, CtxAgent *a, CtxRef *refs, int nrefs, bool keep);
-static void select_action(CView *c, int id, bool instant);
+static bool select_action(CView *c, int id, bool instant);
 static void fit(CView *c, int what, bool animate);
 static void stop(CView *c);
 
@@ -264,14 +255,12 @@ static void swap_in(CView *c) {
     }
     pthread_mutex_lock(&c->mu);
     bool done = c->done;
-    CtxAgent *a = NULL;
-    CtxRef *refs = NULL;
-    int nrefs = 0;
-    char *err = NULL;
-    double ms = 0;
-    if (done) take_result(c, &a, &refs, &nrefs, &err, &ms);
+    Result r = c->res;
+    if (done) c->res = (Result){0}, c->done = false;
     pthread_mutex_unlock(&c->mu);
     if (!done) return;
+    CtxAgent *a = r.a;
+    char *err = r.err;
     pthread_join(c->th, NULL);
     c->running = false;
     ClDone d = {.reload = c->reloading != NULL, .cancelled = atomic_load(&c->cancel), .newer = c->want_due,
@@ -281,7 +270,7 @@ static void swap_in(CView *c) {
     if (what != CL_JOB_INSTALL && what != CL_JOB_KEEP) {
         if (a && !a->ncalls && !err) err = xstrdup("this transcript has no API calls yet");
         ctx_free(a);
-        ctx_refs_free(refs, nrefs);
+        ctx_refs_free(r.refs, r.nrefs);
         /* CL_JOB_RETRY: the transcript still counts as changed (src_* untouched), live() reloads it again */
         if (what == CL_JOB_RELOAD_FAIL) { /* the agent stays; retried once it grows again */
             c->src_size = c->load_size, c->src_mtime = c->load_mtime;
@@ -295,26 +284,21 @@ static void swap_in(CView *c) {
     free(err);
     free(c->reload_err), c->reload_err = NULL;
     if (d.reload) {
-        c->reload_ms = ms;
-        if (getenv("AIG_DEBUG")) fprintf(stderr, "context: reloaded %s in %.0f ms, %d calls, %d items\n", a->id, ms, a->ncalls, a->nitems);
+        c->reload_ms = r.ms;
+        if (getenv("AIG_DEBUG")) fprintf(stderr, "context: reloaded %s in %.0f ms, %d calls, %d items\n", a->id, r.ms, a->ncalls, a->nitems);
     }
     double t0 = GetTime();
-    install(c, a, refs, nrefs, what == CL_JOB_KEEP);
+    install(c, a, r.refs, r.nrefs, what == CL_JOB_KEEP);
     if (d.reload && getenv("AIG_DEBUG")) fprintf(stderr, "context: swapped in at a frame's start in %.1f ms\n", (GetTime() - t0) * 1e3);
     c->src_size = c->seen_size = c->load_size, c->src_mtime = c->seen_mtime = c->load_mtime;
     c->changed = c->first_change = 0;
 }
 
-/* An open on the agent shown: to the call or action asked for, no load. */
-static void go_to(CView *c, int call, int sel, double t) {
-    const CtxAgent *a = c->a;
-    if (sel >= 0 && sel < a->nitems && a->items[sel].kind == CK_ACTION && a->items[sel].made >= 0) {
-        select_action(c, sel, false);
-        return;
-    }
-    if (sel >= 0) fprintf(stderr, "aigource: context: item %d is not an action\n", sel);
-    call = call == CV_NONE ? cl_call_at(a, t) : call < 0 ? a->ncalls + call : call;
-    show(c, call < 0 ? 0 : call, false);
+/* An open on the agent shown: to the action asked for, else the call (from the end when < 0, by time when CV_NONE). */
+static void go_to(CView *c, Ask w, bool instant) {
+    if (select_action(c, w.sel, instant)) return;
+    if (w.sel >= 0) fprintf(stderr, "aigource: context: item %d is not an action\n", w.sel);
+    show(c, w.call == CV_NONE ? cl_call_at(c->a, w.t) : w.call < 0 ? c->a->ncalls + w.call : w.call, instant);
 }
 
 void cv_open(CView *c, const char *path, int call, int sel, double t) {
@@ -323,23 +307,20 @@ void cv_open(CView *c, const char *path, int call, int sel, double t) {
     c->picker = c->typing = c->playing = false;
     c->follow = call == CV_NONE && sel < 0; /* a call or an action asked for: not the stage's */
     if (t > 0) c->stage_t = t;
-    ClWorker w = {c->a ? c->a->path : NULL, c->running ? c->loading : NULL, c->reloading != NULL, atomic_load(&c->cancel)};
+    ClWorker w = {c->a ? c->a->path : NULL, c->running ? c->load.path : NULL, c->reloading != NULL, atomic_load(&c->cancel)};
+    free(c->want.path), c->want.path = NULL, c->want_due = false;
     switch (cl_open_job(&w, path)) {
     case CL_OPEN_KEEP: /* on its way: opened where asked once in */
-        c->load_call = call, c->load_sel = sel, c->load_t = t;
-        free(c->want), c->want = NULL, c->want_due = false;
+        c->load.call = call, c->load.sel = sel, c->load.t = t;
         return;
     case CL_OPEN_SHOWN_DROP: atomic_store(&c->cancel, 1); /* the other agent's load: dropped */
         /* fall through */
     case CL_OPEN_SHOWN: /* loaded (shown, or behind another's failed load): live reloads keep it fresh */
-        free(c->want), c->want = NULL, c->want_due = false;
         c->failed = false;
-        go_to(c, call, sel, t);
+        go_to(c, (Ask){NULL, call, sel, t}, false);
         return;
     }
-    free(c->want);
-    c->want = xstrdup(path);
-    c->want_call = call, c->want_sel = sel, c->want_t = t;
+    c->want = (Ask){xstrdup(path), call, sel, t};
     c->want_due = true;
     c->failed = false;
     if (c->running) atomic_store(&c->cancel, 1); /* CL_OPEN_QUEUE: the newer one loads when it's out */
@@ -357,9 +338,7 @@ bool cv_is_open(const CView *c) { return c && c->open; }
 bool cv_ready(const CView *c) { return c->open && !c->running && !c->want_due && (c->a || c->failed); }
 bool cv_typing(const CView *c) { return c && c->open && c->typing; }
 
-void cv_clock(CView *c, double t) {
-    if (c) c->stage_t = t;
-}
+void cv_clock(CView *c, double t) { c->stage_t = t; }
 
 static void filter(CView *c) {
     c->nfil = 0;
@@ -370,7 +349,7 @@ static void filter(CView *c) {
 /* The windows on screen, as the reloaded agent's items (map: old item ->
  * new, cl_key_map); the gone ones freed. *dn: the window in hand, -1. */
 static CNode **carry_windows(CView *c, const CtxAgent *a, const int *map, int *n, int *dn) {
-    CNode **carried = xmalloc(sizeof *carried * (size_t)(c->nshown ? c->nshown : 1));
+    CNode **carried = xmalloc(sizeof *carried * (size_t)c->nshown);
     *n = 0, *dn = -1;
     for (int k = 0; k < c->nshown; k++) {
         CNode *w = c->zs[k];
@@ -392,7 +371,7 @@ static CNode **carry_windows(CView *c, const CtxAgent *a, const int *map, int *n
  * (the stage's when following). */
 static void install(CView *c, CtxAgent *a, CtxRef *refs, int nrefs, bool keep) {
     int n = a->nitems;
-    size_t N = (size_t)(n ? n : 1);
+    size_t N = (size_t)n;
     ClUser u = {xmalloc(N), xmalloc(sizeof(float) * 2 * N), xcalloc(2 * N, sizeof(float)), -1};
     memset(u.ov, -1, N);
     for (int i = 0; i < 2 * n; i++) u.pin[i] = NAN;
@@ -400,7 +379,7 @@ static void install(CView *c, CtxAgent *a, CtxRef *refs, int nrefs, bool keep) {
     int ncarried = 0, dn = -1, old_c = c->C, old_n = c->nshown;
     keep = keep && c->a;
     if (keep) {
-        int *map = xmalloc(sizeof *map * (size_t)(c->a->nitems ? c->a->nitems : 1));
+        int *map = xmalloc(sizeof *map * (size_t)c->a->nitems);
         cl_key_map(c->a, a, map);
         cl_carry(map, c->a->nitems, &(ClUser){c->ov, c->pin, c->size, c->sel}, &u);
         carried = carry_windows(c, a, map, &ncarried, &dn);
@@ -452,14 +431,7 @@ static void install(CView *c, CtxAgent *a, CtxRef *refs, int nrefs, bool keep) {
     c->sel = -1, c->C = -1;
     c->playing = false;
     c->act_scroll = 0;
-    int call = c->load_call == CV_NONE ? cl_call_at(a, c->load_t) : c->load_call < 0 ? a->ncalls + c->load_call : c->load_call;
-    call = call < 0 ? 0 : call >= a->ncalls ? a->ncalls - 1 : call;
-    const CtxItem *s = c->load_sel >= 0 && c->load_sel < n ? &a->items[c->load_sel] : NULL;
-    if (s && s->kind == CK_ACTION && s->made >= 0) select_action(c, c->load_sel, true);
-    else {
-        if (c->load_sel >= 0) fprintf(stderr, "aigource: --context: item %d is not an action\n", c->load_sel);
-        show(c, call, true);
-    }
+    go_to(c, c->load, true);
     fit(c, FIT_RECENT, false);
     if (c->bench.n > 0) /* its own steps: not the stage's clock */
         c->bench.from = a->ncalls - (c->bench.n < a->ncalls ? c->bench.n : a->ncalls), c->bench.at = -1, c->follow = false;
@@ -498,7 +470,7 @@ static int cmp_z(const void *x, const void *y) {
  * distances, then lay_wins. */
 static void simulate(CView *c, int ticks, int passes) {
     int n = c->nshown;
-    LWin *w = xmalloc(sizeof *w * (size_t)(n ? n : 1));
+    LWin *w = xmalloc(sizeof *w * (size_t)n);
     for (int k = 0; k < n; k++) {
         CNode *d = c->node[c->shown[k]];
         const float *p = &c->pin[2 * d->item];
@@ -572,8 +544,7 @@ static void show(CView *c, int call, bool instant) {
         n->leave = forward && summary >= 0 && a->items[n->item].leave == call ? LV_FOLD /* into the summary */
                  : n->kind == CK_THINKING                                         ? LV_THINK
                                                                                   : LV_FADE;
-        GROW(c->gone, c->ngone, c->capgone);
-        c->gone[c->ngone++] = n;
+        PUSH(c->gone, c->ngone, c->capgone, n);
     }
     cl_open(a, call, c->shown, c->nshown, c->ov, c->linked, c->nlinked, c->open_tmp);
     int fresh = 0;
@@ -602,15 +573,17 @@ static void show(CView *c, int call, bool instant) {
     c->last_show = c->clock;
 }
 
-static void select_action(CView *c, int id, bool instant) {
+/* False when id isn't an action. */
+static bool select_action(CView *c, int id, bool instant) {
     const CtxAgent *a = c->a;
-    if (id < 0 || id >= a->nitems || a->items[id].kind != CK_ACTION || a->items[id].made < 0) return;
+    if (id < 0 || id >= a->nitems || a->items[id].kind != CK_ACTION || a->items[id].made < 0) return false;
     c->sel = id;
     c->follow = false; /* the action's call, not the stage's */
     for (int k = 0; k < a->items[id].nlk; k++) c->ov[a->items[id].lk[k].item] = -1; /* its causes open */
     show(c, a->items[id].made, instant);
     if (!instant) c->fit_at = c->clock + 0.05;
     c->act_follow = true;
+    return true;
 }
 
 static void stop(CView *c) { c->playing = false; }
@@ -710,7 +683,15 @@ static int nkinds(const CView *c) {
     return n;
 }
 
-static float stats(CView *c, float right, float cy, bool draw);
+static float stats(CView *c, float x, float cy, bool d);
+
+/* C's context window (1M when unknown), and how full C is. */
+static double call_window(const CtxCall *C, double *share) {
+    int win = ctx_window(C->model);
+    double W = win ? win : 1e6;
+    *share = fmin(1, C->total / W);
+    return W;
+}
 #define FOLLOWING "following the stage"
 #define DETACHED "detached \xC2\xB7 L follows"
 
@@ -718,7 +699,7 @@ static Geo geometry(CView *c) {
     Geo g;
     memset(&g, 0, sizeof g);
     float W = (float)GetScreenWidth(), H = (float)GetScreenHeight(), bar_h = BAR_H;
-    float x = 12 + sv_tw(F_MONO_B, "aigource", 14) + sv_tw(F_MONO, " \xC2\xB7 context", 14) + 16;
+    float x = sv_brand("context", 0, false) + 16;
     if (shown(c)) {
         char lb[600];
         agent_label(c, lb, sizeof lb);
@@ -786,8 +767,6 @@ static Geo geometry(CView *c) {
 
 /* ---- the bar ------------------------------------------------------------------------ */
 
-static void hline(float x0, float x1, float y, Color c) { DrawRectangle((int)x0, (int)y, (int)(x1 - x0), 1, c); }
-
 static float tx_run(int f, const char *s, float x, float cy, float css, Color c, bool draw) {
     if (draw) sv_tx(f, s, x, sv_mid(cy, css), css, c);
     return sv_tw(f, s, css);
@@ -798,60 +777,52 @@ static void badge(Rectangle r, const char *s) {
     sv_txs(F_MONO_B, s, r.x + 6, sv_mid(r.y + r.height / 2, 10.5f), 10.5f, 0.5f, C_HOT);
 }
 
-/* The draft's stats, ending at right: their width. */
-static float stats(CView *c, float right, float cy, bool draw) {
+/* The draft's stats, from x (drawn when d; geometry measures them): their width. */
+static float stats(CView *c, float x, float cy, bool d) {
     const CtxAgent *a = c->a;
     const CtxCall *C = &a->calls[c->C];
-    int win = ctx_window(C->model);
-    double W = win ? win : 1e6, share = fmin(1, C->total / W);
+    double share, W = call_window(C, &share);
     double rd = 0, tot = 0;
     for (int k = 0; k <= c->C; k++)
         if (a->calls[k].has_u) rd += (double)a->calls[k].u[1], tot += a->calls[k].total;
     char t1[32], t2[32], b[160];
-    float x = 0, gap = 14, x0 = 0;
-    /* measured once, then drawn from right - width */
-    for (int pass = draw ? 0 : 1; pass < 2; pass++) {
-        bool d = draw && pass == 1;
-        if (pass == 1 && draw) x = right - x0;
-        float s = x;
-        cl_fmt_k(t1, sizeof t1, C->total);
-        cl_fmt_k(t2, sizeof t2, W);
-        x += tx_run(F_MONO, "context ", x, cy, 12.5f, C_DIM, d);
-        x += tx_run(F_MONO_B, t1, x, cy, 12.5f, C_FG, d);
-        snprintf(b, sizeof b, " / %s ", t2);
-        x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d);
-        if (d) {
-            Rectangle m = {x, cy - 3.5f, 90, 7};
-            DrawRectangleRec(m, C_BG);
-            DrawRectangleRec((Rectangle){x + 1, cy - 2.5f, (float)share * 88, 5}, C_HOT);
-            DrawRectangleLinesEx(m, 1, C_LINE);
-        }
-        x += 90;
-        snprintf(b, sizeof b, " %.1f%%", fmax(0, floor(share * 1000 + 0.5) / 10));
-        x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d) + gap;
-        x += tx_run(F_MONO, "cache hit ", x, cy, 12.5f, C_DIM, d);
-        if (C->has_u && C->total > 0) snprintf(b, sizeof b, "%.0f%%", floor((double)C->u[1] / C->total * 100 + 0.5));
-        else snprintf(b, sizeof b, "\xE2\x80\x94");
-        x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
-        if (tot > 0) snprintf(b, sizeof b, " \xC2\xB7 %.0f%% so far", floor(rd / tot * 100 + 0.5));
-        else snprintf(b, sizeof b, " \xC2\xB7 \xE2\x80\x94%% so far");
-        x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d) + gap;
-        snprintf(b, sizeof b, "%d", C->norder);
-        x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
-        x += tx_run(F_MONO, " items", x, cy, 12.5f, C_DIM, d) + gap;
-        x += tx_run(F_MONO, "call ", x, cy, 12.5f, C_DIM, d);
-        snprintf(b, sizeof b, "%d", c->C);
-        x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
-        snprintf(b, sizeof b, " / %d", a->ncalls - 1);
-        x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d);
-        if (C->noresp) {
-            float bw = sv_tws(F_MONO_B, "NO RESPONSE", 10.5f, 0.5f) + 12;
-            if (d) badge((Rectangle){x + gap, cy - 9, bw, 18}, "NO RESPONSE");
-            x += gap + bw;
-        }
-        x0 = x - s;
+    float gap = 14, s = x;
+    cl_fmt_k(t1, sizeof t1, C->total);
+    cl_fmt_k(t2, sizeof t2, W);
+    x += tx_run(F_MONO, "context ", x, cy, 12.5f, C_DIM, d);
+    x += tx_run(F_MONO_B, t1, x, cy, 12.5f, C_FG, d);
+    snprintf(b, sizeof b, " / %s ", t2);
+    x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d);
+    if (d) {
+        Rectangle m = {x, cy - 3.5f, 90, 7};
+        DrawRectangleRec(m, C_BG);
+        DrawRectangleRec((Rectangle){x + 1, cy - 2.5f, (float)share * 88, 5}, C_HOT);
+        DrawRectangleLinesEx(m, 1, C_LINE);
     }
-    return x0;
+    x += 90;
+    snprintf(b, sizeof b, " %.1f%%", fmax(0, floor(share * 1000 + 0.5) / 10));
+    x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d) + gap;
+    x += tx_run(F_MONO, "cache hit ", x, cy, 12.5f, C_DIM, d);
+    if (C->has_u && C->total > 0) snprintf(b, sizeof b, "%.0f%%", floor((double)C->u[1] / C->total * 100 + 0.5));
+    else snprintf(b, sizeof b, "\xE2\x80\x94");
+    x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
+    if (tot > 0) snprintf(b, sizeof b, " \xC2\xB7 %.0f%% so far", floor(rd / tot * 100 + 0.5));
+    else snprintf(b, sizeof b, " \xC2\xB7 \xE2\x80\x94%% so far");
+    x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d) + gap;
+    snprintf(b, sizeof b, "%d", C->norder);
+    x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
+    x += tx_run(F_MONO, " items", x, cy, 12.5f, C_DIM, d) + gap;
+    x += tx_run(F_MONO, "call ", x, cy, 12.5f, C_DIM, d);
+    snprintf(b, sizeof b, "%d", c->C);
+    x += tx_run(F_MONO_B, b, x, cy, 12.5f, C_FG, d);
+    snprintf(b, sizeof b, " / %d", a->ncalls - 1);
+    x += tx_run(F_MONO, b, x, cy, 12.5f, C_DIM, d);
+    if (C->noresp) {
+        float bw = sv_tws(F_MONO_B, "NO RESPONSE", 10.5f, 0.5f) + 12;
+        if (d) badge((Rectangle){x + gap, cy - 9, bw, 18}, "NO RESPONSE");
+        x += gap + bw;
+    }
+    return x - s;
 }
 
 static void chevron(float x, float y, Color c) {
@@ -860,15 +831,13 @@ static void chevron(float x, float y, Color c) {
 
 static void draw_bar(CView *c, const Geo *g, Vector2 mp) {
     DrawRectangleRec(g->bar, C_PANEL);
-    hline(0, g->bar.width, g->bar.y + g->bar.height - 1, C_LINE);
+    sv_hline(0, g->bar.width, g->bar.y + g->bar.height - 1, C_LINE);
     float cy = BAR_H / 2;
-    sv_tx(F_MONO_B, "aigource", 12, sv_mid(cy, 14), 14, C_FG);
-    sv_tx(F_MONO, " \xC2\xB7 context", 12 + sv_tw(F_MONO_B, "aigource", 14), sv_mid(cy, 14), 14, C_DIM);
+    sv_brand("context", cy, true);
     if (!shown(c)) return; /* loading another agent, or none: not the old one's */
     Rectangle p = g->pick;
     bool hot = CheckCollisionPointRec(mp, p) || c->picker;
-    DrawRectangleRounded(p, 10 / p.height, 6, hot ? sv_brighter(C_RAISED, 0.4f) : C_RAISED);
-    DrawRectangleRoundedLinesEx(p, 10 / p.height, 6, 1, c->picker ? C_FOCUS : C_LINE);
+    ui_box(p, 10 / p.height, hot ? sv_brighter(C_RAISED, 0.4f) : C_RAISED, 1, c->picker ? C_FOCUS : C_LINE);
     char lb[600], fitb[600];
     agent_label(c, lb, sizeof lb);
     sv_fit(F_MONO, fitb, sizeof fitb, lb, 12.5f, p.width - 30);
@@ -878,8 +847,7 @@ static void draw_bar(CView *c, const Geo *g, Vector2 mp) {
     for (int b = 0; b < 2; b++) {
         Rectangle r = b ? g->all : g->recent;
         bool h = CheckCollisionPointRec(mp, r);
-        DrawRectangleRounded(r, 8 / r.height, 6, C_RAISED);
-        DrawRectangleRoundedLinesEx(r, 8 / r.height, 6, 1, C_LINE);
+        ui_box(r, 8 / r.height, C_RAISED, 1, C_LINE);
         sv_tx(F_MONO, b ? "all" : "recent", r.x + 9, sv_mid(r.y + r.height / 2, 12), 12, h ? C_FG : C_DIM);
     }
     /* the stage's clock: followed, or not (L, or a click, follows it again) */
@@ -895,7 +863,7 @@ static void draw_bar(CView *c, const Geo *g, Vector2 mp) {
         static const char ny[] = "no call yet at this moment";
         sx = sv_tw(F_MONO, ny, 12.5f);
         sv_tx(F_MONO, ny, g->bar.width - 12 - sx, sv_mid(g->stats_y, 12.5f), 12.5f, C_DIM);
-    } else sx = stats(c, g->bar.width - 12, g->stats_y, true);
+    } else sx = stats(c, g->bar.width - 12 - c->cache.sw, g->stats_y, true); /* geometry's width, this call's */
     const char *live = c->running && c->reloading ? "updating\xE2\x80\xA6" : c->reload_err ? "update failed" : NULL;
     if (live) { /* left of the stats */
         float lw = sv_tw(F_SANS, live, 12);
@@ -926,15 +894,13 @@ static void draw_side(CView *c, const Geo *g, Vector2 mp) {
     DrawRectangleRec(s, C_PANEL);
     DrawRectangle((int)s.x, (int)s.y, 1, (int)s.height, C_LINE);
     float x = s.x + 12, w = s.width - 24, y = s.y + 10;
-    char b[256], up[256], v[32];
+    char b[256], v[32];
     /* what the context is made of */
     sv_when(v, sizeof v, a->calls[c->none_yet ? 0 : c->C].t);
+    for (char *p = v; *p; p++) *p = *p >= 'a' && *p <= 'z' ? (char)(*p - 32) : *p; /* a heading's: upper case */
     if (c->none_yet) snprintf(b, sizeof b, "NO CALL YET \xC2\xB7 THE FIRST AT %s", v);
     else snprintf(b, sizeof b, "CONTEXT AT CALL %d \xC2\xB7 %s", c->C, v);
-    size_t i = 0;
-    for (; b[i] && i + 1 < sizeof up; i++) up[i] = b[i] >= 'a' && b[i] <= 'z' ? (char)(b[i] - 32) : b[i];
-    up[i] = 0;
-    h3(up, x, y);
+    h3(b, x, y);
     y += 16 + 6;
     double total = c->none_yet ? 0 : a->calls[c->C].total;
     if (!c->none_yet) DrawRectangleRounded((Rectangle){x, y, w, 10}, 0.6f, 4, C_BG);
@@ -956,7 +922,7 @@ static void draw_side(CView *c, const Geo *g, Vector2 mp) {
         sv_tx(F_MONO, v, cx + cwid - sv_tw(F_MONO, v, 11.5f), sv_mid(cy, 11.5f), 11.5f, C_FAINT);
         j++;
     }
-    hline(s.x, s.x + s.width, s.y + g->sec1_h - 1, C_LINE);
+    sv_hline(s.x, s.x + s.width, s.y + g->sec1_h - 1, C_LINE);
     /* why it decided */
     if (c->sel >= 0) {
         const CtxItem *it = &a->items[c->sel];
@@ -999,13 +965,12 @@ static void draw_side(CView *c, const Geo *g, Vector2 mp) {
             sv_fit(F_MONO, b, sizeof b, t, 11.5f, w - rw - 6);
             sv_tx(F_MONO, b, x + rw + 6, sv_mid(cy, 11.5f), 11.5f, k == hot ? C_FG : C_DIM);
         }
-        hline(s.x, s.x + s.width, g->why.y + g->why.height - 1, C_LINE);
+        sv_hline(s.x, s.x + s.width, g->why.y + g->why.height - 1, C_LINE);
     }
     /* the actions */
     h3("ACTIONS", x, g->acts_y + 10);
     Rectangle f = g->filter;
-    DrawRectangleRounded(f, 10 / f.height, 6, C_RAISED);
-    DrawRectangleRoundedLinesEx(f, 10 / f.height, 6, c->typing ? 2 : 1, c->typing ? C_FOCUS : C_LINE);
+    ui_box(f, 10 / f.height, C_RAISED, c->typing ? 2 : 1, c->typing ? C_FOCUS : C_LINE);
     float fy = f.y + f.height / 2;
     if (!c->q[0]) {
         sv_tx(F_MONO, "filter: Edit, make, path\xE2\x80\xA6", f.x + 7, sv_mid(fy, 12.5f), 12.5f, C_FAINT);
@@ -1018,7 +983,7 @@ static void draw_side(CView *c, const Geo *g, Vector2 mp) {
         sv_tx(F_MONO, fitb, f.x + 7, sv_mid(fy, 12.5f), 12.5f, C_FG);
         if (c->typing && !c->all) DrawRectangle((int)(f.x + 8 + qw), (int)(fy - 8), 1, 16, C_FOCUS);
     }
-    hline(s.x, s.x + s.width, g->list.y - 1, C_LINE);
+    sv_hline(s.x, s.x + s.width, g->list.y - 1, C_LINE);
     Rectangle L = g->list;
     float full = (float)c->nfil * ACT_ROW + 14, maxs = fmaxf(0, full - L.height);
     if (c->act_follow && c->sel >= 0) { /* the selected action in view */
@@ -1048,11 +1013,8 @@ static void draw_side(CView *c, const Geo *g, Vector2 mp) {
         sv_tx(F_MONO, fitb, r.x + 6 + 38 + 6, sv_mid(cy, 12), 12, it->made == c->C ? C_ADD : C_FG);
     }
     EndScissorMode();
-    if (maxs > 0) {
-        float th = L.height - 8, bh = fmaxf(20, th * L.height / full);
-        DrawRectangleRounded((Rectangle){L.x + L.width - 8, L.y + 4 + (th - bh) * c->act_scroll / maxs, 4, bh}, 1, 4,
-                             ui_fade(C_DIM, 0.45f));
-    }
+    if (maxs > 0)
+        ui_thumb(L.x + L.width - 8, L.y + 4, 4, L.height - 8, L.height, full, c->act_scroll, maxs, 20, ui_fade(C_DIM, 0.45f));
 }
 
 /* ---- the strip ------------------------------------------------------------------------ */
@@ -1070,15 +1032,14 @@ static int strip_at(const CView *c, const Geo *g, Vector2 mp) {
 }
 
 static void small_button(Rectangle q, Vector2 mp) {
-    DrawRectangleRounded(q, 8 / q.height, 6, CheckCollisionPointRec(mp, q) ? sv_brighter(C_RAISED, 0.5f) : C_RAISED);
-    DrawRectangleRoundedLinesEx(q, 8 / q.height, 6, 1, C_LINE);
+    ui_box(q, 8 / q.height, CheckCollisionPointRec(mp, q) ? sv_brighter(C_RAISED, 0.5f) : C_RAISED, 1, C_LINE);
 }
 
 static void draw_strip(CView *c, const Geo *g, Vector2 mp) {
     const CtxAgent *a = c->a;
     Rectangle r = g->strip;
     DrawRectangleRec(r, C_PANEL);
-    hline(0, r.width, r.y, C_LINE);
+    sv_hline(0, r.width, r.y, C_LINE);
     float cy = r.y + r.height / 2;
     sv_txs(F_SANS_B, "CALLS", g->lbl.x, sv_mid(cy, 11), 11, 0.88f, C_FAINT);
     small_button(g->prev, mp);
@@ -1108,7 +1069,7 @@ static void draw_strip(CView *c, const Geo *g, Vector2 mp) {
     }
     if (c->none_yet) {
         char t[32], b[96];
-        cl_clock(t, sizeof t, a->calls[0].t);
+        fmt_clock(t, sizeof t, a->calls[0].t, "%H:%M");
         snprintf(b, sizeof b, "no call yet \xC2\xB7 the first at %s", t);
         tx_run(F_MONO, b, g->cur.x, g->cur.y + g->cur.height / 2, 12, C_DIM, true);
         return;
@@ -1119,7 +1080,7 @@ static void draw_strip(CView *c, const Geo *g, Vector2 mp) {
     float x = g->cur.x, ty = g->cur.y + g->cur.height / 2;
     snprintf(b, sizeof b, "#%d", c->C);
     x += tx_run(F_MONO_B, b, x, ty, 12, C_FG, true);
-    cl_clock(t, sizeof t, C->t);
+    fmt_clock(t, sizeof t, C->t, "%H:%M");
     cl_fmt_k(k, sizeof k, C->total);
     snprintf(b, sizeof b, " %s \xC2\xB7 %s tok \xC2\xB7 +%d \xE2\x88\x92%d%s", t, k, c->inn, c->outn, C->comp ? " \xC2\xB7 " : "");
     char fitb[200];
@@ -1132,29 +1093,15 @@ static void draw_strip(CView *c, const Geo *g, Vector2 mp) {
 static void draw_hint(const Geo *g) {
     Rectangle r = g->hint;
     DrawRectangleRec(r, C_WIN);
-    hline(0, r.width, r.y, C_LINE);
-    float cy = r.y + r.height / 2, x = 12;
+    sv_hline(0, r.width, r.y, C_LINE);
     static const char *const keys[][2] = {
         {"drag", "background pans, a title moves a window"}, {"wheel", "zoom"}, {"corner", "resize"}, {"chip", "opens"},
         {"\xE2\x86\x90 \xE2\x86\x92 space", "calls, play"}, {"L", "follow the stage"}, {"/", "filter"}, {"f a", "fit"},
         {"X / Esc", "back"}};
-    for (int i = 0; i < 9; i++) {
-        float w = sv_tw(F_MONO_B, keys[i][0], 12) + 6 + sv_tw(F_MONO, keys[i][1], 12);
-        if (x + w > r.width - 12) break;
-        sv_tx(F_MONO_B, keys[i][0], x, sv_mid(cy, 12), 12, C_DIM);
-        sv_tx(F_MONO, keys[i][1], x + sv_tw(F_MONO_B, keys[i][0], 12) + 6, sv_mid(cy, 12), 12, C_FAINT);
-        x += w + 16;
-    }
+    sv_hints(keys, 9, 12, r.y + r.height / 2, r.width - 12, 16);
 }
 
 /* ---- the stage ----------------------------------------------------------------------- */
-
-static void halo(const char *s, float x, float y, float css, Color c) {
-    for (int dy = -1; dy <= 1; dy++)
-        for (int dx = -1; dx <= 1; dx++)
-            if (dx || dy) sv_tx(F_MONO, s, x + (float)dx * 1.5f, y + (float)dy * 1.5f, css, C_BG);
-    sv_tx(F_MONO, s, x, y, css, c);
-}
 
 /* A dashed quadratic from the agent to (x, y), as the draft's links. */
 static void dashed_link(float x, float y, Color col, const char *label) {
@@ -1176,7 +1123,7 @@ static void dashed_link(float x, float y, Color col, const char *label) {
         run += seg;
         prev = cur;
     }
-    halo(label, x * 0.55f - y * 0.08f, y * 0.55f + x * 0.08f - PX(11) * 0.8f, 11, col);
+    sv_halo(F_MONO, label, x * 0.55f - y * 0.08f, y * 0.55f + x * 0.08f - PX(11) * 0.8f, 11, col, C_BG);
 }
 
 static void draw_links(CView *c) {
@@ -1199,8 +1146,7 @@ static void draw_links(CView *c) {
 static void draw_agent(CView *c) {
     const CtxAgent *a = c->a;
     const CtxCall *C = &a->calls[c->C];
-    int win = ctx_window(C->model);
-    double W = win ? win : 1e6, share = fmin(1, C->total / W);
+    double share, W = call_window(C, &share);
     DrawCircleGradient(0, 0, 100, ui_fade(BLACK, 0.5f), ui_fade(BLACK, 0));
     DrawCircleGradient(0, 0, 70, HEX(0x1d2a3a), HEX(0x121a24));
     DrawRing((Vector2){0, 0}, 69.5f, 70.5f, 0, 360, 72, C_LINE);
@@ -1210,15 +1156,15 @@ static void draw_agent(CView *c) {
     if (strcmp(a->kind, "main")) nm = strrchr(a->name, ':') ? strrchr(a->name, ':') + 1 : a->name;
     char fitb[128], m[128], t1[32], t2[32];
     sv_fit(F_MONO_B, fitb, sizeof fitb, nm, 13, 120);
-    sv_tx(F_MONO_B, fitb, -sv_tw(F_MONO_B, fitb, 13) / 2, sv_mid(-15, 13), 13, C_FG);
+    sv_txc(F_MONO_B, fitb, 0, -15, 13, C_FG);
     const char *model = C->model ? C->model : "";
     if (!strncmp(model, "claude-", 7)) model += 7;
     sv_fit(F_MONO, m, sizeof m, model, 11, 120);
-    sv_tx(F_MONO, m, -sv_tw(F_MONO, m, 11) / 2, sv_mid(4, 11), 11, C_DIM);
+    sv_txc(F_MONO, m, 0, 4, 11, C_DIM);
     cl_fmt_k(t1, sizeof t1, C->total);
     cl_fmt_k(t2, sizeof t2, W);
     snprintf(m, sizeof m, "%s / %s", t1, t2);
-    sv_tx(F_MONO, m, -sv_tw(F_MONO, m, 11) / 2, sv_mid(20, 11), 11, C_DIM);
+    sv_txc(F_MONO, m, 0, 20, 11, C_DIM);
 }
 
 /* The window under world point p: the top one drawn there, -1. */
@@ -1239,16 +1185,6 @@ static int window_at(CView *c, Vector2 p, int *zone, int *line) {
     return -1;
 }
 
-/* The file of a Read on disk: absolute, from the root or ~. */
-static bool item_file(const CView *c, const CtxItem *it, char *out, size_t n) {
-    if (!it->path || !*it->path) return false;
-    if (it->path[0] == '/') snprintf(out, n, "%s", it->path);
-    else if (!strncmp(it->path, "~/", 2)) snprintf(out, n, "%s/%s", getenv("HOME") ? getenv("HOME") : "", it->path + 2);
-    else snprintf(out, n, "%s/%s", c->root, it->path);
-    struct stat st;
-    return !stat(out, &st) && S_ISREG(st.st_mode);
-}
-
 /* ---- input ---------------------------------------------------------------------------- */
 
 static void scrub(CView *c, const Geo *g, float x) {
@@ -1262,7 +1198,9 @@ static void switch_agent(CView *c, int k) {
     /* the call at the current position: the last one when following the end */
     double t = c->C >= c->a->ncalls - 1 ? 0 : c->a->calls[c->C].t;
     bool follow = c->follow;
-    cv_open(c, c->refs[k].path, CV_NONE, -1, follow ? c->stage_t : t);
+    char *path = xstrdup(c->refs[k].path); /* cv_open's swap_in can free refs */
+    cv_open(c, path, CV_NONE, -1, follow ? c->stage_t : t);
+    free(path);
     c->follow = follow; /* following or not, as it was */
 }
 
@@ -1271,6 +1209,9 @@ static int pick_row(const CView *c, const Geo *g, Vector2 mp) {
     int k = (int)floorf((mp.y - g->picklist.y - 4 + c->pick_scroll) / PICK_ROW);
     return k >= 0 && k < c->nrefs ? k : -1;
 }
+
+/* The call before (d -1) or after (+1): the view's own. */
+static void step(CView *c, int d) { stop(c), c->follow = false, show(c, c->C + d, false); }
 
 static void open_window(CView *c, CNode *n, int ticks) {
     c->ov[n->item] = 1;
@@ -1296,9 +1237,9 @@ static void press(CView *c, const Geo *g, Vector2 mp) {
     if (CheckCollisionPointRec(mp, g->recent)) { fit(c, FIT_RECENT, true); return; }
     if (CheckCollisionPointRec(mp, g->all)) { fit(c, FIT_ALL, true); return; }
     if (CheckCollisionPointRec(mp, g->follow)) { stop(c), c->follow = true; return; }
-    if (CheckCollisionPointRec(mp, g->prev)) { stop(c), c->follow = false, show(c, c->C - 1, false); return; }
+    if (CheckCollisionPointRec(mp, g->prev)) { step(c, -1); return; }
     if (CheckCollisionPointRec(mp, g->play)) { play(c); return; }
-    if (CheckCollisionPointRec(mp, g->next)) { stop(c), c->follow = false, show(c, c->C + 1, false); return; }
+    if (CheckCollisionPointRec(mp, g->next)) { step(c, 1); return; }
     if (CheckCollisionPointRec(mp, g->bars)) {
         stop(c);
         c->follow = false; /* a scrub: the view's own call */
@@ -1345,7 +1286,7 @@ static void press(CView *c, const Geo *g, Vector2 mp) {
         break;
     case CW_CODE: {
         char path[PATH_MAX];
-        if (item_file(c, &c->a->items[it], path, sizeof path)) nv_open(c->root, path, line);
+        if (file_at(c->root, c->a->items[it].path, path, sizeof path)) nv_open(c->root, path, line);
         break;
     }
     case CW_TOOL: cw_toggle_tool(n, line); break;
@@ -1404,41 +1345,12 @@ static void wheel(CView *c, const Geo *g, Vector2 mp, float w) {
     c->tx = mp.x - g->stage.x - p.x * k, c->ty = mp.y - g->stage.y - p.y * k, c->k = k;
 }
 
-static void filter_type(CView *c, bool ctrl) {
-    size_t n = strlen(c->q);
-    bool changed = false;
-    for (int ch; (ch = GetCharPressed());) {
-        int len;
-        if (ctrl || ch < 0x20 || ch == 0x7F) continue;
-        const char *u = CodepointToUTF8(ch, &len);
-        if (c->all) n = 0, c->all = false;
-        if (n + (size_t)len >= sizeof c->q) continue;
-        memcpy(c->q + n, u, (size_t)len);
-        c->q[n += (size_t)len] = 0;
-        changed = true;
-    }
-    if ((IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE) || (ctrl && IsKeyPressed(KEY_W))) && n) {
-        if (c->all) n = 0;
-        else if (ctrl) {
-            while (n && strchr(" /._-:,()", c->q[n - 1])) n--;
-            while (n && !strchr(" /._-:,()", c->q[n - 1])) n--;
-        } else {
-            n--;
-            while (n && ((unsigned char)c->q[n] & 0xC0) == 0x80) n--;
-        }
-        c->q[n] = 0;
-        c->all = false;
-        changed = true;
-    }
-    if (changed) filter(c), c->act_scroll = 0;
-    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || IsKeyPressed(KEY_ESCAPE)) c->typing = false;
-}
-
 bool cv_keys(CView *c) {
-    if (!c || !c->open) return false;
+    if (!c->open) return false;
     bool ctrl = IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL), esc = IsKeyPressed(KEY_ESCAPE);
     if (c->typing) { /* the filter's: Esc leaves it first */
-        filter_type(c, ctrl);
+        if (ui_edit_line(c->q, sizeof c->q, INT_MAX, &c->all, ctrl)) filter(c), c->act_scroll = 0;
+        if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER) || esc) c->typing = false;
         return esc;
     }
     if (!shown(c)) {
@@ -1453,8 +1365,8 @@ bool cv_keys(CView *c) {
         if (ch == '/') c->typing = true, c->all = c->q[0] != 0;
     if (ctrl && IsKeyPressed(KEY_F)) c->typing = true, c->all = c->q[0] != 0;
     if (c->typing) return false;
-    if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) stop(c), c->follow = false, show(c, c->C - 1, false);
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) stop(c), c->follow = false, show(c, c->C + 1, false);
+    if (IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT)) step(c, -1);
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT)) step(c, 1);
     if (IsKeyPressed(KEY_L)) stop(c), c->follow = true; /* the stage's clock again */
     if (IsKeyPressed(KEY_SPACE)) play(c);
     if (!ctrl && IsKeyPressed(KEY_F)) fit(c, FIT_RECENT, true);
@@ -1489,8 +1401,7 @@ static void tip_lines(const char *bold, const char *text, Vector2 at) {
     float bw = w + 16, bh = (float)n * lh + 8, x = fminf(at.x, W - bw - 8), y = at.y;
     if (y + bh > H - 4) y = at.y - bh - 30;
     if (x < 4) x = 4;
-    DrawRectangleRounded((Rectangle){x, y, bw, bh}, 10 / fminf(bw, bh), 6, HEX(0x0b0f15));
-    DrawRectangleRoundedLinesEx((Rectangle){x, y, bw, bh}, 10 / fminf(bw, bh), 6, 1, C_LINE);
+    ui_box((Rectangle){x, y, bw, bh}, 10 / fminf(bw, bh), HEX(0x0b0f15), 1, C_LINE);
     for (int i = 0; i < n; i++)
         sv_tx(i || !*bold ? F_MONO : F_MONO_B, lines[i], x + 8, sv_mid(y + 4 + lh * ((float)i + 0.5f), css), css,
               i || !*bold ? C_DIM : C_FG);
@@ -1515,7 +1426,7 @@ static void draw_tips(CView *c, const Geo *g, Vector2 mp, float dt) {
     int bar = strip_at(c, g, mp);
     if (bar >= 0) { /* at once, as a chip's */
         char t[32], k[32], head[64];
-        cl_clock(t, sizeof t, a->calls[bar].t);
+        fmt_clock(t, sizeof t, a->calls[bar].t, "%H:%M");
         cl_fmt_k(k, sizeof k, a->calls[bar].total);
         snprintf(head, sizeof head, "#%d %s", bar, t);
         snprintf(b, sizeof b, " \xC2\xB7 %s tok%s%s", k, a->calls[bar].comp ? " \xC2\xB7 a compaction" : "",
@@ -1546,8 +1457,7 @@ static void draw_tips(CView *c, const Geo *g, Vector2 mp, float dt) {
 static void draw_picker(CView *c, const Geo *g, Vector2 mp) {
     Rectangle r = g->picklist;
     DrawRectangleRounded((Rectangle){r.x + 2, r.y + 3, r.width, r.height}, 12 / fminf(r.width, r.height), 6, ui_fade(BLACK, 0.35f));
-    DrawRectangleRounded(r, 12 / fminf(r.width, r.height), 6, HEX(0x0b0f15));
-    DrawRectangleRoundedLinesEx(r, 12 / fminf(r.width, r.height), 6, 1, C_LINE);
+    ui_box(r, 12 / fminf(r.width, r.height), HEX(0x0b0f15), 1, C_LINE);
     BeginScissorMode((int)r.x + 1, (int)r.y + 1, (int)r.width - 2, (int)r.height - 2);
     int hot = pick_row(c, g, mp), cur = cur_ref(c);
     for (int k = 0; k < c->nrefs; k++) {
@@ -1595,23 +1505,21 @@ static void draw_loading(CView *c, const Geo *g) {
     draw_hint(g);
     float cx = g->stage.x + g->stage.width / 2, cy = g->stage.y + g->stage.height / 2;
     char line[600], fitb[600];
-    const char *path = c->want ? c->want : c->loading ? c->loading : "";
+    const char *path = c->want.path ? c->want.path : c->load.path ? c->load.path : "";
     const char *name = strrchr(path, '/') ? strrchr(path, '/') + 1 : path;
     if (loading(c)) {
         int dots = (int)(c->clock * 3) % 4;
         snprintf(line, sizeof line, "Loading the context%.*s", dots, "...");
         float w = sv_tw(F_SANS, "Loading the context...", 15);
         sv_tx(F_SANS, line, cx - w / 2, sv_mid(cy - 12, 15), 15, C_DIM);
-        sv_fit(F_MONO, fitb, sizeof fitb, name, 12, g->stage.width - 40);
-        sv_tx(F_MONO, fitb, cx - sv_tw(F_MONO, fitb, 12) / 2, sv_mid(cy + 14, 12), 12, C_FAINT);
     } else {
         snprintf(line, sizeof line, "No context to show: %s", c->err ? c->err : "nothing loaded");
         sv_fit(F_SANS, fitb, sizeof fitb, line, 15, g->stage.width - 40);
-        sv_tx(F_SANS, fitb, cx - sv_tw(F_SANS, fitb, 15) / 2, sv_mid(cy - 12, 15), 15, C_DIM);
-        sv_fit(F_MONO, fitb, sizeof fitb, name, 12, g->stage.width - 40);
-        sv_tx(F_MONO, fitb, cx - sv_tw(F_MONO, fitb, 12) / 2, sv_mid(cy + 14, 12), 12, C_FAINT);
-        sv_tx(F_MONO, "Esc: back", cx - sv_tw(F_MONO, "Esc: back", 12) / 2, sv_mid(cy + 36, 12), 12, C_FAINT);
+        sv_txc(F_SANS, fitb, cx, cy - 12, 15, C_DIM);
+        sv_txc(F_MONO, "Esc: back", cx, cy + 36, 12, C_FAINT);
     }
+    sv_fit(F_MONO, fitb, sizeof fitb, name, 12, g->stage.width - 40);
+    sv_txc(F_MONO, fitb, cx, cy + 14, 12, C_FAINT);
 }
 
 /* AIG_CTX_BENCH: one call a frame, then the times to stderr. */
@@ -1640,7 +1548,7 @@ static void bench_step(CView *c, double frame_ms) {
         double t0 = GetTime();
         relayout(c, 24);
         double rest = (GetTime() - t0) * 1e3;
-        LWin *w = xmalloc(sizeof *w * (size_t)(c->nshown ? c->nshown : 1));
+        LWin *w = xmalloc(sizeof *w * (size_t)c->nshown);
         int open = 0;
         for (int k = 0; k < c->nshown; k++) {
             CNode *d = c->node[c->shown[k]];
@@ -1721,7 +1629,7 @@ void cv_frame(CView *c, Vector2 mp, float dt) {
     int line;
     c->hov = over_stage && (c->drag == D_NONE || c->drag == D_EAT) ? window_at(c, mw, &c->hov_zone, &line) : -1;
     char path[PATH_MAX];
-    bool nvim = c->hov >= 0 && c->hov_zone == CW_CODE && item_file(c, &c->a->items[c->hov], path, sizeof path) &&
+    bool nvim = c->hov >= 0 && c->hov_zone == CW_CODE && file_at(c->root, c->a->items[c->hov].path, path, sizeof path) &&
                 nv_find(c->root, NULL, 0);
     ui_hand(nvim);
 
@@ -1735,13 +1643,13 @@ void cv_frame(CView *c, Vector2 mp, float dt) {
         char w[32], line[160];
         sv_when(w, sizeof w, c->a->calls[0].t);
         snprintf(line, sizeof line, "No call yet at this moment: the agent's first is at %s", w);
-        sv_tx(F_SANS, line, st.x + st.width / 2 - sv_tw(F_SANS, line, 15) / 2, sv_mid(st.y + st.height / 2 - 12, 15), 15, C_DIM);
+        sv_txc(F_SANS, line, st.x + st.width / 2, st.y + st.height / 2 - 12, 15, C_DIM);
         static const char hint[] = "it shows up as the stage's clock gets there; \xE2\x86\x90 \xE2\x86\x92 or the strip look at its calls";
-        sv_tx(F_SANS, hint, st.x + st.width / 2 - sv_tw(F_SANS, hint, 12) / 2, sv_mid(st.y + st.height / 2 + 14, 12), 12, C_FAINT);
+        sv_txc(F_SANS, hint, st.x + st.width / 2, st.y + st.height / 2 + 14, 12, C_FAINT);
     }
     BeginMode2D(cam);
     if (!c->none_yet) draw_links(c), draw_agent(c);
-    CwCtx x = {c->a, c->C, cam, st, mw, nvim, c->drag != D_NONE && c->drag != D_EAT, c->clock};
+    CwCtx x = {c->a, cam, st, mw, nvim, c->drag != D_NONE && c->drag != D_EAT};
     float px, py, al;
     for (int k = 0; k < c->ngone && !c->none_yet; k++) {
         CNode *n = c->gone[k];

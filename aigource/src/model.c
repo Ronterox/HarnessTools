@@ -1,11 +1,8 @@
 #include "model.h"
 
-#include <fcntl.h>
 #include <math.h>
-#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
 #define DIR_GAP 40.0f       /* free space between a dir and its child dirs */
 #define CONE_MAX 2.6f       /* widest cone a dir's subtree gets (radians, under a half turn) */
@@ -45,10 +42,7 @@ static float frand(void) { return (float)rand() / (float)RAND_MAX; }
 /* ---- nodes -------------------------------------------------------------- */
 
 static int add_node(Scene *m, const char *path, int parent, bool is_dir) {
-    if (m->nnodes == m->capnodes) {
-        m->capnodes = m->capnodes ? m->capnodes * 2 : 256;
-        m->nodes = xrealloc(m->nodes, m->capnodes * sizeof *m->nodes);
-    }
+    GROW(m->nodes, m->nnodes, m->capnodes);
     int i = m->nnodes++;
     Node *n = &m->nodes[i];
     memset(n, 0, sizeof *n);
@@ -74,9 +68,7 @@ static int add_node(Scene *m, const char *path, int parent, bool is_dir) {
     }
     n->color = (Color){160, 170, 190, 255};
     n->act_kind = EV_READ;
-    char key[8 + 4096];
-    snprintf(key, sizeof key, "%c:%s", is_dir ? 'd' : 'f', path);
-    strmap_put(&m->index, key, i);
+    strmap_put(is_dir ? &m->dirs : &m->files, path, i);
     return i;
 }
 
@@ -84,11 +76,7 @@ static void attach(Scene *m, int parent, int child) {
     if (m->nodes[child].attached) return;
     m->nodes[child].attached = true;
     Node *p = &m->nodes[parent];
-    if (p->nkids == p->capkids) {
-        p->capkids = p->capkids ? p->capkids * 2 : 8;
-        p->kids = xrealloc(p->kids, p->capkids * sizeof *p->kids);
-    }
-    p->kids[p->nkids++] = child;
+    PUSH(p->kids, p->nkids, p->capkids, child);
 }
 
 static void detach(Scene *m, int parent, int child) {
@@ -103,32 +91,30 @@ static void detach(Scene *m, int parent, int child) {
         }
 }
 
-static int lookup(const Scene *m, char kind, const char *path) {
-    char key[8 + 4096];
-    snprintf(key, sizeof key, "%c:%s", kind, path);
-    return strmap_get(&m->index, key);
-}
+static int ensure_dir(Scene *m, const char *path);
 
-static int ensure_dir(Scene *m, const char *path) {
-    if (!*path) return 0;
-    int i = lookup(m, 'd', path);
-    if (i >= 0) return i;
+/* The dir holding path, created when new. */
+static int parent_dir(Scene *m, const char *path) {
     const char *slash = strrchr(path, '/');
     char *parent_path = slash ? xstrndup(path, (size_t)(slash - path)) : xstrdup("");
     int parent = ensure_dir(m, parent_path);
     free(parent_path);
+    return parent;
+}
+
+static int ensure_dir(Scene *m, const char *path) {
+    if (!*path) return 0;
+    int i = strmap_get(&m->dirs, path);
+    if (i >= 0) return i;
+    int parent = parent_dir(m, path);
     i = add_node(m, path, parent, true);
     Node *p = &m->nodes[parent];
-    if (p->ndirs == p->capdirs) {
-        p->capdirs = p->capdirs ? p->capdirs * 2 : 4;
-        p->dirs = xrealloc(p->dirs, p->capdirs * sizeof *p->dirs);
-    }
-    p->dirs[p->ndirs++] = i;
+    PUSH(p->dirs, p->ndirs, p->capdirs, i);
     return i;
 }
 
 static int ensure_file(Scene *m, const char *path) {
-    int i = lookup(m, 'f', path);
+    int i = strmap_get(&m->files, path);
     if (i >= 0) {
         Node *n = &m->nodes[i];
         if (n->deleted) { /* recreated */
@@ -137,10 +123,7 @@ static int ensure_file(Scene *m, const char *path) {
         }
         return i;
     }
-    const char *slash = strrchr(path, '/');
-    char *parent_path = slash ? xstrndup(path, (size_t)(slash - path)) : xstrdup("");
-    int parent = ensure_dir(m, parent_path);
-    free(parent_path);
+    int parent = parent_dir(m, path);
     i = add_node(m, path, parent, false);
     attach(m, parent, i);
     return i;
@@ -148,11 +131,11 @@ static int ensure_file(Scene *m, const char *path) {
 
 /* Deepest existing node for a path, never creating one (searches only look). */
 static int nearest(Scene *m, const char *path) {
-    int i = lookup(m, 'f', path);
+    int i = strmap_get(&m->files, path);
     if (i >= 0) return i;
     char *p = xstrdup(path);
     for (;;) {
-        if ((i = lookup(m, 'd', p)) >= 0 || !*p) break;
+        if ((i = strmap_get(&m->dirs, p)) >= 0 || !*p) break;
         char *slash = strrchr(p, '/');
         if (slash) *slash = 0;
         else *p = 0;
@@ -165,39 +148,14 @@ static int nearest(Scene *m, const char *path) {
  * timeline seeks rebuild the scene and would re-read every file. */
 static StrMap g_disk_cache;
 
-static int disk_lines_uncached(Scene *m, const char *path);
-
 static int disk_lines(Scene *m, const char *path) {
     int v = strmap_get(&g_disk_cache, path);
     if (v >= 0) return v - 1; /* stored +1 so -1 (unreadable) is cacheable */
-    v = disk_lines_uncached(m, path);
+    char *full = xasprintf("%s/%s", m->root, path);
+    v = file_lines(full, 1 << 20, true);
+    free(full);
     strmap_put(&g_disk_cache, path, v + 1);
     return v;
-}
-
-static int disk_lines_uncached(Scene *m, const char *path) {
-    char full[8192];
-    snprintf(full, sizeof full, "%s/%s", m->root, path);
-    int fd = open(full, O_RDONLY | O_NONBLOCK); /* never hang on a FIFO */
-    if (fd < 0) return -1;
-    struct stat st;
-    if (fstat(fd, &st) || !S_ISREG(st.st_mode)) { close(fd); return -1; }
-    static char buf[1 << 16];
-    long lines = 0, bytes = 0;
-    int binary = 0, last = '\n';
-    ssize_t n;
-    while ((n = read(fd, buf, sizeof buf)) > 0 && bytes < (1 << 20)) {
-        for (ssize_t i = 0; i < n; i++) {
-            lines += buf[i] == '\n';
-            binary |= buf[i] == 0;
-        }
-        last = buf[n - 1];
-        bytes += n;
-    }
-    close(fd);
-    if (binary) return (int)(st.st_size / 50); /* rough visual size for binaries */
-    if (st.st_size > bytes && bytes) lines = (long)((double)lines * st.st_size / bytes); /* extrapolate */
-    return (int)(lines + (bytes && last != '\n'));
 }
 
 /* ---- actors & effects --------------------------------------------------- */
@@ -205,7 +163,7 @@ static int disk_lines_uncached(Scene *m, const char *path) {
 static int actor_for(Scene *m, const Event *e) {
     for (int i = 0; i < m->nactors; i++)
         if (!strcmp(m->actors[i].id, e->actor)) return i;
-    m->actors = xrealloc(m->actors, (m->nactors + 1) * sizeof *m->actors);
+    GROW(m->actors, m->nactors, m->capactors);
     Actor *a = &m->actors[m->nactors];
     memset(a, 0, sizeof *a);
     a->id = xstrdup(e->actor);
@@ -289,7 +247,8 @@ void model_free(Scene *m) {
     }
     free(m->nodes);
     free(m->actors);
-    strmap_free(&m->index);
+    strmap_free(&m->dirs);
+    strmap_free(&m->files);
     free(m->root);
     free(m);
 }
@@ -301,7 +260,7 @@ bool dir_merged(const Scene *m, const Node *n) {
 }
 
 int model_find(const Scene *m, bool is_dir, const char *path) {
-    return lookup(m, is_dir ? 'd' : 'f', path);
+    return strmap_get(is_dir ? &m->dirs : &m->files, path);
 }
 
 void model_adopt_layout(Scene *m, const Scene *old) {
@@ -340,12 +299,9 @@ void model_apply(Scene *m, const Event *e, bool effects) {
         set_bubble(a, buf);
         return;
     }
-    case EV_TOOL: {
-        char buf[160];
-        snprintf(buf, sizeof buf, "%s", e->text ? e->text : "");
-        set_bubble(a, buf);
+    case EV_TOOL:
+        set_bubble(a, e->text ? e->text : "");
         return;
-    }
     case EV_SEARCH: {
         m->searches++;
         int ni = nearest(m, e->path ? e->path : "");

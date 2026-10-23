@@ -1,8 +1,10 @@
 #ifndef AIG_PYJSON_H
 #define AIG_PYJSON_H
+#include <locale.h>
 #include <stddef.h>
 #include <stdint.h>
 
+#include "util.h"
 #include "yyjson.h"
 
 /* Python's json.dumps, byte for byte, for values yyjson read with PYJ_READ
@@ -24,22 +26,18 @@ enum {
 };
 #define PYJ_CANON (PYJ_SORT | PYJ_COMPACT)
 
-typedef struct {
-    char *s;
-    size_t n, cap;
-} PyBuf;
-
-void pyb_put(PyBuf *b, const char *s, size_t n);
-void pyb_puts(PyBuf *b, const char *s);
-void pyb_free(PyBuf *b);
-
 /* Returns 0, or -1 for a value nested deeper than PYJ_MAX_DEPTH (b then holds
  * a partial dump): Python's own limit is about as deep, and the recursion
  * here must not overflow the stack. Such a value can't be hashed. */
 #define PYJ_MAX_DEPTH 1000
-int pyj_dumps(PyBuf *b, yyjson_val *v, int flags);
-void pyj_str(PyBuf *b, const char *s, size_t n); /* a string, quoted */
-void pyj_float(PyBuf *b, double d);              /* float.__repr__ */
+int pyj_dumps(Buf *b, yyjson_val *v, int flags);
+void pyj_str(Buf *b, const char *s, size_t n); /* a string, quoted */
+void pyj_float(Buf *b, double d);              /* float.__repr__ */
+
+/* printf and strtod follow the locale's decimal point: this switches the
+ * calling thread to the "C" numeric locale and returns the one before (for
+ * uselocale). */
+locale_t c_numeric(void);
 
 /* sha256 (FIPS 180-4). */
 typedef struct {

@@ -162,31 +162,13 @@ static bool ignored(Watch *w, const char *rel) {
 
 /* ---- line counts -------------------------------------------------------- */
 
-static char *abs_path(Watch *w, const char *rel) {
-    char *p = xmalloc(strlen(w->root) + strlen(rel) + 2);
-    sprintf(p, "%s/%s", w->root, rel);
-    return p;
-}
+static char *abs_path(Watch *w, const char *rel) { return xasprintf("%s/%s", w->root, rel); }
 
-static int file_lines(Watch *w, const char *rel) {
+static int rel_lines(Watch *w, const char *rel) {
     char *p = abs_path(w, rel);
-    int fd = open(p, O_RDONLY | O_NONBLOCK);
+    int n = file_lines(p, 4 << 20, false);
     free(p);
-    if (fd < 0) return -1;
-    struct stat st;
-    if (fstat(fd, &st) || !S_ISREG(st.st_mode)) { close(fd); return -1; }
-    char buf[1 << 16];
-    long lines = 0, bytes = 0;
-    int last = '\n', binary = 0;
-    ssize_t n;
-    while ((n = read(fd, buf, sizeof buf)) > 0 && bytes < (4 << 20)) {
-        for (ssize_t i = 0; i < n; i++) { lines += buf[i] == '\n'; binary |= !buf[i]; }
-        last = buf[n - 1];
-        bytes += n;
-    }
-    close(fd);
-    if (binary) return (int)(st.st_size / 50);
-    return (int)(lines + (bytes && last != '\n'));
+    return n;
 }
 
 /* Line counts of tracked files, so the first edit of each has a +/-. */
@@ -208,7 +190,7 @@ static void prescan(Watch *w) {
         int ok = !stat(abs, &st);
         free(abs);
         if (ok) bytes += st.st_size;
-        int l = file_lines(w, path);
+        int l = rel_lines(w, path);
         if (l >= 0) strmap_put(&w->lines, path, l + 1);
         n++;
     }
@@ -228,28 +210,21 @@ static void note(Watch *w, const char *rel, double now, bool created) {
             w->raw[i].created |= created;
             return;
         }
-    if (w->nraw == w->capraw) {
-        w->capraw = w->capraw ? w->capraw * 2 : 64;
-        w->raw = xrealloc(w->raw, (size_t)w->capraw * sizeof *w->raw);
-    }
-    w->raw[w->nraw++] = (Raw){xstrdup(rel), now, now, created};
+    PUSH(w->raw, w->nraw, w->capraw, ((Raw){xstrdup(rel), now, now, created}));
 }
 
 /* Watch a dir and its subdirs. A dir that just appeared (fresh) may already
  * hold files written before the watch existed: report them as created. */
 static void add_dir(Watch *w, const char *rel, double now, bool fresh) {
     if (*rel) { /* dir-only rules ("build/") match only with the slash */
-        char *key = xmalloc(strlen(rel) + 2);
-        sprintf(key, "%s/", rel);
+        char *key = xasprintf("%s/", rel);
         bool ig = ignored(w, key);
         free(key);
         if (ig) return;
     }
     char *abs = *rel ? abs_path(w, rel) : xstrdup(w->root);
     if (*rel) { /* a submodule or nested repo isn't this repo's (and git refuses its paths) */
-        char *dotgit = abs_path(w, rel);
-        dotgit = xrealloc(dotgit, strlen(dotgit) + 6);
-        strcat(dotgit, "/.git");
+        char *dotgit = xasprintf("%s/.git", abs);
         bool nested = !access(dotgit, F_OK);
         free(dotgit);
         if (nested) { free(abs); return; }
@@ -272,8 +247,7 @@ static void add_dir(Watch *w, const char *rel, double now, bool fresh) {
     struct dirent *de;
     while (d && (de = readdir(d))) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
-        char *child = xmalloc(strlen(rel) + strlen(de->d_name) + 2);
-        sprintf(child, "%s%s%s", rel, *rel ? "/" : "", de->d_name);
+        char *child = xasprintf("%s%s%s", rel, *rel ? "/" : "", de->d_name);
         int type = de->d_type;
         struct stat st;
         if (type == DT_UNKNOWN) /* some filesystems don't fill d_type */
@@ -349,8 +323,7 @@ void watch_poll(Watch *w, double now) {
             }
             if (!ev->len) continue;
             const char *dir = w->wd_path[ev->wd];
-            char *rel = xmalloc(strlen(dir) + strlen(ev->name) + 2);
-            sprintf(rel, "%s%s%s", dir, *dir ? "/" : "", ev->name);
+            char *rel = xasprintf("%s%s%s", dir, *dir ? "/" : "", ev->name);
             if (*dir && !strcmp(ev->name, ".git") && (ev->mask & (IN_CREATE | IN_MOVED_TO))) {
                 char *d = xstrdup(dir); /* drop_dir frees wd_path entries, dir among them */
                 drop_dir(w, d, now, false); /* became a nested repo / submodule checkout */
@@ -368,7 +341,7 @@ void watch_poll(Watch *w, double now) {
 }
 
 int watch_take(Watch *w, double now, double settle, WatchChange **out) {
-    int n = 0;
+    int n = 0, cap = 0;
     *out = NULL;
     for (int i = 0; i < w->nraw;) {
         Raw r = w->raw[i];
@@ -376,7 +349,7 @@ int watch_take(Watch *w, double now, double settle, WatchChange **out) {
         w->raw[i] = w->raw[--w->nraw];
         int known = strmap_get(&w->lines, r.path);
         int before = known > 0 ? known - 1 : -1; /* stored +1; 0/absent = unknown */
-        int lines = file_lines(w, r.path);
+        int lines = rel_lines(w, r.path);
         WatchChange c = {.path = r.path, .ts = r.first, .lines = lines, .before_unknown = before < 0};
         if (lines < 0) { /* gone */
             if (before < 0 && r.created) { free(r.path); continue; } /* temp file: born and died */
@@ -390,8 +363,7 @@ int watch_take(Watch *w, double now, double settle, WatchChange **out) {
             else if (before >= 0) { c.add = lines > before ? lines - before : 0; c.del = before > lines ? before - lines : 0; }
             strmap_put(&w->lines, r.path, lines + 1);
         }
-        *out = xrealloc(*out, (size_t)(n + 1) * sizeof **out);
-        (*out)[n++] = c;
+        PUSH(*out, n, cap, c);
     }
     return n;
 }

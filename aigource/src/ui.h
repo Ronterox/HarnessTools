@@ -53,10 +53,18 @@ void ui_fit_font(Font f, char *out, size_t n, const char *s, float size, float s
 float ui_spacing(Font f, float size); /* the house letter spacing of a font: sans a little, mono none */
 void ui_fmt_count(char *buf, size_t n, long v);                          /* 12,345 */
 void ui_fmt_ago(char *buf, size_t n, double secs);                       /* 3m 05s ago */
-void ui_fmt_clock(char *buf, size_t n, double ts, const char *fmt);      /* strftime, local time */
 /* The mouse cursor: the pointing hand over what a click opens (code: in
  * nvim), else the default. Once a frame; raylib is told only on a change. */
 void ui_hand(bool on);
+/* A line being typed into q (cap bytes, up to maxchars characters): this
+ * frame's text, Backspace (Ctrl: a word, as Ctrl+W). all: the text is
+ * selected, and what is typed replaces it. True when q changed. */
+bool ui_edit_line(char *q, size_t cap, int maxchars, bool *all, bool ctrl);
+/* A rounded box: filled, then outlined thick. */
+void ui_box(Rectangle r, float roundness, Color fill, float thick, Color line);
+/* A scrollbar's thumb, w wide at x on a track len long from y: view of full
+ * shown, scrolled scroll of maxs; at least minh high. */
+void ui_thumb(float x, float y, float w, float len, float view, float full, float scroll, float maxs, float minh, Color c);
 
 /* ---- rich text: **bold** and `code` (the agent's markdown), wrapped ---- */
 

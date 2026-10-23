@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <regex.h>
+#include <stdarg.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -75,8 +76,6 @@ int tr_failed_call(const Transcript *t, double ts, double slack, Event *e) {
     return 1;
 }
 
-const char *tr_actor(const Transcript *t) { return t->actor; }
-
 static char *rel_path(Transcript *t, const char *p);
 
 int tr_writing(Transcript *t, const char *rel) {
@@ -92,7 +91,6 @@ int tr_writing(Transcript *t, const char *rel) {
     }
     return 0;
 }
-const char *tr_actor_name(const Transcript *t) { return t->actor_name; }
 
 int tr_bash_running(const Transcript *t, double since, double *start) {
     int found = 0;
@@ -145,6 +143,26 @@ void tr_free(Transcript *t) {
 /* ---- json helpers ------------------------------------------------------- */
 
 static const char *jstr(yyjson_val *o, const char *k) { return yyjson_get_str(yyjson_obj_get(o, k)); }
+static bool jis(yyjson_val *o, const char *k, const char *v) { return yyjson_equals_str(yyjson_obj_get(o, k), v); }
+static yyjson_val *content_of(yyjson_val *rec) { return yyjson_obj_get(yyjson_obj_get(rec, "message"), "content"); }
+
+/* tool_result blocks in a record's content: toolUseResult belongs to the
+ * record, so it's only trusted for a lone one. */
+static int n_results(yyjson_val *content) {
+    size_t i, n;
+    int k = 0;
+    yyjson_val *c;
+    yyjson_arr_foreach(content, i, n, c) k += jis(c, "type", "tool_result");
+    return k;
+}
+
+/* A tool_result's message: its text, without a leading "Error: ". */
+static const char *result_msg(yyjson_val *block) {
+    yyjson_val *c = yyjson_obj_get(block, "content");
+    const char *m = yyjson_is_str(c) ? yyjson_get_str(c) : jstr(yyjson_arr_get_first(c), "text");
+    if (m && !strncmp(m, "Error: ", 7)) m += 7;
+    return m;
+}
 
 static void count_patch(yyjson_val *patch, int *add, int *del) {
     size_t i, n;
@@ -164,37 +182,10 @@ static int str_lines(yyjson_val *v) {
     return yyjson_is_str(v) ? count_lines(yyjson_get_str(v), yyjson_get_len(v)) : -1;
 }
 
-/* Lexically normalize an absolute path in place: collapse "//", drop ".",
- * resolve "..". */
-static void normalize(char *p) {
-    char *out = p, *in = p;
-    while (*in) {
-        while (*in == '/') in++;
-        char *seg = in;
-        while (*in && *in != '/') in++;
-        size_t n = (size_t)(in - seg);
-        if (!n || (n == 1 && seg[0] == '.')) continue;
-        if (n == 2 && seg[0] == '.' && seg[1] == '.') {
-            while (out > p && *--out != '/') {}
-            continue;
-        }
-        *out++ = '/';
-        memmove(out, seg, n);
-        out += n;
-    }
-    if (out == p) *out++ = '/';
-    *out = 0;
-}
-
 /* A tool path made absolute: relative ones resolve against the session's cwd. */
 static char *abs_path(Transcript *t, const char *p) {
-    const char *base = *p == '/' ? "" : (t->cwd ? t->cwd : t->root);
-    size_t bn = strlen(base), pn = strlen(p);
-    char *abs = xmalloc(bn + pn + 2);
-    memcpy(abs, base, bn);
-    abs[bn] = '/';
-    memcpy(abs + bn + 1, p, pn + 1);
-    normalize(abs);
+    char *abs = xasprintf("%s/%s", *p == '/' ? "" : (t->cwd ? t->cwd : t->root), p);
+    path_normalize(abs);
     return abs;
 }
 
@@ -216,7 +207,7 @@ static Event mk(Transcript *t, EvKind kind, double ts, char *path, char *text, i
                    .actor_name = xstrdup(t->actor_name), .path = path, .text = text,
                    .add = add, .del = del, .lines = lines, .turn = t->turn, .t0 = t->t0,
                    .src = t->ev_id ? t->src : NULL, .src_off = t->ev_off,
-                   .tool_id = t->ev_id ? xstrdup(t->ev_id) : NULL,
+                   .tool_id = dup_or_null(t->ev_id),
                    .note_off = t->ev_id ? t->ev_note_off : 0, .notes = t->ev_id ? t->ev_notes : 0,
                    .via = t->ev_via};
 }
@@ -234,10 +225,7 @@ static const char *user_text(yyjson_val *content) {
     if (yyjson_is_str(content)) return yyjson_get_str(content);
     size_t i, n;
     yyjson_val *c;
-    yyjson_arr_foreach(content, i, n, c) {
-        const char *ct = jstr(c, "type");
-        if (ct && !strcmp(ct, "text")) return jstr(c, "text");
-    }
+    yyjson_arr_foreach(content, i, n, c) if (jis(c, "type", "text")) return jstr(c, "text");
     return NULL;
 }
 
@@ -247,7 +235,7 @@ static char *prompt_line(const char *s) {
     char *line = first_line(s, (size_t)-1);
     size_t i = 0;
     for (int n = 0; line[i] && n < TR_PROMPT_MAX; n++)
-        do i++; while (((unsigned char)line[i] & 0xC0) == 0x80);
+        do i++; while (UTF8_CONT(line[i]));
     line[i] = 0;
     return line;
 }
@@ -303,9 +291,7 @@ static char *tool_label(const char *name) {
     if (strncmp(name, "mcp__", 5)) return xstrdup(name);
     const char *srv = name + 5, *sep = strstr(srv, "__");
     if (!sep) return xstrdup(srv);
-    char *s = xmalloc(strlen(srv) + 2);
-    sprintf(s, "%.*s: %s", (int)(sep - srv), srv, sep + 2);
-    return s;
+    return xasprintf("%.*s: %s", (int)(sep - srv), srv, sep + 2);
 }
 
 /* A one-line gist of a tool's input: the first telling string field. */
@@ -320,6 +306,14 @@ static const char *tool_gist(yyjson_val *in) {
     return "";
 }
 
+/* The call the events emitted now come from: its tool_use line, id and comments. */
+static void set_call(Transcript *t, long off, const char *id, long note_off, int notes) {
+    t->ev_off = off;
+    t->ev_id = id;
+    t->ev_note_off = note_off;
+    t->ev_notes = notes;
+}
+
 static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     const char *name = jstr(c, "name"), *id = jstr(c, "id");
     if (!name || !id) return;
@@ -327,14 +321,10 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     if (!is_tracked_tool(name)) { /* shown as a step; no file effect */
         char *label = tool_label(name);
         char *gist = first_line(tool_gist(in), MAX_TEXT);
-        char *text = xmalloc(strlen(label) + strlen(gist) + 3);
-        sprintf(text, "%s%s%s", label, *gist ? "  " : "", gist);
+        char *text = xasprintf("%s%s%s", label, *gist ? "  " : "", gist);
         free(label);
         free(gist);
-        t->ev_off = t->line_off;
-        t->ev_id = id;
-        t->ev_note_off = t->note_off;
-        t->ev_notes = t->notes;
+        set_call(t, t->line_off, id, t->note_off, t->notes);
         emit(t, EV_TOOL, ts, NULL, text, 0, 0, -1);
         t->ev_id = NULL;
         return;
@@ -342,14 +332,11 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     const char *path = jstr(in, "file_path");
     if (!path) path = jstr(in, "notebook_path");
     if (!path) path = jstr(in, "path");
-    if (t->npend == t->cappend) {
-        t->cappend = t->cappend ? t->cappend * 2 : 16;
-        t->pend = xrealloc(t->pend, t->cappend * sizeof *t->pend);
-    }
+    GROW(t->pend, t->npend, t->cappend);
     Pending *p = &t->pend[t->npend++];
     p->id = xstrdup(id);
     p->name = xstrdup(name);
-    p->path = path ? xstrdup(path) : NULL;
+    p->path = dup_or_null(path);
     p->pattern = jstr(in, "pattern") ? xstrdup(jstr(in, "pattern")) : NULL;
     p->cmd = !strcmp(name, "Bash") && jstr(in, "command") ? xstrdup(jstr(in, "command")) : NULL;
     p->cwd = p->cmd && t->cwd ? xstrdup(t->cwd) : NULL; /* the result's record has the cwd after it */
@@ -360,10 +347,7 @@ static void tool_start(Transcript *t, yyjson_val *c, double ts) {
     p->notes = t->notes;
     if (!strcmp(name, "Bash")) {
         const char *cmd = jstr(in, "command");
-        t->ev_off = t->line_off;
-        t->ev_id = id;
-        t->ev_note_off = t->note_off;
-        t->ev_notes = t->notes;
+        set_call(t, t->line_off, id, t->note_off, t->notes);
         emit(t, EV_BASH, ts, NULL, first_line(cmd ? cmd : "", MAX_TEXT), 0, 0, -1);
         t->ev_id = NULL;
     }
@@ -405,18 +389,14 @@ typedef struct {
     const char *cwd;
     double ts;
     bool reads; /* the files it read (a command that ran fine), else wrote */
-    StrMap seen; /* repo path (and a read's range) -> index in rel/kind: the last action on a file wins */
-    char **rel;
-    GuessKind *kind;
-    int (*range)[2];
+    StrMap seen; /* repo path (and a read's range) -> index in g: the last action on a file wins */
+    struct Guess {
+        char *rel;
+        GuessKind kind;
+        int first, last;
+    } *g;
     int n, cap;
 } GuessCtx;
-
-static char *cat3(const char *a, const char *b, const char *c) {
-    char *s = xmalloc(strlen(a) + strlen(b) + strlen(c) + 1);
-    sprintf(s, "%s%s%s", a, b, c);
-    return s;
-}
 
 /* A file a command read, or a failed one probably wrote or removed: resolved
  * like the shell would from the session's cwd and the command's own cds; kept
@@ -431,17 +411,17 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
     const char *cwd = g->cwd ? g->cwd : t->root;
     char *base, *abs;
     if (!dir) base = xstrdup(cwd);
-    else if (dir[0] == '~' && home) base = cat3(home, "", dir + 1);
+    else if (dir[0] == '~' && home) base = xasprintf("%s%s", home, dir + 1);
     else if (dir[0] == '/') base = xstrdup(dir);
-    else base = cat3(cwd, "/", dir);
-    if (path[0] == '~' && (path[1] == '/' || !path[1]) && home) abs = cat3(home, "", path + 1);
+    else base = xasprintf("%s/%s", cwd, dir);
+    if (path[0] == '~' && (path[1] == '/' || !path[1]) && home) abs = xasprintf("%s%s", home, path + 1);
     else if (path[0] == '/') abs = xstrdup(path);
-    else abs = cat3(base, "/", path);
+    else abs = xasprintf("%s/%s", base, path);
     free(base);
     struct stat st;
     bool is_dir = !stat(abs, &st) && S_ISDIR(st.st_mode);
     if (into && (is_dir || abs[strlen(abs) - 1] == '/')) { /* mv/cp into a directory */
-        char *in_dir = cat3(abs, abs[strlen(abs) - 1] == '/' ? "" : "/", into);
+        char *in_dir = xasprintf("%s%s%s", abs, abs[strlen(abs) - 1] == '/' ? "" : "/", into);
         free(abs);
         abs = in_dir;
         is_dir = !stat(abs, &st) && S_ISDIR(st.st_mode);
@@ -452,51 +432,40 @@ static void on_guess(void *ud, const char *dir, const char *path, GuessKind kind
     bool gone = g->reads && (stat(abs, &st) || !S_ISREG(st.st_mode));
     char *rel = is_dir || gone ? NULL : rel_path(t, abs); /* a directory: a tree, not a file */
     if (!rel && g->reads && !is_dir && !gone) { /* a file outside the repo: its absolute path */
-        normalize(abs);
+        path_normalize(abs);
         rel = abs;
         abs = NULL;
     }
     free(abs);
     if (!rel || !*rel) { free(rel); return; }
-    char *key = g->reads ? xmalloc(strlen(rel) + 32) : rel;
-    if (g->reads) sprintf(key, "%s\x1f%d\x1f%d", rel, first, last);
+    char *key = g->reads ? xasprintf("%s\x1f%d\x1f%d", rel, first, last) : rel;
     int k = strmap_get(&g->seen, key);
+    if (k < 0) strmap_put(&g->seen, key, g->n);
+    if (key != rel) free(key);
     if (k >= 0) { /* touch x && rm x: it ends deleted */
-        g->kind[k] = kind;
-        if (key != rel) free(key);
+        g->g[k].kind = kind;
         free(rel);
         return;
     }
-    if (g->n == g->cap) {
-        g->cap = g->cap ? g->cap * 2 : 8;
-        g->rel = xrealloc(g->rel, (size_t)g->cap * sizeof *g->rel);
-        g->kind = xrealloc(g->kind, (size_t)g->cap * sizeof *g->kind);
-        g->range = xrealloc(g->range, (size_t)g->cap * sizeof *g->range);
-    }
-    strmap_put(&g->seen, key, g->n);
-    if (key != rel) free(key);
-    g->rel[g->n] = rel;
-    g->range[g->n][0] = first, g->range[g->n][1] = last;
-    g->kind[g->n++] = kind;
+    PUSH(g->g, g->n, g->cap, ((struct Guess){rel, kind, first, last}));
 }
 
 static void emit_guesses(GuessCtx *g) {
     Transcript *t = g->t;
     t->ev_via = g->reads ? VIA_CMD : VIA_GUESS;
     for (int i = 0; i < g->n; i++) {
-        if (g->kind[i] != GUESS_READ) {
-            emit(t, g->kind[i] == GUESS_DELETE ? EV_DELETE : EV_TOUCH, g->ts, g->rel[i], NULL, 0, 0,
-                 g->kind[i] == GUESS_DELETE ? 0 : -1);
+        struct Guess *x = &g->g[i];
+        if (x->kind != GUESS_READ) {
+            emit(t, x->kind == GUESS_DELETE ? EV_DELETE : EV_TOUCH, g->ts, x->rel, NULL, 0, 0,
+                 x->kind == GUESS_DELETE ? 0 : -1);
             continue;
         }
-        Event e = mk(t, EV_READ, g->ts, g->rel[i], NULL, 0, 0, -1);
-        e.range.first = g->range[i][0], e.range.last = g->range[i][1];
+        Event e = mk(t, EV_READ, g->ts, x->rel, NULL, 0, 0, -1);
+        e.range.first = x->first, e.range.last = x->last;
         t->emit(t->ud, &e);
     }
     t->ev_via = 0;
-    free(g->rel);
-    free(g->kind);
-    free(g->range);
+    free(g->g);
     strmap_free(&g->seen);
 }
 
@@ -504,10 +473,8 @@ static void emit_guesses(GuessCtx *g) {
  * that ran and failed: flag the call, remember it for the watcher, guess its
  * files from its text. Rejected or hook-blocked calls never ran: left alone. */
 static void bash_failed(Transcript *t, const Pending *p, yyjson_val *block, double ts) {
-    yyjson_val *c = yyjson_obj_get(block, "content");
-    const char *msg = yyjson_is_str(c) ? yyjson_get_str(c) : jstr(yyjson_arr_get_first(c), "text");
+    const char *msg = result_msg(block);
     if (!msg) return;
-    if (!strncmp(msg, "Error: ", 7)) msg += 7;
     if (strncmp(msg, "Exit code ", 10) && strncmp(msg, "Command timed out", 17)) return;
     struct Failed *f = &t->failed[t->failed_head++ % 16];
     free(f->id);
@@ -572,9 +539,7 @@ static bool never_ran(yyjson_val *block, yyjson_val *res, int err) {
                                      "[Request interrupted by user for tool use]", "<tool_use_error>", "PreToolUse:",
                                      "Hook PreToolUse", "This session is isolated in the worktree", NULL};
     if (err) {
-        yyjson_val *c = yyjson_obj_get(block, "content");
-        const char *m = yyjson_is_str(c) ? yyjson_get_str(c) : jstr(yyjson_arr_get_first(c), "text");
-        if (m && !strncmp(m, "Error: ", 7)) m += 7;
+        const char *m = result_msg(block);
         for (int i = 0; m && no[i]; i++)
             if (!strncmp(m, no[i], strlen(no[i]))) return true;
     }
@@ -587,8 +552,7 @@ static bool never_ran(yyjson_val *block, yyjson_val *res, int err) {
 static void plain_step(Transcript *t, const Pending *p, double ts, const char *note) {
     const char *what = p->path ? p->path : p->pattern ? p->pattern : "";
     char *gist = first_line(what, MAX_TEXT);
-    char *text = xmalloc(strlen(p->name) + strlen(note) + strlen(gist) + 3);
-    sprintf(text, "%s%s%s%s", p->name, note, *gist ? "  " : "", gist);
+    char *text = xasprintf("%s%s%s%s", p->name, note, *gist ? "  " : "", gist);
     free(gist);
     emit(t, EV_TOOL, ts, NULL, text, 0, 0, -1);
 }
@@ -604,10 +568,7 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
     int err = yyjson_get_bool(yyjson_obj_get(block, "is_error"));
     const char *name = p.name;
     t->t0 = p.ts;
-    t->ev_off = p.off;
-    t->ev_id = p.id;
-    t->ev_note_off = p.note_off;
-    t->ev_notes = p.notes;
+    set_call(t, p.off, p.id, p.note_off, p.notes);
 
     if (!strcmp(name, "Bash")) {
         /* path: where it ran when that isn't the repo root (relative to it, or absolute) */
@@ -655,9 +616,8 @@ static void tool_finish(Transcript *t, yyjson_val *block, yyjson_val *res, doubl
             }
             t->emit(t->ud, &e);
         } else if (!strcmp(name, "Write")) {
-            const char *type = jstr(res, "type");
             int lines = str_lines(yyjson_obj_get(res, "content"));
-            if (type && !strcmp(type, "create")) {
+            if (jis(res, "type", "create")) {
                 emit(t, EV_CREATE, ts, rel, NULL, lines > 0 ? lines : 0, 0, lines);
             } else {
                 int add = 0, del = 0;
@@ -782,12 +742,9 @@ static bool is_note(const char *s) {
  * result, or a typed or pasted prompt. Task notifications, slash commands and
  * interrupts aren't: the agent's text before them still leads to its next call. */
 static bool ends_notes(yyjson_val *rec) {
-    const char *type = jstr(rec, "type");
-    if (!type || strcmp(type, "user")) return false;
-    yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
-    size_t i, n;
-    yyjson_val *c;
-    yyjson_arr_foreach(content, i, n, c) if (jstr(c, "type") && !strcmp(jstr(c, "type"), "tool_result")) return true;
+    if (!jis(rec, "type", "user")) return false;
+    yyjson_val *content = content_of(rec);
+    if (n_results(content)) return true;
     int kind = -1;
     char *text = prompt_text(rec, content, &kind);
     bool typed = text && (kind == PROMPT_HUMAN || kind == PROMPT_PASTED);
@@ -805,19 +762,18 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
     if (cwd && *cwd == '/' && (!t->cwd || strcmp(cwd, t->cwd))) {
         free(t->cwd);
         t->cwd = xstrdup(cwd);
-        normalize(t->cwd);
+        path_normalize(t->cwd);
     }
     double ts = parse_iso8601(jstr(rec, "timestamp"));
-    yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
+    yyjson_val *content = content_of(rec);
     /* A result or a prompt: what came before is about earlier calls (tr_notes
      * stops there too, timestamp or not). */
     if (ends_notes(rec)) t->notes = 0;
     if (ts) t->last_ts = ts;
-    if (type && !strcmp(type, "ai-title")) ai_title(t, jstr(rec, "aiTitle"));
+    if (jis(rec, "type", "ai-title")) ai_title(t, jstr(rec, "aiTitle"));
     if (!type || !ts) goto done;
 
-    const char *sub = jstr(rec, "subtype");
-    if ((!strcmp(type, "system") && sub && !strcmp(sub, "compact_boundary")) ||
+    if ((!strcmp(type, "system") && jis(rec, "subtype", "compact_boundary")) ||
         yyjson_get_bool(yyjson_obj_get(rec, "isCompactSummary"))) {
         emit(t, EV_COMPACT, ts, NULL, NULL, 0, 0, -1);
         t->notes = 0;
@@ -828,27 +784,18 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
         size_t i, n;
         yyjson_val *c;
         yyjson_arr_foreach(content, i, n, c) {
-            const char *ct = jstr(c, "type");
-            if (ct && !strcmp(ct, "tool_use")) tool_start(t, c, ts);
-            else if (ct && !strcmp(ct, "text") && is_note(jstr(c, "text"))) {
+            if (jis(c, "type", "tool_use")) tool_start(t, c, ts);
+            else if (jis(c, "type", "text") && is_note(jstr(c, "text"))) {
                 if (!t->notes++) t->note_off = t->line_off; /* comments on the calls that follow */
             }
         }
     } else if (!strcmp(type, "user")) {
-        int nresults = 0;
-        if (yyjson_is_arr(content)) {
+        int nresults = n_results(content);
+        if (nresults) {
+            yyjson_val *res = nresults == 1 ? yyjson_obj_get(rec, "toolUseResult") : NULL;
             size_t i, n;
             yyjson_val *c;
-            yyjson_arr_foreach(content, i, n, c) {
-                const char *ct = jstr(c, "type");
-                nresults += ct && !strcmp(ct, "tool_result");
-            }
-            /* toolUseResult belongs to the record: only trust it for a lone result. */
-            yyjson_val *res = nresults == 1 ? yyjson_obj_get(rec, "toolUseResult") : NULL;
-            yyjson_arr_foreach(content, i, n, c) {
-                const char *ct = jstr(c, "type");
-                if (ct && !strcmp(ct, "tool_result")) tool_finish(t, c, res, ts);
-            }
+            yyjson_arr_foreach(content, i, n, c) if (jis(c, "type", "tool_result")) tool_finish(t, c, res, ts);
         }
         int had_result = nresults > 0;
         const char *said = had_result ? NULL : user_text(content);
@@ -864,7 +811,7 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
                              !strcmp(parent, t->last_prompt_parent);
                 if (!resent) {
                     free(t->last_prompt_parent);
-                    t->last_prompt_parent = parent ? xstrdup(parent) : NULL;
+                    t->last_prompt_parent = dup_or_null(parent);
                     t->turn++;
                     prune_pending(t);
                 }
@@ -887,10 +834,7 @@ done:
 static void dl_add(Detail *d, DlKind kind, int no, const char *s, size_t len) {
     if (d->n > DL_MAX) return;
     if (d->n == DL_MAX) { kind = DL_DIM; no = 0; s = "\xE2\x80\xA6 (truncated)"; len = strlen(s); }
-    if (d->n == d->cap) {
-        d->cap = d->cap ? d->cap * 2 : 64;
-        d->lines = xrealloc(d->lines, (size_t)d->cap * sizeof *d->lines);
-    }
+    GROW(d->lines, d->n, d->cap);
     if (len > DL_COLS) len = DL_COLS;
     size_t tabs = 0;
     for (size_t i = 0; i < len; i++) tabs += s[i] == '\t';
@@ -916,9 +860,12 @@ static void dl_text(Detail *d, DlKind kind, const char *s, int no) {
     }
 }
 
-static void dl_fmt(Detail *d, DlKind kind, const char *fmt, const char *a) {
+static void __attribute__((format(printf, 3, 4))) dl_fmt(Detail *d, DlKind kind, const char *fmt, ...) {
     char buf[512];
-    snprintf(buf, sizeof buf, fmt, a);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_end(ap);
     dl_add(d, kind, 0, buf, strlen(buf));
 }
 
@@ -933,10 +880,8 @@ static void dl_hunks(Detail *d, yyjson_val *hunks) {
     yyjson_arr_foreach(hunks, i, n, h) {
         int old = (int)yyjson_get_int(yyjson_obj_get(h, "oldStart"));
         int new = (int)yyjson_get_int(yyjson_obj_get(h, "newStart"));
-        char buf[96];
-        snprintf(buf, sizeof buf, "@@ -%d,%d +%d,%d @@", old, (int)yyjson_get_int(yyjson_obj_get(h, "oldLines")), new,
-                 (int)yyjson_get_int(yyjson_obj_get(h, "newLines")));
-        dl_add(d, DL_HUNK, 0, buf, strlen(buf));
+        dl_fmt(d, DL_HUNK, "@@ -%d,%d +%d,%d @@", old, (int)yyjson_get_int(yyjson_obj_get(h, "oldLines")), new,
+               (int)yyjson_get_int(yyjson_obj_get(h, "newLines")));
         size_t j, m;
         yyjson_val *ln;
         yyjson_arr_foreach(yyjson_obj_get(h, "lines"), j, m, ln) {
@@ -953,8 +898,7 @@ static void dl_hunks(Detail *d, yyjson_val *hunks) {
 /* Any JSON value under a label: strings as text, the rest as pretty JSON. */
 static void dl_field(Detail *d, const char *key, yyjson_val *v) {
     if (yyjson_is_str(v) && !memchr(yyjson_get_str(v), '\n', yyjson_get_len(v))) {
-        char *line = xmalloc(strlen(key) + yyjson_get_len(v) + 3);
-        sprintf(line, "%s: %s", key, yyjson_get_str(v));
+        char *line = xasprintf("%s: %s", key, yyjson_get_str(v));
         dl_add(d, DL_TEXT, 0, line, strlen(line));
         free(line);
         return;
@@ -983,7 +927,7 @@ static void dl_result_content(Detail *d, yyjson_val *block, DlKind kind) {
     yyjson_val *b;
     yyjson_arr_foreach(c, i, n, b) {
         const char *type = jstr(b, "type");
-        if (type && !strcmp(type, "text")) dl_text(d, kind, jstr(b, "text"), 0);
+        if (jis(b, "type", "text")) dl_text(d, kind, jstr(b, "text"), 0);
         else dl_fmt(d, DL_DIM, "[%s]", type ? type : "?");
     }
 }
@@ -1015,8 +959,7 @@ static void detail_body(Detail *d, const char *name, yyjson_val *in, yyjson_val 
             dl_gap(d);
         }
         const char *cmd = jstr(in, "command");
-        char *pre = xmalloc(strlen(cmd ? cmd : "") + 3);
-        sprintf(pre, "$ %s", cmd ? cmd : "");
+        char *pre = xasprintf("$ %s", cmd ? cmd : "");
         dl_text(d, DL_HEAD, pre, 0);
         free(pre);
         if (jstr(in, "description")) dl_fmt(d, DL_DIM, "# %s", jstr(in, "description"));
@@ -1026,11 +969,11 @@ static void detail_body(Detail *d, const char *name, yyjson_val *in, yyjson_val 
         if (res && (so || se)) {
             if (so && *so) dl_text(d, out, so, 0);
             if (se && *se) dl_text(d, DL_ERR, se, 0);
-            if ((!so || !*so) && (!se || !*se)) dl_add(d, DL_DIM, 0, "(no output)", 11);
+            if ((!so || !*so) && (!se || !*se)) dl_fmt(d, DL_DIM, "(no output)");
         } else {
             dl_result_content(d, block, out);
         }
-        if (yyjson_get_bool(yyjson_obj_get(res, "interrupted"))) dl_add(d, DL_ERR, 0, "(interrupted)", 13);
+        if (yyjson_get_bool(yyjson_obj_get(res, "interrupted"))) dl_fmt(d, DL_ERR, "(interrupted)");
         if (jstr(res, "backgroundTaskId")) dl_fmt(d, DL_DIM, "(running in the background: %s)", jstr(res, "backgroundTaskId"));
         return;
     }
@@ -1040,10 +983,10 @@ static void detail_body(Detail *d, const char *name, yyjson_val *in, yyjson_val 
         if (!block) return;
         if (err) { dl_result_content(d, block, DL_ERR); return; }
         const char *type = jstr(res, "type");
-        if (!strcmp(name, "Write") && type && !strcmp(type, "create")) {
+        if (!strcmp(name, "Write") && jis(res, "type", "create")) {
             dl_text(d, DL_ADD, jstr(in, "content"), 1); /* the whole new file */
         } else if (!strcmp(name, "Write") && type && !yyjson_arr_size(patch)) {
-            dl_add(d, DL_DIM, 0, "(rewritten, no changes)", 23);
+            dl_fmt(d, DL_DIM, "(rewritten, no changes)");
         } else if (!strcmp(name, "Write") && !yyjson_arr_size(patch)) {
             dl_text(d, DL_ADD, jstr(in, "content"), 1); /* no result record: what it wrote */
         } else if (yyjson_arr_size(patch)) {
@@ -1060,7 +1003,7 @@ static void detail_body(Detail *d, const char *name, yyjson_val *in, yyjson_val 
             size_t i, n;
             yyjson_val *e;
             yyjson_arr_foreach(edits, i, n, e) {
-                dl_add(d, DL_HUNK, 0, "@@ edit @@", 10);
+                dl_fmt(d, DL_HUNK, "@@ edit @@");
                 dl_text(d, DL_DEL, jstr(e, "old_string"), 0);
                 dl_text(d, DL_ADD, jstr(e, "new_string"), 0);
             }
@@ -1099,13 +1042,9 @@ static char *read_line(FILE *f, size_t *len) {
 }
 
 static yyjson_val *find_block(yyjson_val *rec, const char *type, const char *key, const char *id) {
-    yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
     size_t i, n;
     yyjson_val *c;
-    yyjson_arr_foreach(content, i, n, c) {
-        const char *ct = jstr(c, "type"), *cid = jstr(c, key);
-        if (ct && cid && !strcmp(ct, type) && !strcmp(cid, id)) return c;
-    }
+    yyjson_arr_foreach(content_of(rec), i, n, c) if (jis(c, "type", type) && jis(c, key, id)) return c;
     return NULL;
 }
 
@@ -1147,15 +1086,9 @@ static int call_read(const char *src, long off, const char *id, Call *c) {
             res_doc = parse_line(line, len);
             yyjson_val *rec = res_doc ? yyjson_doc_get_root(res_doc) : NULL;
             /* Only the user record: others (api-request-blob) copy the block without toolUseResult. */
-            const char *type = jstr(rec, "type");
-            block = type && !strcmp(type, "user") ? find_block(rec, "tool_result", "tool_use_id", id) : NULL;
+            block = jis(rec, "type", "user") ? find_block(rec, "tool_result", "tool_use_id", id) : NULL;
             if (block) {
-                /* toolUseResult belongs to the record: only trust it for a lone result. */
-                yyjson_val *content = yyjson_obj_get(yyjson_obj_get(rec, "message"), "content");
-                size_t i, n, results = 0;
-                yyjson_val *b;
-                yyjson_arr_foreach(content, i, n, b) results += jstr(b, "type") && !strcmp(jstr(b, "type"), "tool_result");
-                res = results == 1 ? yyjson_obj_get(rec, "toolUseResult") : NULL;
+                res = n_results(content_of(rec)) == 1 ? yyjson_obj_get(rec, "toolUseResult") : NULL;
             } else {
                 yyjson_doc_free(res_doc);
                 res_doc = NULL;
@@ -1183,8 +1116,7 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
     int rc = call_read(src, off, id, &c);
     if (rc) {
         d->tool = xstrdup("?");
-        if (rc == -1) dl_add(d, DL_DIM, 0, "no record of this step", 22);
-        else dl_add(d, DL_DIM, 0, "the transcript changed: record not found", 40);
+        dl_fmt(d, DL_DIM, rc == -1 ? "no record of this step" : "the transcript changed: record not found");
         return d;
     }
     const char *name = jstr(c.use, "name");
@@ -1193,7 +1125,7 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
     d->state = c.block ? 0 : 1;
     if (c.gave_up) { /* don't keep looking */
         d->state = -1;
-        dl_add(d, DL_DIM, 0, "(no result within 512 MB of the call)", 37);
+        dl_fmt(d, DL_DIM, "(no result within 512 MB of the call)");
     }
     call_free(&c);
     return d;
@@ -1229,22 +1161,21 @@ Change *tr_change(const char *src, long off, const char *id, const char *root, c
     }
     ch->state = c.block ? 0 : c.gave_up ? -1 : 1;
     const char *name = jstr(c.use, "name");
-    ch->tool = name ? xstrdup(name) : NULL;
+    ch->tool = dup_or_null(name);
     if (name && !strcmp(name, "Bash")) {
         ch->cmd = 1;
         size_t i, n;
         yyjson_val *f;
         char *want = NULL;
-        if (root && path) { /* the file's absolute path, as normalize() writes it */
-            want = xmalloc(strlen(root) + strlen(path) + 3);
-            sprintf(want, "/%s/%s", root, path);
-            normalize(want);
+        if (root && path) { /* the file's absolute path, as path_normalize() writes it */
+            want = xasprintf("/%s/%s", root, path);
+            path_normalize(want);
         }
         yyjson_arr_foreach(yyjson_obj_get(yyjson_obj_get(c.res, "bashEditDiff"), "files"), i, n, f) {
             const char *fp = jstr(f, "filePath");
             if (!want || !fp || *fp != '/') continue;
             char *abs = xstrdup(fp);
-            normalize(abs);
+            path_normalize(abs);
             bool hit = !strcmp(abs, want);
             free(abs);
             if (hit) {
@@ -1255,8 +1186,7 @@ Change *tr_change(const char *src, long off, const char *id, const char *root, c
         free(want);
     } else if (c.res) {
         ch->original = jdup(yyjson_obj_get(c.res, "originalFile"));
-        const char *type = jstr(c.res, "type");
-        if (type && !strcmp(type, "create")) {
+        if (jis(c.res, "type", "create")) {
             yyjson_val *content = yyjson_obj_get(c.res, "content");
             ch->created = jdup(yyjson_is_str(content) ? content : yyjson_obj_get(yyjson_obj_get(c.use, "input"), "content"));
         }
@@ -1298,23 +1228,21 @@ Notes tr_notes(const char *src, long off, int n, const char *id) {
         yyjson_doc *doc = parse_line(line, len);
         free(line);
         yyjson_val *rec = doc ? yyjson_doc_get_root(doc) : NULL;
-        const char *type = jstr(rec, "type");
         if (ends_notes(rec)) done = true; /* past the call: the transcript changed */
-        yyjson_val *content = type && !strcmp(type, "assistant")
-                                  ? yyjson_obj_get(yyjson_obj_get(rec, "message"), "content") : NULL;
+        yyjson_val *content = jis(rec, "type", "assistant") ? content_of(rec) : NULL;
         size_t i, m;
         yyjson_val *c;
         yyjson_arr_foreach(content, i, m, c) {
             const char *ct = jstr(c, "type");
             if (done || ns.n == n) break;
             if (!ct) continue;
-            if (!strcmp(ct, "tool_use") && jstr(c, "id") && !strcmp(jstr(c, "id"), id)) done = true;
+            if (!strcmp(ct, "tool_use") && jis(c, "id", id)) done = true;
             else if (!strcmp(ct, "text") && is_note(jstr(c, "text"))) {
                 const char *txt = jstr(c, "text");
                 size_t tl = yyjson_get_len(yyjson_obj_get(c, "text"));
                 if (tl > NOTE_MAX) { /* cut on a character boundary */
                     tl = NOTE_MAX;
-                    while (tl && ((unsigned char)txt[tl] & 0xC0) == 0x80) tl--;
+                    while (tl && UTF8_CONT(txt[tl])) tl--;
                 }
                 ns.s[ns.n++] = xstrndup(txt, tl);
             }
@@ -1326,8 +1254,7 @@ Notes tr_notes(const char *src, long off, int n, const char *id) {
 }
 
 void notes_free(Notes *ns) {
-    for (int i = 0; i < ns->n; i++) free(ns->s[i]);
-    free(ns->s);
+    strv_free(ns->s, ns->n);
     *ns = (Notes){0};
 }
 

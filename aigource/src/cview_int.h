@@ -21,11 +21,11 @@ static inline Color cv_kind_col(int k) {
 }
 
 /* A window's body: its content as rows, laid out for one width (cwin.c). */
-enum { CR_MONO, CR_PROSE, CR_NOTE, CR_CODE, CR_TOOL };
+enum { CR_MONO, CR_PROSE, CR_CODE, CR_TOOL };
 typedef struct {
     float y, h, x;      /* top, height, left: in the content, unscrolled */
     unsigned char k;
-    unsigned char font; /* prose and notes: F_* */
+    unsigned char font; /* prose: F_* */
     bool box;           /* inside a fenced block: on its background */
     float size;         /* css px */
     Color c;
@@ -42,7 +42,6 @@ typedef struct {
     unsigned char **st; /* each one's UI_PLAIN / UI_BOLD / UI_CODE per byte, NULL plain */
     int nstr, capstr;
     CodeView cv;        /* a Read's lines, a Write's content: at most one per window */
-    int *nums;          /* each code line's number in its file */
     int cols;           /* the longest code line, cells */
     float gut;          /* the gutter's width */
     bool read;          /* the code is a Read's: a click opens the file in nvim */
@@ -81,20 +80,18 @@ typedef struct {
 /* What a window needs to draw itself. */
 typedef struct {
     const CtxAgent *a;
-    int c;
     Camera2D cam;       /* the world's: clipping to its content is done on screen */
     Rectangle stage;    /* screen */
     Vector2 mw;         /* the mouse, world; far away when it isn't over the stage */
     bool nvim;          /* an nvim works in the root: Read lines are links */
     bool busy;          /* a drag is on: nothing lights up */
-    double clock;
 } CwCtx;
 
 /* How a window leaves: it fades; it folds into a compaction's summary; cleared thinking greys out, slower. */
 enum { LV_FADE, LV_FOLD, LV_THINK };
 
 /* Parts of a window under a point. */
-enum { CW_NONE, CW_TITLE, CW_WHY, CW_FOLD, CW_GRIP, CW_BODY, CW_CODE, CW_TOOL, CW_STALE, CW_META };
+enum { CW_NONE, CW_TITLE, CW_WHY, CW_FOLD, CW_GRIP, CW_BODY, CW_CODE, CW_TOOL, CW_STALE };
 
 #define CW_HD 24.0f     /* the title bar: a chip's whole height */
 #define CW_ROW 18.0f    /* a mono or code row (DET_ROW) */

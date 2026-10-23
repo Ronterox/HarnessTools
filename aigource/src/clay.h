@@ -150,6 +150,5 @@ void cl_fmt_k(char *b, size_t n, double v);
 void cl_fmt_usd(char *b, size_t n, double v);
 void cl_fmt_min(char *b, size_t n, double s);
 void cl_fmt_pct(char *b, size_t n, double share);
-void cl_clock(char *b, size_t n, double t); /* HH:MM, local */
 
 #endif

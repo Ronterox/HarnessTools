@@ -38,7 +38,7 @@ typedef struct {
     char *name;
     int kind;
     int parent;         /* node index, -1 for the root */
-    int *kids, nkids;
+    int *kids, nkids, capkids;
     int lines;          /* file: its lines (nlines); def: b - a + 1 */
     int a, b;           /* def: first and last line */
     int cx, depth;      /* complexity (a file: the sum of its top-level defs'); def: nesting */
