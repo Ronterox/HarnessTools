@@ -21,14 +21,7 @@ function M.read_file(path)
 end
 
 function M.read_json(path)
-  local s = M.read_file(path)
-  if not s or s:match('^%s*$') then
-    return nil
-  end
-  local ok, v = pcall(vim.json.decode, s, { luanil = { object = true } })
-  if ok then
-    return v
-  end
+  return M.decode(M.read_file(path))
 end
 
 function M.decode(s)
@@ -76,13 +69,17 @@ function M.oneline(s)
   return s
 end
 
-function M.write_file(path, data)
-  local f, err = io.open(path, 'wb')
+local function put(mode, path, data)
+  local f, err = io.open(path, mode)
   if not f then
     error(err)
   end
   f:write(data)
   f:close()
+end
+
+function M.write_file(path, data)
+  put('wb', path, data)
 end
 
 -- Write via tmp file + rename so readers never see a partial file.
@@ -97,16 +94,30 @@ function M.write_atomic(path, data)
 end
 
 function M.append_file(path, data)
-  local f, err = io.open(path, 'ab')
-  if not f then
-    error(err)
-  end
-  f:write(data)
-  f:close()
+  put('ab', path, data)
 end
 
 function M.exists(path)
   return path ~= nil and uv.fs_stat(path) ~= nil
+end
+
+-- Seconds -> "3h30m" / "6d7h" / "12m" / "40s".
+function M.duration(s)
+  s = math.max(0, math.floor(tonumber(s) or 0))
+  if s >= 86400 then
+    return ('%dd%dh'):format(math.floor(s / 86400), math.floor(s % 86400 / 3600))
+  elseif s >= 3600 then
+    return ('%dh%dm'):format(math.floor(s / 3600), math.floor(s % 3600 / 60))
+  elseif s >= 60 then
+    return ('%dm'):format(math.floor(s / 60))
+  end
+  return s .. 's'
+end
+
+-- How long ago epoch `ts` was ("?" when unknown).
+function M.ago(ts)
+  ts = tonumber(ts)
+  return ts and M.duration(os.time() - ts) or '?'
 end
 
 function M.now()

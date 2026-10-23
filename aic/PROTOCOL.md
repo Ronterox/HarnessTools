@@ -34,7 +34,6 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
     compiling             exists ⇒ a compile is running (contains pid)
     compile.again         docs queued for one more compile (JSON list; backend-private)
     state.json            compile/ask/submit bookkeeping (backend-private; updated under state.json.lock)
-    spec.md, spec.submitted.md, diagnostics.json   before docs existed: migrated once (see Docs), then unused
     usage.json            context/cost per session (see Usage; backend-written)
     watch.json            watcher resume point: offsets, seq, parser states (worker's and subagents'; backend-private)
 ```
@@ -66,14 +65,14 @@ Common fields: `id` (string, stable, e.g. `"e17"`), `seq` (int), `ts` (unix floa
 | kind | extra fields |
 |---|---|
 | `prompt` | `text` — the user prompt that started turn `turn` (truncated to 2000 chars). `midturn: true` = sent while busy, absorbed inside the turn; `system: true` = harness-generated (e.g. background task finished); `resent: true` = the human re-sent/edited the prompt |
-| `tool` | `via: "Bash"` + `id "<bash id>:<file>"` when the change was found by diffing the tree after a worker Bash call; `tool` (name), `title` (one line, e.g. `Edit src/app.js:14-22`), `why` (assistant visible text preceding the call, may be `""`), `file` (rel path or null), `hunks` (see below, may be `[]`), `input` (short string summary of tool input), `detail` (the input as a person reads it, at most 4000 characters: a Bash command as `$ <command>` under its description, an Agent's description and prompt, else JSON; null for file tools; absent in traces written before it existed), `error` (bool) |
+| `tool` | `via: "Bash"` + `id "<bash id>:<file>"` when the change was found by diffing the tree after a worker Bash call; `tool` (name), `title` (one line, e.g. `Edit src/app.js:14-22`), `why` (assistant visible text preceding the call, may be `""`), `file` (rel path or null), `hunks` (see below, may be `[]`), `input` (short string summary of tool input), `detail` (the input as a person reads it, at most 4000 characters: a Bash command as `$ <command>` under its description, an Agent's description and prompt, else JSON; null for file tools), `error` (bool) |
 | `text` | `text` — assistant visible text that was NOT followed by a tool call (end-of-turn message) |
 | `human` | `file`, `hunks` — a code save by the human |
 | `submit` | `text` — what aic delivered to the worker |
 | `hold` / `release` | — |
 | `held` | `tool` — the gate stopped the worker before this tool |
 | `hold-expired` | the turn ended before any tool call; the hold was dropped |
-| `guarded` | `tool`, `file` — the hook refused a worker file tool (or a writing Bash command) aimed at `.aic/docs/` or `.aic/prompts/` |
+| `guarded` | `tool`, `file` — the hook refused a worker file tool (or a writing Bash command) aimed at `.aic/docs/` |
 | `compact` | the worker's context was compacted: `trigger` (manual/auto), `pre`, `post` tokens |
 
 Hunk: `{"start": <new-file first line, 1-based>, "count": <new line count>, "lines": ["+added", "-removed", " context"]}`.
@@ -123,12 +122,6 @@ Ranges are in **current** file coordinates (later edits shift earlier ranges).
   `compile` = the editor runs `aic compile --doc <name>` on save. The marker
   is never sent to the worker; compile numbers the file as it is (marker
   line included), so line numbers are always file lines.
-- **Migration**, once per project (when `aic docs` / `aic init` / any `--doc`
-  command finds no `docs/` dir; locked): the old per-session `spec.md` becomes
-  `docs/spec.md` with `<!-- aic: compile -->` (the attached session's if it
-  has more than the old template, else the most recently changed one). Every
-  session's `spec.submitted.md` becomes its `sent.spec.md` and its
-  `diagnostics.json` `upto_seq` its `compile_upto_seq`. The old files are left in place.
 - Submit: range lines (`--from/--to`) are file lines, but the marker line is
   never sent; diff hunks are computed on the doc without its marker.
 
@@ -250,12 +243,17 @@ instructions, with the data placed anywhere: {{doc}} … {{activity}}
 - **Trust rule.** A template is instructions, so whatever is in it can talk
   the compiler into ignoring data. aic can't prevent that; it limits who can
   write templates and makes the ones in use visible.
-  - **Who can write them.** Project templates live under `.aic/prompts/`, in
-    the worker's reach. The hook refuses the worker's file tools there, and
-    Bash commands that write there.
+  - **Who can write them.** Project templates live under `.aic/prompts/`, and
+    the worker may write them too (the `aic-prompts` skill drafts them there).
+    A project `compile.md`, `fix.md`, `ask.md` or `whatif.md` replaces the
+    built-in, so a worker that writes one changes how its own work is
+    reviewed: aic names every non-built-in template on each compile and at
+    load (`[compile, project]`), which is the only defence.
+  - **The docs guard.** The hook refuses the worker's file tools in
+    `.aic/docs/`, and Bash commands that write there.
     - The command is read the way a shell reads it: quoted text is one word,
       and paths resolve against the cwd, following `cd`.
-    - Only this project's `.aic/docs` and `.aic/prompts` count, and `.aic`
+    - Only this project's `.aic/docs` counts, and `.aic`
       itself only for what replaces or removes it. They count only as a
       destination:
       - a `>`/`>>`/`&>` redirect
@@ -310,8 +308,7 @@ instructions, with the data placed anywhere: {{doc}} … {{activity}}
             "spec_line": 12 | null, "message": "..."}],
  "template": {"name": "compile", "source": "built-in"}}
 ```
-`file == "doc"` means the line is a line of that doc (`"spec"` in files
-written before docs existed). `spec_line` = a related doc line.
+`file == "doc"` means the line is a line of that doc. `spec_line` = a related doc line.
 On compile failure: the previous content plus `{"error": "message", "compiled_at": ...}`.
 One compiler session serves every doc: worker activity is sent once
 (`compile_upto_seq` in state.json), and each compile replaces only that
@@ -364,12 +361,11 @@ and the editor applies the ones the human picks to its own buffer.
   cache write) = how full its context is. `calls` keeps the last 30.
 - `windows` = context window per model id, learned from compiler calls; the
   worker's `ctx_window` comes from it (null until known).
-- `aic usage --json` prints `{"sessions": <usage.json>, "quota": … | null}`;
-  sessions that predate usage.json are filled in from their transcripts with
-  `"backfilled": true` (context and model only)
+- `aic usage --json` prints `{"sessions": <usage.json>, "quota": … | null}`
   where quota (read from the OMC HUD cache when present, never fetched) is
-  `{"five_hour": 57, "five_hour_resets_at": "ISO", "weekly": 15,
-  "weekly_resets_at": "ISO", "buckets": [{"id","label","percent","resets_at"}], "age_s": 30}`.
+  `{"five_hour": 57, "five_hour_resets_in": 12600, "weekly": 15,
+  "weekly_resets_in": 563400, "buckets": [{"id","label","percent","resets_in"}], "age_s": 30}`
+  (`*_resets_in`: seconds from the call to the reset, null when unknown).
 - `aic compact compile|ask` asks that compiler session for a handoff summary
   and continues in a fresh session seeded with it; `--reset` starts fresh with
   no summary. Prints one line. The next compile after a compile-reset re-reads
@@ -447,7 +443,7 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic attach <sid>` / `aic attach --auto` | pin / unpin worker | message |
 | `aic status --json` | `{"root","session_id","dir","worker":{...}\|null,"hold":bool,"compiling":bool,"watching":bool}` | JSON |
 | `aic watch` | long-running: tails transcript + human.jsonl → trace.jsonl, touched.json. Follows `current`/auto attach. Exits when stdin closes or on SIGTERM. Writes watch.pid. | log lines |
-| `aic docs [--json]` | migrate once (see Docs), list docs | JSON `[{name, path, mtime, compile, compile_template, prompt}]`, newest first |
+| `aic docs [--json]` | list docs | JSON `[{name, path, mtime, compile, compile_template, prompt}]`, newest first |
 | `aic compile [--doc D] [--print]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json, through D's compile template (see Compiler templates). Busy: queues one more run of D and prints `compile queued: …`. `--print`: the prompt only | summary line |
 | `aic ask [--doc D] [--context-file F] [--whatif] [--template T] [--print] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet), through compiler template T (default `ask`; `whatif` with `--whatif`); appends to chat.md | answer markdown |
 | `aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]` | the compile session proposes edits to doc D that fix its diagnostics (with a range: only the items about those doc lines). F = the doc's text as the editor has it, unsaved edits included (default: the saved doc). Never edits anything. Errors if there are no diagnostics to fix | `fixes.D.json` content (`--json`), else a readable list |
@@ -461,7 +457,9 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic usage [--json]` | per-session context/cost + account quota (see Usage) | text / JSON |
 | `aic compact compile\|ask\|worker [--reset]` | summarize-and-restart (or reset) a compiler session; `worker` types `/compact` into the worker pane (no reset) | message |
 | `aic anchor [--json] TEXT` | resolve every anchor in TEXT (see Anchors) | blocks / JSON |
-| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook`. Records the worker (pane, tmux socket, pid, state), enforces holds, and denies the worker's Write/Edit/MultiEdit/NotebookEdit into `.aic/docs/` and `.aic/prompts/` (symlinks resolved), plus Bash commands that write there (see Compiler templates, Trust rule); the turn goes on. Never runs for the compiler (`AIC_ROLE=compiler`, project hooks off) | hook JSON |
+| `aic skill` | install the `aic-prompts` skill into `.claude/skills/aic-prompts/SKILL.md` (`{AIC}` = this aic); the worker runs it as `/aic-prompts`: it reads `aic history`, proposes templates for repeated requests and writes the approved ones to `.aic/prompts/` | one line |
+| `aic history [--json]` | what the human asked in this project: prompts typed to every worker session on disk (compiler sessions, harness messages and slash commands and re-sent prompts left out; newest session first), then questions to the compiler (`chat.md`; what-if ones as kind `whatif`) | text, one per line; JSON `[{kind: "prompt", session, ts, text} \| {kind: "question" \| "whatif", session, how, text}]`; texts are cut at 2000 characters |
+| `aic hook` / `aic-hook` | hook entry point (stdin = hook JSON); `init` installs the lighter `bin/aic-hook`. Records the worker (pane, tmux socket, pid, state), enforces holds, and denies the worker's Write/Edit/MultiEdit/NotebookEdit into `.aic/docs/` (symlinks resolved), plus Bash commands that write there (see Compiler templates, Trust rule, "The docs guard"); the turn goes on. Never runs for the compiler (`AIC_ROLE=compiler`, project hooks off) | hook JSON |
 
 Exit code non-zero ⇒ stderr holds a one-line human-readable error.
 

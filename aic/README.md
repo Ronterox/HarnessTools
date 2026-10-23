@@ -77,9 +77,15 @@ cd your-project
   refused if it has digits, `@` or invisible characters, and every send from
   Neovim shows you the rendered prompt first; `aic submit` without a preview
   only uses built-in templates. The worker's Write/Edit tools can't change
-  `.aic/docs/` or `.aic/prompts/` (the hook refuses and the trace shows
-  `⛔ blocked`); the compiler never writes files, so compiles and their
-  quickfix are unaffected.
+  `.aic/docs/` (the hook refuses and the trace shows `⛔ blocked`); the
+  compiler never writes files, so compiles and their quickfix are unaffected.
+- **Let the worker find your templates.** `:AicSkill` installs the
+  `aic-prompts` skill; run `/aic-prompts` in the worker. It reads what you
+  asked in this project (`aic history`), proposes templates for the requests
+  you repeat (submits to the worker, and styles of asking the compiler), and
+  writes the ones you approve to `.aic/prompts/`. The worker may write there;
+  a project `compile.md` (or `fix`/`ask`/`whatif`) would change how the
+  compiler reviews it, and aic names such an override on every compile.
 - **Keep working in parallel.** Submit what you already know while the worker
   is busy; it reads it at its next tool call.
 - **Mark finished sections `## [done] …`.** The compiler keeps checking they
@@ -100,7 +106,7 @@ cd your-project
 ```
 aic init | sessions | attach [sid|--auto] | status
 aic watch                    # trace builder (the plugin starts it)
-aic docs [--json]            # list docs (migrates the old spec.md once)
+aic docs [--json]            # list docs
 aic compile [--doc D] [--print]   # doc vs worker activity -> diagnostics.D.json (queues if busy)
 aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]   # proposed doc edits for its diagnostics
 aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will see)
@@ -108,6 +114,8 @@ aic usage [--json]           # context/cost per session + account quota
 aic compact compile|ask [--reset]
 aic ask [--doc D] [--whatif] [--template T] [--print] [--context-file F] QUESTION
 aic prompts [--compiler] [--json]   # prompt templates (--compiler: the compiler's)
+aic skill                    # install the aic-prompts skill (/aic-prompts in the worker)
+aic history [--json]         # what you asked here: worker prompts, compiler questions
 aic render --prompt P [--doc D] [--from N --to M] [--input T] [--json]
 aic submit [--doc D] [--prompt P] [--from N --to M] [--input T] [--now] | --rendered F
 aic hold | continue [MESSAGE]

@@ -2,8 +2,10 @@
 
 Records which session/tmux pane/process the worker lives in and whether it is
 busy, and enforces a one-shot hold: the next tool call is denied and the turn
-ends. It also keeps the worker's file tools out of the human's docs and prompt
-templates (.aic/docs, .aic/prompts): a template's header is typed as the human.
+ends. It also keeps the worker's file tools out of the human's docs
+(.aic/docs). Prompt templates (.aic/prompts) are the worker's to write too
+(the aic-prompts skill drafts them there); every send from the editor shows
+the rendered prompt first.
 The compiler never reaches this hook (no project hooks, AIC_ROLE=compiler) and
 never writes files anyway.
 
@@ -31,11 +33,11 @@ STATE = {
 
 HOLD_REASON = ("Paused by the human user via aic (hold). Do not retry. "
                "End your turn and wait for their next message.")
-GUARD_REASON = ("This file is the human's own (an aic doc or prompt template, under .aic/docs or "
-                ".aic/prompts). Do not change it, by any means. If it should change, say so in your reply.")
+GUARD_REASON = ("This file is the human's own (an aic doc, under .aic/docs). Do not change it, by any means. "
+                "If it should change, say so in your reply.")
 FILE_TOOLS = {"Write": "file_path", "Edit": "file_path", "MultiEdit": "file_path", "NotebookEdit": "notebook_path"}
-GUARDED = ("docs", "prompts")
-# Bash: a command that writes into this project's .aic/docs or .aic/prompts
+GUARDED = ("docs",)
+# Bash: a command that writes into this project's .aic/docs
 # (or replaces .aic itself), read the way a shell reads it: quoted text is one
 # word, paths resolve against the cwd (following `cd`), and only destinations
 # count: a `>` redirect, the target of cp/mv/rsync/install/ln, the files of
@@ -123,6 +125,11 @@ def _tokens(cmd):
         return cmd.replace("\n", " ; ").split()
 
 
+def _guarded_path(aic, p):
+    """Real path `p` is .aic/docs (`aic` = real .aic), or in it."""
+    return any(p == b or p.startswith(b + os.sep) for b in (os.path.join(aic, d) for d in GUARDED))
+
+
 class _Guard:
     def __init__(self, root, cwd):
         self.root = os.path.realpath(root)
@@ -130,7 +137,7 @@ class _Guard:
         self.cwd = cwd or root
 
     def hit(self, word, whole=False):
-        """`word` as a path is in .aic/docs|prompts (whole: or is .aic itself,
+        """`word` as a path is in .aic/docs (whole: or is .aic itself,
         for what replaces or removes it): -> it, else None."""
         if not word or word.startswith("-") and "=" not in word:
             return None
@@ -140,11 +147,7 @@ class _Guard:
         p = os.path.realpath(os.path.join(self.cwd, os.path.expanduser(word)))
         if p == self.aic:
             return word if whole else None
-        for d in GUARDED:
-            base = os.path.join(self.aic, d)
-            if p == base or p.startswith(base + os.sep):
-                return word
-        return None
+        return word if _guarded_path(self.aic, p) else None
 
     def simple(self, words):
         """One simple command (no operators, redirects taken out)."""
@@ -257,12 +260,12 @@ class _Guard:
 
 
 def bash_writes(cmd, root, cwd=None):
-    """The .aic/docs or .aic/prompts path (or .aic) a Bash command writes, or None."""
+    """The .aic/docs path (or .aic) a Bash command writes, or None."""
     return _Guard(root, cwd).command(cmd)
 
 
 def guarded(root, data):
-    """The .aic/docs or .aic/prompts path a worker file tool (or a Bash command)
+    """The .aic/docs path a worker file tool (or a Bash command)
     would change, or None."""
     key = FILE_TOOLS.get(data.get("tool_name"))
     inp = data.get("tool_input") if isinstance(data.get("tool_input"), dict) else {}
@@ -273,34 +276,9 @@ def guarded(root, data):
     if not isinstance(target, str) or not target:
         return None
     target = os.path.realpath(os.path.join(data.get("cwd") or root, os.path.expanduser(target)))
-    aic = os.path.realpath(paths.aic_dir(root))
-    for d in GUARDED:
-        base = os.path.join(aic, d)
-        if target == base or target.startswith(base + os.sep):
-            return os.path.relpath(target, os.path.realpath(root))
+    if _guarded_path(os.path.realpath(paths.aic_dir(root)), target):
+        return os.path.relpath(target, os.path.realpath(root))
     return None
-
-
-def control_event(root, sid, kind, **extra):
-    ev = {"ts": paths.now(), "kind": kind}
-    ev.update(extra)
-    paths.append_jsonl(os.path.join(paths.session_dir(root, sid), "control.jsonl"), ev)
-
-
-def _proc_ppid(pid):
-    try:
-        with open("/proc/%d/stat" % pid) as f:
-            return int(f.read().rsplit(")", 1)[1].split()[1])
-    except (OSError, ValueError, IndexError):
-        return None
-
-
-def _tty(pid):
-    try:
-        t = os.readlink("/proc/%d/fd/0" % pid)
-    except OSError:
-        return None
-    return t if t.startswith("/dev/pts/") or t.startswith("/dev/tty") else None
 
 
 def worker_process():
@@ -310,10 +288,11 @@ def worker_process():
     for _ in range(8):
         if not pid or pid <= 1:
             break
-        tty = _tty(pid)
+        tty = paths.tty(pid)
         if tty:
             return pid, tty
-        pid = _proc_ppid(pid)
+        st = paths.proc_stat(pid)
+        pid = int(st[1]) if st else None
     return None, None
 
 
@@ -358,7 +337,7 @@ def handle(data):
             hold = None
         if hold:
             w["state"] = "held"
-            control_event(root, sid, "held", tool=data.get("tool_name"))
+            paths.control(root, sid, "held", tool=data.get("tool_name"))
             out = {
                 "continue": False,
                 "stopReason": "aic: held by the human",
@@ -371,7 +350,7 @@ def handle(data):
     if event == "PreToolUse" and out is None:
         g = guarded(root, data)
         if g:
-            control_event(root, sid, "guarded", tool=data.get("tool_name"), file=g)
+            paths.control(root, sid, "guarded", tool=data.get("tool_name"), file=g)
             out = {
                 "hookSpecificOutput": {
                     "hookEventName": "PreToolUse",
@@ -383,7 +362,7 @@ def handle(data):
         # The turn ended on its own before the next tool call: nothing left to hold.
         try:
             os.unlink(hold)
-            control_event(root, sid, "hold-expired")
+            paths.control(root, sid, "hold-expired")
         except FileNotFoundError:
             pass
 

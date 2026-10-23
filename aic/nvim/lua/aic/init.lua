@@ -68,16 +68,12 @@ local function wire()
   end)
 end
 
-local function in_aic_project(path)
-  return state.find_root(path)
-end
-
 -- Activate passively (no prompts, no `aic watch`) if `path` is in an aic project.
 local function passive(path)
   if state.root then
     return
   end
-  local root = in_aic_project(path)
+  local root = state.find_root(path)
   if root then
     state.activate(root)
   end
@@ -235,29 +231,32 @@ end
 ---------------------------------------------------------------------------
 -- public API
 
-function M.open()
+-- Run `fn` (it shows a view) once aic is active, with its watcher running.
+local function in_view(fn)
   ensure(function()
     backend.ensure_watch(state.root)
-    mod('view').open()
+    fn(mod('view'))
     mod('usage').poll()
   end, true)
 end
 
+function M.open()
+  in_view(function(view)
+    view.open()
+  end)
+end
+
 function M.toggle()
-  ensure(function()
-    backend.ensure_watch(state.root)
-    mod('view').toggle()
-    mod('usage').poll()
-  end, true)
+  in_view(function(view)
+    view.toggle()
+  end)
 end
 
 -- Show view `name` ('trace' | 'questions' | 'doc') in the current window.
 function M.show(name)
-  ensure(function()
-    backend.ensure_watch(state.root)
-    mod('view').show(name)
-    mod('usage').poll()
-  end, true)
+  in_view(function(view)
+    view.show(name)
+  end)
 end
 
 -- Pick a prompt template, preview, :w sends. o = { range = n, line1 = a, line2 = b, now = bool }
@@ -285,6 +284,11 @@ function M.continue(msg)
     vim.list_extend(args, { '--', msg })
   end
   run(args, 'continue')
+end
+
+-- :AicSkill: install the aic-prompts skill; the worker runs it as /aic-prompts.
+function M.skill()
+  run({ 'skill' }, 'skill')
 end
 
 function M.compile()
@@ -390,22 +394,6 @@ function M.refresh()
   end)
 end
 
-local function age(ts)
-  ts = tonumber(ts)
-  if not ts then
-    return '?'
-  end
-  local d = os.time() - ts
-  if d < 60 then
-    return math.floor(d) .. 's'
-  elseif d < 3600 then
-    return math.floor(d / 60) .. 'm'
-  elseif d < 86400 then
-    return math.floor(d / 3600) .. 'h'
-  end
-  return math.floor(d / 86400) .. 'd'
-end
-
 function M.attach()
   ensure(function()
     backend.run({ 'sessions', '--json' }, state.root, function(ok, out, err)
@@ -427,7 +415,7 @@ function M.attach()
             it.attached and '*' or ' ',
             (it.title and it.title ~= '') and it.title or sid:sub(1, 8),
             it.state or '?',
-            age(it.updated),
+            util.ago(it.updated),
             sid:sub(1, 8)
           )
         end,

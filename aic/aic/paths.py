@@ -46,13 +46,7 @@ def read_json(path, default=None):
 
 
 def write_json(path, data):
-    """Atomic write (tmp + rename) so editors never see half a file."""
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=None)
-    os.chmod(tmp, 0o644)
-    os.replace(tmp, path)
+    write_text(path, json.dumps(data, ensure_ascii=False))
 
 
 @contextlib.contextmanager
@@ -78,6 +72,7 @@ def update_json(path, **changes):
 
 
 def write_text(path, text):
+    """Atomic write (tmp + rename) so editors never see half a file."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".tmp-")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -114,6 +109,19 @@ def read_jsonl(path):
     except OSError:
         pass
     return out
+
+
+def last_seq(sdir):
+    """`seq` of the session's newest trace event (0: none yet)."""
+    tr = read_jsonl(os.path.join(sdir, "trace.jsonl"))
+    return tr[-1].get("seq", 0) if tr else 0
+
+
+def control(root, sid, kind, **extra):
+    """Record a hold/submit/... in control.jsonl (the watcher puts it in the trace)."""
+    ev = {"ts": now(), "kind": kind}
+    ev.update(extra)
+    append_jsonl(os.path.join(session_dir(root, sid), "control.jsonl"), ev)
 
 
 def claude_project_dir(root):
@@ -192,6 +200,25 @@ def transcript_path(root, sid):
         return w["transcript_path"]
     p = os.path.join(claude_project_dir(root), sid + ".jsonl")
     return p if os.path.exists(p) else None
+
+
+def proc_stat(pid):
+    """The fields of /proc/<pid>/stat after the command name (state, ppid,
+    pgrp, session, tty_nr, tpgid, ...), or None (gone, or not Linux)."""
+    try:
+        with open("/proc/%d/stat" % int(pid)) as f:
+            return f.read().rsplit(")", 1)[1].split()
+    except (OSError, ValueError, IndexError, TypeError):
+        return None
+
+
+def tty(pid):
+    """The terminal on `pid`'s stdin, or None."""
+    try:
+        t = os.readlink("/proc/%d/fd/0" % int(pid))
+    except (OSError, ValueError, TypeError):
+        return None
+    return t if t.startswith("/dev/pts/") or t.startswith("/dev/tty") else None
 
 
 def pid_alive(pid):

@@ -281,7 +281,7 @@ class SendTest(Base):
             worker.submit(self.root, "S1", doc="notes")
         self.assertEqual(self.sent[-1][0], "[aic] Here is my spec, please implement it:")
         self.project("mine", tpl("Mine:", "{{doc}}"))
-        with self.assertRaises(worker.WorkerError):
+        with self.assertRaises(prompts.PromptError):
             worker.submit(self.root, "S1", doc="notes", prompt="mine")
 
     def test_every_body_is_pasted_as_data(self):

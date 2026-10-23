@@ -12,7 +12,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from aic import docs, paths, worker  # noqa: E402
+from aic import docs, paths, prompts, worker  # noqa: E402
 
 FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "submit_golden.json")
 
@@ -58,8 +58,9 @@ def build(name):
             paths.write_json(os.path.join(sdir, "state.json"), {"submit_seq": c["submit_seq"]})
         events = [PROMPT] + c.get("events", [])
         paths.write_text(os.path.join(sdir, "trace.jsonl"), "".join(json.dumps(e) + "\n" for e in events))
-        m = worker.build_submit(root, "S1", *(c.get("rng") or (None, None)))
-        return {"header": m["header"], "body": m["body"], "spec": m["spec"], "seq": m["seq"]}
+        rng = c.get("rng") or (None, None)
+        m = prompts.render(root, "S1", "selection" if rng[0] else "spec", "spec", *rng)
+        return {"header": m["header"], "body": m["body"], "spec": m["receipt"]["sent"], "seq": m["receipt"]["seq"]}
 
 
 class SubmitGoldenTest(unittest.TestCase):

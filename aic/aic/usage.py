@@ -8,6 +8,7 @@ call of the run, so they are only used for cost.
 """
 import json
 import os
+from datetime import datetime
 
 from . import paths
 
@@ -111,12 +112,25 @@ def record_worker(sdir, model, u, turn):
     def upd(d):
         old = d.get("worker") or {}
         m = model or old.get("model")
-        if (old.get("ctx_tokens"), old.get("model"), old.get("turn")) == (tokens, m, turn) \
-                and not old.get("backfilled"):
+        if (old.get("ctx_tokens"), old.get("model"), old.get("turn")) == (tokens, m, turn):
             return
         d["worker"] = {"model": m, "ctx_tokens": tokens, "turn": turn, "updated": paths.now(),
                        "ctx_window": (d.get("windows") or {}).get(m)}
     modify(sdir, upd)
+
+
+def _until(v):
+    """Seconds from now to `v` (ISO 8601, or epoch s/ms), or None."""
+    if isinstance(v, (int, float)) and not isinstance(v, bool):
+        t = v / 1000.0 if v > 1e11 else float(v)
+    elif isinstance(v, str):
+        try:
+            t = datetime.fromisoformat(v.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            return None
+    else:
+        return None
+    return int(t - paths.now())
 
 
 def quota():
@@ -127,40 +141,17 @@ def quota():
     q = d["data"]
     ts = d.get("lastSuccessAt") or d.get("timestamp")
     return {
-        "five_hour": q.get("fiveHourPercent"), "five_hour_resets_at": q.get("fiveHourResetsAt"),
-        "weekly": q.get("weeklyPercent"), "weekly_resets_at": q.get("weeklyResetsAt"),
+        "five_hour": q.get("fiveHourPercent"), "five_hour_resets_in": _until(q.get("fiveHourResetsAt")),
+        "weekly": q.get("weeklyPercent"), "weekly_resets_in": _until(q.get("weeklyResetsAt")),
         "buckets": [{"id": b.get("id"), "label": b.get("label"), "percent": b.get("percent"),
-                     "resets_at": b.get("resetsAt"), "active": b.get("isActive")}
+                     "resets_in": _until(b.get("resetsAt")), "active": b.get("isActive")}
                     for b in q.get("scopedWeeklyBuckets") or [] if isinstance(b, dict)],
         "age_s": int(paths.now() - ts / 1000.0) if isinstance(ts, (int, float)) else None,
     }
 
 
 def report(root, sid):
-    """usage.json, with sessions that predate it filled in from their
-    transcripts (context size and model, no turn/cost history) and saved, so
-    editors reading usage.json see them too."""
-    sdir = paths.session_dir(root, sid)
-    sessions = paths.read_json(_path(sdir), {}) or {}
-    windows = sessions.get("windows") or {}
-    st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
-    tdir = paths.claude_project_dir(root)
-    todo = [(k, st.get(k)) for k in ("compile", "ask") if st.get(k) and not isinstance(sessions.get(k), dict)]
-    if not isinstance(sessions.get("worker"), dict):
-        todo.append(("worker", sid))
-    filled = {}
-    for key, s_id in todo:
-        model, u = last_assistant_usage(os.path.join(tdir, "%s.jsonl" % s_id))
-        if u:
-            filled[key] = {"session_id": s_id, "model": model, "ctx_tokens": ctx_tokens(u),
-                           "ctx_window": windows.get(model), "backfilled": True, "updated": paths.now()}
-    if filled:
-        def upd(d):
-            for k, e in filled.items():
-                if not isinstance(d.get(k), dict):  # never overwrite a real record
-                    d[k] = e
-        sessions = modify(sdir, upd)
-    return {"sessions": sessions, "quota": quota()}
+    return {"sessions": paths.read_json(_path(paths.session_dir(root, sid)), {}) or {}, "quota": quota()}
 
 
 def _k(n):
@@ -177,9 +168,7 @@ def text(rep):
         win = e.get("ctx_window")
         ctx = "%s/%s (%d%%)" % (_k(e.get("ctx_tokens")), _k(win), 100 * (e.get("ctx_tokens") or 0) // win) \
             if win else _k(e.get("ctx_tokens"))
-        if e.get("backfilled"):
-            extra = "(from transcript)"
-        elif key == "worker":
+        if key == "worker":
             extra = "turn %s" % e.get("turn")
         else:
             extra = "%s calls  $%.2f" % (e.get("turns", 0), e.get("cost_usd") or 0)

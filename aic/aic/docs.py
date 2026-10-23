@@ -10,15 +10,12 @@ A doc may start with a marker line, e.g. `<!-- aic: compile prompt=spec -->`:
 """
 import os
 import re
-import shutil
 
 from . import paths
 
 DEFAULT = "spec"
 NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]*\Z")
 MARKER = re.compile(r"\s*<!--\s*aic:(.*?)-->\s*\Z")
-# the old per-session spec.md template (spec.lua): not worth migrating on its own
-LEGACY_TEMPLATE = re.compile(r"\s*(# Spec\s*)?(<!-- aic:[^\n]*-->\s*)?\Z")
 
 
 class DocError(Exception):
@@ -92,52 +89,9 @@ def listing(root):
     return out
 
 
-def migrate(root, sid=None):
-    """Once per project, the old per-session spec.md files become doc `spec`
-    (compiled on save, as before): the attached session's if it was written
-    in, else the most recently changed one. Every session keeps what its
-    worker was sent (spec.submitted.md -> sent.spec.md) and what its compiler
-    already saw (diagnostics.json upto_seq -> state compile_upto_seq). The old
-    files stay. Idempotent; locked against a concurrent run."""
-    d = docs_dir(root)
-    if os.path.isdir(d):
-        return False
-    with paths.locked(os.path.join(paths.aic_dir(root), "docs-migrate")):
-        if os.path.isdir(d):
-            return False
-        tmp = d + ".tmp"
-        os.makedirs(tmp, exist_ok=True)
-        sroot = os.path.join(paths.aic_dir(root), "sessions")
-        written = []  # (attached?, mtime, text)
-        for s in sorted(os.listdir(sroot)) if os.path.isdir(sroot) else []:
-            sdir = os.path.join(sroot, s)
-            spec = os.path.join(sdir, "spec.md")
-            old = paths.read_text(spec)
-            if old and not LEGACY_TEMPLATE.match(old):
-                written.append((s == sid, os.path.getmtime(spec), old))
-            sub = os.path.join(sdir, "spec.submitted.md")
-            if os.path.exists(sub):
-                paths.write_text(sent_path(sdir, DEFAULT), paths.read_text(sub))
-            legacy = paths.read_json(os.path.join(sdir, "diagnostics.json"), {}) or {}
-            st = paths.read_json(os.path.join(sdir, "state.json"), {}) or {}
-            if legacy.get("upto_seq") and "compile_upto_seq" not in st:  # activity already compiled
-                paths.update_json(os.path.join(sdir, "state.json"), compile_upto_seq=legacy["upto_seq"])
-        if written:
-            text = max(written, key=lambda w: (w[0], w[1]))[2]
-            paths.write_text(os.path.join(tmp, DEFAULT + ".md"), "<!-- aic: compile -->\n" + text)
-        try:
-            os.rename(tmp, d)
-        except OSError:  # an editor made docs/ meanwhile: it wins
-            shutil.rmtree(tmp, ignore_errors=True)
-            return False
-        return bool(written)
-
-
-def resolve(root, sid, name):
-    """Check `name`, migrate if needed; -> the doc's absolute path. A doc that
-    does not exist is an error (compile/ask/submit need its text)."""
-    check_name(name)
-    migrate(root, sid)
+def resolve(root, name):
+    """Check `name`; -> the doc's absolute path. A doc that does not exist is
+    an error (compile/ask/submit need its text)."""
     p = path(root, name)
     if not os.path.isfile(p):
         raise DocError("no doc %r (%s)" % (name, os.path.relpath(p, root)))

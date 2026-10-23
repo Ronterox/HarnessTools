@@ -40,7 +40,9 @@ STANDALONE = re.compile(r"[ \t]*\{\{[#^/]\s*[\w.]+\s*\}\}[ \t]*\n?\Z")
 # invisible: control/format/private/unassigned characters (zero-width, bidi,
 # Unicode tags) would type words the human never saw in the preview.
 HEADER_ASCII_BAD = set("@\\")
-INVISIBLE = {"Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp"}
+# shown as nothing (or as a plain space) in a preview or a diff, yet text
+HIDDEN = {"Cc", "Cf", "Cs", "Zl", "Zp", "Zs"}  # (Zs: every space but " ")
+HIDDEN_EXTRA = {"\u034f", "\u115f", "\u1160", "\u3164", "\uffa0"}  # blank-looking letters
 MAX_HEADER = 300
 # in the pasted body: hidden text (Unicode tags) and bidi overrides
 BODY_BAD = re.compile("[\U000E0000-\U000E007F\u202A-\u202E\u2066-\u2069]")
@@ -82,8 +84,9 @@ def _value(raw):
     return raw
 
 
-def parse(text, name="?"):
-    """-> (meta dict, body). Front matter: `key: value` lines between `---` lines."""
+def front_matter(text, name, keys):
+    """-> (meta dict, body). Front matter: `key: value` lines between `---`
+    lines, every key one of `keys`."""
     text = text.replace("\r\n", "\n")
     meta, body = {}, text
     if text.startswith("---\n"):
@@ -95,15 +98,21 @@ def parse(text, name="?"):
                 continue
             k, sep, v = line.partition(":")
             k = k.strip()
-            if not sep or k not in KEYS:
+            if not sep or k not in keys:
                 raise PromptError("template %s: front matter line %d: unknown key %r (known: %s)"
-                                  % (name, i + 2, k, ", ".join(sorted(KEYS))))
+                                  % (name, i + 2, k, ", ".join(sorted(keys))))
             try:
                 meta[k] = _value(v)
             except PromptError as e:
                 raise PromptError("template %s: front matter line %d: %s" % (name, i + 2, e))
         body = text[end + 4:]
         body = body[1:] if body.startswith("\n") else body
+    return meta, body
+
+
+def parse(text, name="?"):
+    """-> (meta dict, body)."""
+    meta, body = front_matter(text, name, KEYS)
     if not isinstance(meta.get("header"), str) or not meta["header"].strip():
         raise PromptError("template %s: needs a `header:` (your typed request to the worker)" % name)
     req = meta.get("requires") or []
@@ -124,25 +133,18 @@ def _check_name(name):
         raise PromptError("bad template name %r: use letters, digits, _ . - (no /, no ..)" % (name,))
 
 
-def find(root, name, builtin_only=False):
-    """-> dict(name, source, path, meta, body) for template `name`."""
+def locate(dirs, name):
+    """[(source, path)] of template `name` in `dirs`, in lookup order (the first wins)."""
     _check_name(name)
-    for source, d in dirs(root):
-        if builtin_only and source != "built-in":
-            continue
-        p = os.path.join(d, name + ".md")
-        if os.path.isfile(p):
-            meta, body = parse(paths.read_text(p), name)
-            return {"name": name, "source": source, "path": p, "meta": meta, "body": body}
-    raise PromptError("no prompt template %r (looked in %s)" % (
-        name, ", ".join(d for _, d in dirs(root))))
+    return [(source, os.path.join(d, name + ".md")) for source, d in dirs
+            if os.path.isfile(os.path.join(d, name + ".md"))]
 
 
-def listing(root):
-    """Every template name once (the one that wins; `overrides` = the sources it
-    shadows), sorted; broken ones carry `error`."""
+def templates(dirs):
+    """[{name, source, path, overrides}]: every template name in `dirs` once
+    (the one that wins; `overrides` = the sources it shadows), sorted."""
     seen, out = {}, []
-    for source, d in dirs(root):
+    for source, d in dirs:
         try:
             files = sorted(os.listdir(d)) if os.path.isdir(d) else []
         except OSError:
@@ -154,18 +156,34 @@ def listing(root):
             if name in seen:
                 seen[name]["overrides"].append(source)
                 continue
-            p = os.path.join(d, f)
-            item = {"name": name, "source": source, "path": p, "overrides": []}
-            seen[name] = item
-            try:
-                meta, body = parse(paths.read_text(p), name)
-                item.update(description=meta.get("description") or "", header=meta["header"],
-                            requires=meta["requires"], input=meta.get("input"),
-                            marks_sent=meta["marks_sent"], uses_input=_uses(meta["header"] + body, "input"))
-            except PromptError as e:
-                item["error"] = str(e)
-            out.append(item)
+            seen[name] = {"name": name, "source": source, "path": os.path.join(d, f), "overrides": []}
+            out.append(seen[name])
     out.sort(key=lambda x: x["name"])
+    return out
+
+
+def find(root, name, builtin_only=False):
+    """-> dict(name, source, path, meta, body) for template `name`."""
+    found = [f for f in locate(dirs(root), name) if not builtin_only or f[0] == "built-in"]
+    if not found:
+        raise PromptError("no prompt template %r (looked in %s)" % (
+            name, ", ".join(d for _, d in dirs(root))))
+    source, p = found[0]
+    meta, body = parse(paths.read_text(p), name)
+    return {"name": name, "source": source, "path": p, "meta": meta, "body": body}
+
+
+def listing(root):
+    """Every template once (see templates()); broken ones carry `error`."""
+    out = templates(dirs(root))
+    for item in out:
+        try:
+            meta, body = parse(paths.read_text(item["path"]), item["name"])
+            item.update(description=meta.get("description") or "", header=meta["header"],
+                        requires=meta["requires"], input=meta.get("input"),
+                        marks_sent=meta["marks_sent"], uses_input=_uses(meta["header"] + body, "input"))
+        except PromptError as e:
+            item["error"] = str(e)
     return out
 
 
@@ -252,12 +270,22 @@ def _render(nodes, values, emitted):
     return "".join(out)
 
 
+def is_hidden(c):
+    return c not in "\t\n " and (unicodedata.category(c) in HIDDEN or c in HIDDEN_EXTRA)
+
+
+def hidden(s):
+    """The hidden characters of `s` (see HIDDEN), as sorted U+XXXX names."""
+    return sorted({"U+%04X" % ord(c) for c in s if is_hidden(c)})
+
+
 def header_problems(h):
-    """Characters of `h` that must never be typed as the human, as readable names."""
+    """Characters of `h` that must never be typed as the human, as readable names
+    (also private-use and unassigned ones: no one knows what they show)."""
     bad = []
     for c in h:
         cat = unicodedata.category(c)
-        if c in HEADER_ASCII_BAD or cat == "Nd" or cat in INVISIBLE:
+        if c in HEADER_ASCII_BAD or cat in ("Nd", "Co", "Cn") or is_hidden(c):
             name = repr(c) if c.isprintable() else "U+%04X" % ord(c)
             if name not in bad:
                 bad.append(name)
@@ -296,8 +324,7 @@ def _diagnostics_text(sdir, doc):
     d = paths.read_json(docs.diag_path(sdir, doc), {}) or {}
     lines = []
     for it in d.get("items") or []:
-        where = "doc" if it.get("file") in ("doc", "spec") else it.get("file")
-        lines.append("- [%s] %s:%s %s" % (it.get("kind"), where, it.get("line"), it.get("message")))
+        lines.append("- [%s] %s:%s %s" % (it.get("kind"), it.get("file"), it.get("line"), it.get("message")))
     return "\n".join(lines)
 
 
@@ -372,12 +399,11 @@ def render(root, sid, prompt, doc=docs.DEFAULT, line_from=None, line_to=None, in
         body += EDITS_INTRO + values["hand_edits"]
     header = check_header(_render(_tree(meta["header"], prompt), values, []))
     check_body(body)
-    tr = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
     receipt = {"prompt": prompt, "source": t["source"], "doc": doc, "marks_sent": meta["marks_sent"],
                "sent": text if meta["marks_sent"] else None, "previous_hash": _hash(previous),
                # a diff/previous in the body goes stale like a marks_sent send does
                "uses_previous": bool(placed & {"diff", "previous", "changed"}),
-               "edits_sent": bool(edits), "seq": tr[-1].get("seq", 0) if tr else 0}
+               "edits_sent": bool(edits), "seq": paths.last_seq(sdir)}
     return {"header": header, "body": body, "receipt": receipt}
 
 
@@ -387,8 +413,7 @@ def check_receipt(root, sid, receipt):
     be stale). Raises PromptError (DocError for a bad doc name)."""
     doc = docs.check_name(receipt.get("doc"))
     sdir = paths.session_dir(root, sid)
-    tr = paths.read_jsonl(os.path.join(sdir, "trace.jsonl"))
-    last = tr[-1].get("seq", 0) if tr else 0
+    last = paths.last_seq(sdir)
     seq = receipt.get("seq")
     if not (isinstance(seq, int) and not isinstance(seq, bool) and 0 <= seq <= last):
         raise PromptError("bad receipt: seq %r" % (seq,))

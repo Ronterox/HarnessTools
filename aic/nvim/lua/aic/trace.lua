@@ -197,48 +197,6 @@ local function str(v, default)
   return type(v) == 'string' and v ~= '' and v or default
 end
 
--- What a tool was given, readable (its title shows only the start): the
--- event's `detail`, or, for events written before it existed, rebuilt from
--- `input` (cut at 300 characters by the backend). nil for file tools.
-local details = setmetatable({}, { __mode = 'k' }) -- ev -> its readable input (parsed once)
-local tool_detail_of
-local function tool_detail(ev)
-  local d = details[ev]
-  if d == nil then
-    d = tool_detail_of(ev) or false
-    details[ev] = d
-  end
-  return d or nil
-end
-
-function tool_detail_of(ev)
-  if type(ev.detail) == 'string' then
-    return ev.detail
-  end
-  if (ev.file and ev.file ~= vim.NIL) or type(ev.input) ~= 'string' or not ev.input:match('^%s*{') then
-    return nil -- (inputs are JSON objects)
-  end
-  local ok, inp = pcall(vim.json.decode, ev.input)
-  if ok and type(inp) == 'table' then
-    local parts = {}
-    for _, k in ipairs({ 'description', 'prompt' }) do
-      if type(inp[k]) == 'string' then
-        table.insert(parts, inp[k])
-      end
-    end
-    if type(inp.command) == 'string' then
-      table.insert(parts, '$ ' .. inp.command)
-    end
-    return #parts > 0 and table.concat(parts, '\n') or ev.input
-  end
-  local cmd = ev.input:match('"command":%s*"(.*)$') -- cut JSON: the command, unescaped as far as it goes
-  if cmd then
-    cmd = cmd:gsub('\\\\', '\0'):gsub('\\n', '\n'):gsub('\\t', '\t'):gsub('\\"', '"'):gsub('%z', '\\')
-    return '$ ' .. cmd
-  end
-  return ev.input
-end
-
 local function build(v)
   local lines, map, indents, hls = {}, {}, {}, {}
   local width = text_width(v)
@@ -353,7 +311,7 @@ local function build(v)
       }, node)
       -- the full input when the title doesn't show it all (cut here, cut by
       -- the backend, or a description in place of the command)
-      local detail = tool_detail(ev)
+      local detail = type(ev.detail) == 'string' and ev.detail or nil -- what it was given, readable (none: file tools)
       local said = title:gsub('^[^:]*:%s*', '')
       if detail and vim.trim((detail:gsub('^%$ ', ''))) == vim.trim(said) and not title_cut and title:sub(-3) ~= '…' then
         detail = nil

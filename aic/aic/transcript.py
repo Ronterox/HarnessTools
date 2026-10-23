@@ -269,7 +269,3 @@ class Parser:
             "file": rel if name in FILE_TOOLS else None,
             "hunks": hunks, "input": _short(inp), "detail": _detail(name, inp), "error": error,
         }
-
-    def pending_tools(self):
-        """Tool calls in flight (no result yet) — shown live by the watcher."""
-        return dict(self.tools)

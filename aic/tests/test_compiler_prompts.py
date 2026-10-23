@@ -22,7 +22,6 @@ class CompilerTemplatesTest(unittest.TestCase):
         worker.init(self.root, "/x/bin/aic")
         self.sdir = paths.session_dir(self.root, "S1")
         os.makedirs(self.sdir)
-        docs.migrate(self.root, "S1")
         paths.write_text(docs.path(self.root, "spec"), "<!-- aic: compile -->\n- retry on error\n")
         paths.write_text(os.path.join(self.sdir, "trace.jsonl"), json.dumps(
             {"id": "e1", "seq": 1, "ts": 0, "kind": "prompt", "turn": 1, "text": "go"}) + "\n")

@@ -13,7 +13,7 @@ It never writes code.
 
 | Role | What it is | Can do |
 |---|---|---|
-| **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs and prompt templates: the hook refuses its file tools there, and Bash commands that visibly write there (a speed bump, not a sandbox) |
+| **Worker** | A normal Claude Code session, run however you like | Everything it normally does, except change your docs: the hook refuses its file tools there, and Bash commands that visibly write there (a speed bump, not a sandbox). It may write prompt templates (`/aic-prompts` drafts them from your history) |
 | **Compiler** | Persistent headless `claude -p --resume` session | Read/Grep/Glob only. Advises; **never** stops the worker. On request (`:AicFix`) it proposes doc edits as data; you pick them, and the editor applies them |
 | **Human** | You, in Neovim | Sole authority over the worker (submit / hold / redirect) |
 
@@ -131,8 +131,10 @@ The daemon:
   ones are picked per doc (`<!-- aic: compile=plan -->`), since not every doc
   is a spec. Trust: a template is instructions and can always talk the
   compiler out of something, so aic limits and shows rather than promises.
-  The worker's writes to `.aic/prompts/` are refused (file tools, and Bash that
-  visibly writes there). A project template can't pick the model or reach
+  The worker may write `.aic/prompts/` (`:AicSkill` installs `/aic-prompts`,
+  which turns requests you repeat into templates); one that overrides a
+  compiler built-in changes how its own work is reviewed, and is named on
+  every compile. A project template can't pick the model or reach
   outside the project. Data is never dropped. A closing line the template
   doesn't control follows it. Every non-built-in template is named on each
   compile and at load. A worker with an unrestricted shell is out of scope.
@@ -158,8 +160,7 @@ You write in as many **docs** as you like (`.aic/docs/<name>.md`, project-wide,
 gitignored scratch): specs, notes, plans. Not every doc is a spec, so a doc
 compiles on `:w` only when its first line says so (`<!-- aic: compile -->`).
 What each worker was last sent of a doc is remembered per worker, so a submit
-still sends only the diff. One compiler session serves all docs. The old
-per-session `spec.md` becomes doc `spec` once (migration).
+still sends only the diff. One compiler session serves all docs.
 
 ## Milestones (each usable on its own)
 

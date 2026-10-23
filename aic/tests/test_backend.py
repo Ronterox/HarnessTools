@@ -10,8 +10,14 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from aic import anchors, compiler, docs, hook, paths, usage, watch, worker  # noqa: E402
+from aic import anchors, compiler, docs, history, hook, paths, prompts, usage, watch, worker  # noqa: E402
 from aic.transcript import Parser  # noqa: E402
+
+
+def build_submit(root, sid, line_from=None, line_to=None, doc="spec"):
+    """What `aic submit` renders (the doc's text as sent in "spec")."""
+    r = prompts.render(root, sid, "selection" if line_from else "spec", doc, line_from, line_to)
+    return dict(r, spec=r["receipt"]["sent"])
 
 
 def rec_user(text, uid, parent=None):
@@ -172,36 +178,37 @@ class ProjectTest(unittest.TestCase):
         self.assertEqual(paths.worker(self.root, self.sid)["state"], "held")
         self.assertEqual(self.run_hook("PreToolUse", tool_name="Edit"), "")  # one-shot
 
-    def test_worker_file_tools_never_touch_docs_or_prompts(self):
+    def test_worker_file_tools_never_touch_docs(self):
         def pre(tool, path, cwd=None):
             out = self.run_hook("PreToolUse", tool_name=tool, cwd=cwd or self.root,
                                 tool_input={"file_path": path, "notebook_path": path})
             return json.loads(out) if out else None
-        for tool, path in (("Write", ".aic/docs/notes.md"), ("Edit", os.path.join(self.root, ".aic/prompts/spec.md")),
-                           ("MultiEdit", ".aic/docs/../docs/x.md"), ("NotebookEdit", ".aic/prompts/n.ipynb")):
+        for tool, path in (("Write", ".aic/docs/notes.md"), ("Edit", os.path.join(self.root, ".aic/docs/spec.md")),
+                           ("MultiEdit", ".aic/docs/../docs/x.md"), ("NotebookEdit", ".aic/docs/n.ipynb")):
             out = pre(tool, path)
             self.assertEqual(out and out["hookSpecificOutput"]["permissionDecision"], "deny", (tool, path))
             self.assertNotIn("continue", out)  # the worker carries on with its turn
         os.symlink(os.path.join(self.root, ".aic", "docs"), os.path.join(self.root, "sneaky"))
         self.assertIsNotNone(pre("Write", "sneaky/notes.md"))  # through a symlink
         for tool, path in (("Write", "src/app.py"), ("Edit", ".aic/docsish.md"), ("Read", ".aic/docs/notes.md"),
-                           ("Write", ".aic/sessions/S1/x")):
+                           ("Write", ".aic/sessions/S1/x"), ("Write", ".aic/prompts/mine.md"),
+                           ("Edit", ".aic/prompts/compiler/compile.md")):  # templates: the worker's too
             self.assertIsNone(pre(tool, path), (tool, path))
         ev = paths.read_jsonl(os.path.join(paths.session_dir(self.root, self.sid), "control.jsonl"))
-        self.assertEqual([e["file"] for e in ev if e["kind"] == "guarded"][:2], [".aic/docs/notes.md", ".aic/prompts/spec.md"])
+        self.assertEqual([e["file"] for e in ev if e["kind"] == "guarded"][:2], [".aic/docs/notes.md", ".aic/docs/spec.md"])
 
-    def test_worker_bash_writing_docs_or_prompts_is_refused(self):
+    def test_worker_bash_writing_docs_is_refused(self):
         def pre(cmd):
             out = self.run_hook("PreToolUse", tool_name="Bash", tool_input={"command": cmd})
             return json.loads(out)["hookSpecificOutput"]["permissionDecision"] if out else None
-        for cmd in ("echo hi > .aic/prompts/compiler/compile.md", "sed -i s/a/b/ .aic/docs/spec.md",
-                    "cat x | tee .aic/docs/spec.md", "cp evil.md .aic/prompts/compiler/ask.md",
+        for cmd in ("echo hi > .aic/docs/compile.md", "sed -i s/a/b/ .aic/docs/spec.md",
+                    "cat x | tee .aic/docs/spec.md", "cp evil.md .aic/docs/ask.md",
                     "rm -rf .aic/docs", "python3 -c \"open('.aic/docs/a.md','w').write('x')\"",
-                    "mkdir -p .aic/prompts/compiler && echo x >> .aic/prompts/compiler/fix.md",
+                    "mkdir -p .aic/docs && echo x >> .aic/docs/fix.md",
                     "find .aic/docs -name '*.md' -delete", "echo x >%s/.aic/docs/a.md" % self.root,
-                    "cd .aic/prompts/compiler && cp /tmp/e.md compile.md", "echo $(cp /tmp/e.md .aic/docs/a.md)",
+                    "cd .aic/docs && cp /tmp/e.md compile.md", "echo $(cp /tmp/e.md .aic/docs/a.md)",
                     "for f in /tmp/e.md; do cp $f .aic/docs/; done", "timeout 5 cp /tmp/e.md .aic/docs/a.md",
-                    "bash -c 'echo x > .aic/docs/a.md'", "curl -so .aic/prompts/x.md https://example.com",
+                    "bash -c 'echo x > .aic/docs/a.md'", "curl -so .aic/docs/x.md https://example.com",
                     "sed --in-place s/a/b/ .aic/docs/spec.md", "rsync -a /tmp/evil/ .aic/",
                     "env -u FOO rm .aic/docs/spec.md", "find .aic/docs -exec sed -i s/a/b/ {} +",
                     "git -C .aic/docs checkout spec.md", "bash -lc 'rm .aic/docs/spec.md'",
@@ -220,11 +227,12 @@ class ProjectTest(unittest.TestCase):
                     "git commit -m 'guard: deny `cp x .aic/prompts/y` and $(rm .aic/docs/x)'",
                     "python3 -c \"print(open('.aic/docs/spec.md').read().replace('a','b'))\"",
                     "dd if=.aic/docs/spec.md of=/tmp/x", "tee /tmp/copy.md < .aic/docs/spec.md",
-                    "nvim --headless -c 'q' .aic/docs/spec.md", "git rm --cached .aic/docs/spec.md", "chmod 700 .aic"):
+                    "nvim --headless -c 'q' .aic/docs/spec.md", "git rm --cached .aic/docs/spec.md", "chmod 700 .aic",
+                    "echo hi > .aic/prompts/compiler/compile.md", "cp mine.md .aic/prompts/mine.md"):  # templates: allowed
             self.assertIsNone(pre(cmd), cmd)
         ev = paths.read_jsonl(os.path.join(paths.session_dir(self.root, self.sid), "control.jsonl"))
         self.assertEqual([e for e in ev if e["kind"] == "guarded"][0],
-                         dict(ev[0], tool="Bash", file=".aic/prompts/compiler/compile.md"))
+                         dict(ev[0], tool="Bash", file=".aic/docs/compile.md"))
 
     def test_compiler_is_never_guarded(self):
         with mock.patch.dict(os.environ, {"AIC_ROLE": "compiler"}):
@@ -245,21 +253,21 @@ class ProjectTest(unittest.TestCase):
         sdir = paths.session_dir(self.root, self.sid)
         os.makedirs(docs.docs_dir(self.root))
         paths.write_text(docs.path(self.root, "spec"), "# Spec\n- a\n- b\n")
-        m = worker.build_submit(self.root, self.sid)
+        m = build_submit(self.root, self.sid)
         self.assertIn("Here is my spec", m["header"])
         self.assertIn("- b", m["body"])
         self.assertEqual(m["spec"], "# Spec\n- a\n- b\n")
         paths.write_text(docs.sent_path(sdir, "spec"), "# Spec\n- a\n- b\n")
-        with self.assertRaises(worker.WorkerError):
-            worker.build_submit(self.root, self.sid)
+        with self.assertRaises(prompts.PromptError):
+            build_submit(self.root, self.sid)
         paths.write_text(docs.path(self.root, "spec"), "# Spec\n- a\n- c\n")
-        m = worker.build_submit(self.root, self.sid)
+        m = build_submit(self.root, self.sid)
         self.assertIn("\n-- b", m["body"])
         self.assertIn("\n+- c", m["body"])
-        m = worker.build_submit(self.root, self.sid, 2, 2)
+        m = build_submit(self.root, self.sid, 2, 2)
         self.assertIsNone(m["spec"])
         self.assertTrue(m["body"].endswith("- a"))
-        for msg in (m, worker.build_submit(self.root, self.sid)):
+        for msg in (m, build_submit(self.root, self.sid)):
             self.assertFalse(any(ch.isdigit() for ch in msg["header"]), msg["header"])
 
     def test_init_refuses_broken_settings(self):
@@ -329,7 +337,7 @@ class ProjectTest(unittest.TestCase):
         sdir = paths.session_dir(self.root, self.sid)
         paths.append_jsonl(os.path.join(sdir, "human.jsonl"),
                            {"ts": 5.0, "file": "a.py", "hunks": [{"start": 1, "count": 1, "lines": ["+z"]}]})
-        worker.control(self.root, self.sid, "hold")
+        paths.control(self.root, self.sid, "hold")
         w = watch.Watcher(self.root)
         with mock.patch("sys.stdout", new_callable=io.StringIO):
             w.tick()
@@ -620,12 +628,10 @@ class UsageTest(unittest.TestCase):
         c = paths.read_json(os.path.join(self.sdir, "usage.json"))["compile"]
         self.assertEqual((c["session_id"], c["ctx_tokens"], c["compacted_from"]), (None, 0, "C1"))
 
-    def test_report_backfills_and_quota_is_optional(self):
-        self.transcript("W", {"input_tokens": 5, "cache_read_input_tokens": 5})
+    def test_quota_is_optional(self):
         with mock.patch.object(usage, "OMC_CACHE", "/nonexistent"):
             rep = usage.report(self.root, "W")
-        self.assertEqual(rep["sessions"]["worker"]["ctx_tokens"], 10)
-        self.assertTrue(rep["sessions"]["worker"]["backfilled"])
+        self.assertEqual(rep["sessions"], {})
         self.assertIsNone(rep["quota"])
         cache = os.path.join(self.home, "q.json")
         paths.write_json(cache, {"lastSuccessAt": paths.now() * 1000, "data": {
@@ -651,6 +657,49 @@ class UsageTest(unittest.TestCase):
         with mock.patch.object(compiler, "_run_claude", fake):
             self.assertIn("reset", compiler.compact(self.root, "W", "compile", reset=True)
                           .replace("no session yet", "reset"))
+
+
+class HistoryTest(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        worker.init(self.root, "/x/bin/aic")
+        self.tdir = tempfile.mkdtemp()
+        self.p = mock.patch.object(paths, "claude_project_dir", lambda root: self.tdir)
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+
+    def transcript(self, sid, *texts):
+        with open(os.path.join(self.tdir, sid + ".jsonl"), "w") as f:
+            for i, t in enumerate(texts):
+                f.write(json.dumps({"type": "user", "uuid": "%s%d" % (sid, i), "parentUuid": "p%d" % i,
+                                    "message": {"role": "user", "content": t}}) + "\n")
+
+    def test_prompts_and_questions(self):
+        self.transcript("W1", "run the tests", "<task-notification>done</task-notification>", "/compact",
+                        "and fix what fails")
+        self.transcript("C1", "compile this doc")
+        paths.add_compiler_id(self.root, "C1")  # a compiler session, not the human's worker
+        paths.write_text(os.path.join(paths.session_dir(self.root, "W1"), "chat.md"),
+                         "## You — code src/a.py:3\nwhy is this\nslow?\n\n## Compiler\nIt loops.\n\n"
+                         "## You (what-if) — trace\nuse a set?\n\n## Compiler\nFaster.\n\n")
+        self.assertEqual([(x["session"], x["text"]) for x in history.prompts(self.root)],
+                         [("W1", "run the tests"), ("W1", "and fix what fails")])
+        self.assertEqual(history.questions(self.root), [
+            {"kind": "question", "session": "W1", "how": "— code src/a.py:3", "text": "why is this\nslow?"},
+            {"kind": "whatif", "session": "W1", "how": "(what-if) — trace", "text": "use a set?"}])
+        self.assertIn("prompt   W1  run the tests", history.text(history.prompts(self.root)))
+
+    def test_install_skill(self):
+        p = worker.install_skill(self.root, "/opt/aic/bin/aic")
+        self.assertEqual(p, os.path.join(self.root, ".claude", "skills", "aic-prompts", "SKILL.md"))
+        text = paths.read_text(p)
+        self.assertTrue(text.startswith("---\nname: aic-prompts\n"))
+        self.assertIn("/opt/aic/bin/aic history", text)
+        self.assertNotIn("{AIC}", text)
+        with self.assertRaises(worker.WorkerError):
+            worker.install_skill(self.root, "/x", "no-such-skill")
 
 
 class CompileQueueTest(unittest.TestCase):
@@ -691,35 +740,9 @@ class DocsTest(unittest.TestCase):
         self.assertEqual(docs.marker("# Notes\n<!-- aic: compile -->\n"), {"compile": False, "prompt": None})
         self.assertEqual(docs.strip_marker("# Notes\n"), "# Notes\n")
 
-    def test_migrate_once(self):
-        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n- old idea\n")
-        paths.write_text(os.path.join(self.sdir, "spec.submitted.md"), "# Spec\n")
-        paths.write_json(os.path.join(self.sdir, "diagnostics.json"), {"upto_seq": 7, "items": []})
-        self.assertTrue(docs.migrate(self.root, "S1"))
-        self.assertEqual(docs.read(self.root, "spec"), "<!-- aic: compile -->\n# Spec\n- old idea\n")
-        self.assertEqual(paths.read_text(docs.sent_path(self.sdir, "spec")), "# Spec\n")
-        self.assertEqual(paths.read_json(os.path.join(self.sdir, "state.json"))["compile_upto_seq"], 7)
-        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n- changed later\n")
-        self.assertFalse(docs.migrate(self.root, "S1"))  # once per project
-        self.assertIn("old idea", docs.read(self.root, "spec"))
-        self.assertEqual([d["name"] for d in docs.listing(self.root)], ["spec"])
-        self.assertTrue(docs.listing(self.root)[0]["compile"])
-
-    def test_migrate_picks_the_written_spec_across_sessions(self):
-        old = paths.session_dir(self.root, "S0")
-        os.makedirs(old)
-        paths.write_text(os.path.join(old, "spec.md"), "# Spec\n- the real one\n")
-        paths.write_text(os.path.join(old, "spec.submitted.md"), "# Spec\n")
-        paths.write_json(os.path.join(old, "diagnostics.json"), {"upto_seq": 4})
-        paths.write_text(os.path.join(self.sdir, "spec.md"), "# Spec\n<!-- aic: pseudocode outline -->\n\n")
-        self.assertTrue(docs.migrate(self.root, "S1"))  # attached S1 never wrote in its spec
-        self.assertIn("the real one", docs.read(self.root, "spec"))
-        self.assertEqual(paths.read_text(docs.sent_path(old, "spec")), "# Spec\n")
-        self.assertEqual(paths.read_json(os.path.join(old, "state.json"))["compile_upto_seq"], 4)
-
     def test_missing_doc_is_an_error(self):
         with self.assertRaises(docs.DocError):
-            docs.resolve(self.root, "S1", "nope")
+            docs.resolve(self.root, "nope")
 
     def test_ask_needs_no_doc_file(self):
         seen = []
@@ -733,28 +756,20 @@ class DocsTest(unittest.TestCase):
             self.assertEqual(cli.main(["ask", "hello"]), 0)
         self.assertIn("CURRENT DOC ==\n(none yet)", seen[0])
 
-    def test_untouched_template_is_not_migrated(self):
-        paths.write_text(os.path.join(self.sdir, "spec.md"),
-                         "# Spec\n<!-- aic: pseudocode outline. Anchors: @x. :w compiles. -->\n\n")
-        self.assertFalse(docs.migrate(self.root, "S1"))
-        self.assertTrue(os.path.isdir(docs.docs_dir(self.root)))
-        self.assertEqual(docs.listing(self.root), [])
-
     def test_submit_never_sends_the_marker(self):
-        docs.migrate(self.root, "S1")
         paths.write_text(docs.path(self.root, "notes"), "<!-- aic: compile -->\n# Notes\n- a\n- b\n")
-        m = worker.build_submit(self.root, "S1", doc="notes")
+        m = build_submit(self.root, "S1", doc="notes")
         self.assertNotIn("aic: compile", m["body"])
         self.assertEqual(m["spec"], "# Notes\n- a\n- b\n")
-        m = worker.build_submit(self.root, "S1", 3, 3, doc="notes")  # file lines
+        m = build_submit(self.root, "S1", 3, 3, doc="notes")  # file lines
         self.assertTrue(m["body"].endswith("- a"), m["body"])
-        m = worker.build_submit(self.root, "S1", 1, 4, doc="notes")  # the whole doc, marker included
+        m = build_submit(self.root, "S1", 1, 4, doc="notes")  # the whole doc, marker included
         self.assertNotIn("aic: compile", m["body"])
         self.assertTrue(m["body"].startswith("(spec lines 1-4)\n\n# Notes"), m["body"])
         paths.write_text(docs.sent_path(self.sdir, "notes"), "# Notes\n- a\n- b\n")
         paths.write_text(docs.path(self.root, "notes"), "# Notes\n- a\n- b\n")  # marker removed
-        with self.assertRaises(worker.WorkerError):  # the marker is not a change
-            worker.build_submit(self.root, "S1", doc="notes")
+        with self.assertRaises(prompts.PromptError):  # the marker is not a change
+            build_submit(self.root, "S1", doc="notes")
 
 
 class DocCompileTest(unittest.TestCase):
@@ -763,7 +778,6 @@ class DocCompileTest(unittest.TestCase):
         worker.init(self.root, "/x/bin/aic")
         self.sdir = paths.session_dir(self.root, "S1")
         os.makedirs(self.sdir)
-        docs.migrate(self.root, "S1")
         paths.write_text(docs.path(self.root, "a"), "<!-- aic: compile -->\n- doc a\n")
         paths.write_text(docs.path(self.root, "b"), "- doc b\n")
         self.trace = [{"id": "e1", "seq": 1, "ts": 0, "kind": "prompt", "turn": 1, "text": "first"}]

@@ -94,23 +94,13 @@ function M.marker(first)
   return out
 end
 
--- Create doc `name` if missing. The first time the docs dir is created, the
--- backend migrates the old per-session spec.md first (`aic docs`).
+-- Create doc `name` if missing.
 function M.ensure_file(name, compile)
   local p = M.path(name)
   if not p then
     return nil
   end
-  if not util.exists(M.dir()) then
-    local ok, job = pcall(vim.system, { config.options.bin, 'docs', '--json' }, { cwd = state.root, text = true })
-    local res = ok and job:wait(10000)
-    if not (res and res.code == 0) then -- no docs dir yet: the next try can still migrate
-      util.notify(util.oneline('aic docs failed: ' .. vim.trim(ok and res and (res.stderr or '') or tostring(job))),
-        vim.log.levels.ERROR)
-      return nil
-    end
-    vim.fn.mkdir(M.dir(), 'p')
-  end
+  vim.fn.mkdir(M.dir(), 'p')
   if not util.exists(p) then
     local lines = { '# ' .. name, '' }
     if compile then
@@ -177,18 +167,6 @@ function M.new(name)
   vim.ui.input({ prompt = 'aic: new doc name: ' }, with_name)
 end
 
-local function ago(ts)
-  local d = os.time() - (tonumber(ts) or os.time())
-  if d < 60 then
-    return math.floor(d) .. 's'
-  elseif d < 3600 then
-    return math.floor(d / 60) .. 'm'
-  elseif d < 86400 then
-    return math.floor(d / 3600) .. 'h'
-  end
-  return math.floor(d / 86400) .. 'd'
-end
-
 -- Picker: docs (most recently changed first), then "+ new doc".
 function M.pick()
   backend.run({ 'docs', '--json' }, state.root, function(ok, out, err)
@@ -205,7 +183,7 @@ function M.pick()
         if it.new then
           return '+ new doc'
         end
-        return ('%s%s  %s ago'):format(it.name, it.compile and '  [compile]' or '', ago(it.mtime))
+        return ('%s%s  %s ago'):format(it.name, it.compile and '  [compile]' or '', util.ago(it.mtime))
       end,
     }, function(choice)
       if not choice then
@@ -283,9 +261,9 @@ function M.counts(d)
   return c
 end
 
--- An item about a line of the compiled doc (`file` "doc"; "spec" before docs existed).
+-- An item about a line of the compiled doc.
 local function on_doc(it)
-  return it.file == 'doc' or it.file == 'spec'
+  return it.file == 'doc'
 end
 
 -- doc -> { at = compiled_at, items = { [index] = true } }: items of that
@@ -437,14 +415,6 @@ end
 
 ---------------------------------------------------------------------------
 -- anchors
-
--- Anchor under cursor (see aic.anchors): returns path, line or symbol; or nil.
-function M.anchor_at(line, col)
-  local a = require('aic.anchors').anchor_at(line, col)
-  if a then
-    return a.path, a.line or a.symbol
-  end
-end
 
 -- Set up a doc buffer (called from BufReadPost/BufNewFile).
 function M.attach(buf)

@@ -92,7 +92,6 @@ class ProposeTest(unittest.TestCase):
         worker.init(self.root, "/x/bin/aic")
         self.sdir = paths.session_dir(self.root, "S1")
         os.makedirs(self.sdir)
-        docs.migrate(self.root, "S1")
         paths.write_text(docs.path(self.root, "spec"), DOC)
         paths.write_json(docs.diag_path(self.sdir, "spec"), {"compiled_at": 7, "items": [
             {"kind": "incoherent", "severity": "warning", "file": "doc", "line": 3, "message": "how many retries?"},
