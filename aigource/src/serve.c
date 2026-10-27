@@ -19,6 +19,7 @@
 #include "analysis.h"
 #include "engine.h"
 #include "metrics.h"
+#include "transcript.h"
 #include "util.h"
 #include "yyjson.h"
 
@@ -32,6 +33,10 @@
 #define READ_PASS (1 << 18)   /* bytes read from one client per pass: a flood can't hold a frame or grow past the cap */
 #define BYE_WAIT 2.0          /* after a handover, clients get this long to read it */
 #define RETAKE_WAIT 5.0       /* a host that was asked to quit tries the free name this often */
+#define TEXT_CAP (8 << 10)    /* detail: bytes of a prompt or a comment */
+#define PROMPT_READ (64 << 10) /* detail: bytes of a prompt's record read */
+#define DETAIL_SCAN (4L << 20) /* detail: bytes after a call looked through for its result */
+#define HUNK_CAP 400          /* detail: patch lines in all */
 
 /* SHA-1 (FIPS 180-4) of n bytes as 40 hex digits: the socket's name. */
 static void sha1_hex(const char *msg, size_t n, char out[41]) {
@@ -75,9 +80,33 @@ typedef struct {
     char **path; /* below the root */
     int *node;
     char **sig;  /* its lines' turn keys, run-length; "" for unknown */
+    uint64_t *same; /* its text and each line's change (by its record, which renumbering doesn't touch), hashed */
+    long *since;    /* the first build whose `same` this is: a line number of any build since means this line
+                     * (srv_swapped sets it, on the owner's thread) */
     char **key;  /* per turn: its key */
     int nkey;
 } Index;
+
+/* FNV-1a 64 of n bytes, on from h (0: start). */
+static uint64_t fnv64(uint64_t h, const void *p, size_t n) {
+    if (!h) h = 14695981039346656037ULL;
+    for (const unsigned char *b = p; n--; b++) h = (h ^ *b) * 1099511628211ULL;
+    return h;
+}
+
+/* A file's text and its lines' changes, each change by where its record is. */
+static uint64_t same_of(const AnSnapshot *s, const AnNode *d) {
+    uint64_t h = fnv64(0, d->src ? d->src : "", d->src ? d->srclen + 1 : 1);
+    for (int k = 0; k < d->nblame; k++) {
+        int o = d->blame[k].origin;
+        const AnChange *c = o >= 0 && o < s->nchanges ? &s->changes[o] : NULL;
+        h = fnv64(h, &d->blame[k].n, sizeof d->blame[k].n);
+        h = fnv64(h, c && c->src ? c->src : "", c && c->src ? strlen(c->src) + 1 : 1);
+        h = fnv64(h, c ? &c->src_off : &(long){-1}, sizeof(long));
+        h = fnv64(h, c && c->tool_id ? c->tool_id : "", c && c->tool_id ? strlen(c->tool_id) + 1 : 1);
+    }
+    return h;
+}
 
 /* A turn's identity across builds and sessions: what analysis.c keys prompts by,
  * its bytes that aren't UTF-8 as U+FFFD, as replies carry it (and clients send it back). */
@@ -131,10 +160,13 @@ static void *derive(const AnSnapshot *s) {
             x->path = xrealloc(x->path, sizeof *x->path * (size_t)cap);
             x->node = xrealloc(x->node, sizeof *x->node * (size_t)cap);
             x->sig = xrealloc(x->sig, sizeof *x->sig * (size_t)cap);
+            x->same = xrealloc(x->same, sizeof *x->same * (size_t)cap);
+            x->since = xrealloc(x->since, sizeof *x->since * (size_t)cap);
         }
         strmap_put(&x->ix, p, x->n);
         x->path[x->n] = p;
         x->node[x->n] = i;
+        x->same[x->n] = same_of(s, d), x->since[x->n] = 0;
         x->sig[x->n++] = resolve(s, x->key, d);
     }
     strv_free(dir, s->nnodes);
@@ -146,7 +178,7 @@ static void drop(void *p) {
     strmap_free(&x->ix);
     strv_free(x->path, x->n);
     strv_free(x->sig, x->n);
-    free(x->node);
+    free(x->node), free(x->same), free(x->since);
     strv_free(x->key, x->nkey);
     free(x);
 }
@@ -388,6 +420,100 @@ static void focus(const Srv *v, FILE *f, const char *req, const char *file, int 
     fprintf(f, ",\"line\":%d}", sh.line);
 }
 
+/* ,"key":s as a JSON string cut to cap bytes at a character boundary, then ,"key_truncated":bool
+ * (also true when cut before: *s is only a start). */
+static void j_capped(FILE *f, const char *key, const char *s, size_t cap, bool cut) {
+    size_t n = strlen(s);
+    if (n > cap)
+        for (n = cap; n && UTF8_CONT(s[n]); n--) {}
+    fprintf(f, ",\"%s\":", key);
+    json_strn(f, s, n);
+    fprintf(f, ",\"%s_truncated\":%s", key, cut || n < strlen(s) ? "true" : "false");
+}
+
+/* One line of a file's blame in full (line: 1-based in the text of build rev, which may be an older
+ * one when the file's text and changes are the same since): the change that wrote it, its turn's
+ * whole prompt, the agent's comment, the change's own patch of this file. Every read is bounded. */
+static void detail(const Srv *v, FILE *f, const char *file, int line, long rev) {
+    const AnSnapshot *s = eng_snap(v->eng);
+    const Index *x = eng_part(v->eng, ENG_SERVE);
+    if (!s) {
+        fputs(",\"status\":\"building\"", f);
+        return;
+    }
+    int i = file ? find_file(v, x, file) : -1, cid = -1;
+    if (i < 0 ? rev != eng_rev(v->eng) : rev < x->since[i] || rev > eng_rev(v->eng)) {
+        fputs(",\"status\":\"stale\"", f); /* the line numbers are another text's: blame again */
+        return;
+    }
+    const AnNode *d = i >= 0 ? &s->nodes[x->node[i]] : NULL;
+    for (int k = 0, at = 1; d && line >= 1 && k < d->nblame; at += d->blame[k++].n)
+        if (line < at + d->blame[k].n) {
+            cid = d->blame[k].origin;
+            break;
+        }
+    if (cid < 0 || cid >= s->nchanges) {
+        fputs(",\"status\":\"none\"", f);
+        return;
+    }
+    const AnChange *c = &s->changes[cid];
+    const AnTurn *t = c->turn >= 0 ? &s->turns[c->turn] : NULL;
+    fprintf(f, ",\"status\":\"ok\",\"cid\":%d,\"turn_key\":", cid);
+    if (t) json_str(f, x->key[c->turn]);
+    else fputs("null", f);
+    fputs(",\"tool\":", f);
+    json_str(f, c->tool ? c->tool : "");
+    fputs(",\"agent\":", f);
+    j_agent(f, s, c->actor);
+    fprintf(f, ",\"ts\":%lld", c->epoch);
+    bool cut = false; /* the record gone, or another prompt there now: its first line at least */
+    char *prompt = t ? tr_prompt(t->src, t->src_off, t->title, PROMPT_READ, &cut) : NULL;
+    if (t) j_capped(f, "prompt", prompt ? prompt : t->title, TEXT_CAP, prompt && cut);
+    else fputs(",\"prompt\":null,\"prompt_truncated\":false", f);
+    free(prompt);
+    int note = c->comment >= 0 ? c->comment : -1 - c->comment; /* none of its own: the turn's latest text */
+    const char *comment = note < s->ncomments ? s->comments[note] : NULL;
+    if (comment && *comment) j_capped(f, "comment", comment, TEXT_CAP, false);
+    else fputs(",\"comment\":null,\"comment_truncated\":false", f);
+    fputs(",\"hunks\":[", f);
+    Change *ch = tr_change_within(c->src, c->src_off, c->tool_id, v->root, c->path, DETAIL_SCAN);
+    Hunk made = {0}; /* a file created whole: one hunk of it, its lines made up to the cap, the rest counted */
+    int cap = 0, total = 0;
+    if (!ch->nhunks && ch->created) {
+        made.new_start = 1;
+        for (const char *p = ch->created; *p; made.new_lines++) {
+            const char *nl = strchr(p, '\n');
+            size_t len = nl ? (size_t)(nl - p) : strlen(p);
+            if (made.n <= HUNK_CAP) {
+                char *l = xmalloc(len + 2);
+                l[0] = '+';
+                memcpy(l + 1, p, len);
+                l[len + 1] = 0;
+                PUSH(made.lines, made.n, cap, l);
+            }
+            p += len + (nl != NULL);
+        }
+        total = made.new_lines;
+    }
+    const Hunk *h = made.new_lines ? &made : ch->hunks;
+    int nh = made.new_lines ? 1 : ch->nhunks, left = HUNK_CAP;
+    if (!made.new_lines)
+        for (int k = 0; k < nh; k++) total += h[k].n;
+    for (int k = 0; k < nh && left > 0; k++) { /* the hunk the cap falls in keeps its counts, not all its lines */
+        fprintf(f, "%s{\"old_start\":%d,\"old_lines\":%d,\"new_start\":%d,\"new_lines\":%d,\"lines\":[", k ? "," : "",
+                h[k].old_start, h[k].old_lines, h[k].new_start, h[k].new_lines);
+        for (int j = 0; j < h[k].n && left > 0; j++, left--) {
+            if (j) fputc(',', f);
+            json_str(f, h[k].lines[j]);
+        }
+        fputs("]}", f);
+    }
+    fprintf(f, "],\"truncated\":%s", total > HUNK_CAP ? "true" : "false");
+    for (int j = 0; j < made.n; j++) free(made.lines[j]);
+    free(made.lines);
+    change_free(ch);
+}
+
 static void handle(Srv *v, Client *c, const char *line, size_t n) {
     yyjson_doc *doc = yyjson_read(line, n, YYJSON_READ_ALLOW_INVALID_UNICODE);
     yyjson_val *r = yyjson_doc_get_root(doc);
@@ -410,6 +536,10 @@ static void handle(Srv *v, Client *c, const char *line, size_t n) {
         fputs(",\"status\":\"ok\"", f);
     } else if (!strcmp(cmd, "turn_lines")) {
         turn_lines(v, f, yyjson_get_str(yyjson_obj_get(r, "turn_key")));
+    } else if (!strcmp(cmd, "detail")) {
+        yyjson_val *rv = yyjson_obj_get(r, "rev");
+        detail(v, f, yyjson_get_str(yyjson_obj_get(r, "file")), (int)yyjson_get_int(yyjson_obj_get(r, "line")),
+               yyjson_is_int(rv) ? (long)yyjson_get_int(rv) : -1);
     } else if (!strcmp(cmd, "focus")) {
         focus(v, f, yyjson_get_str(yyjson_obj_get(r, "turn_key")), yyjson_get_str(yyjson_obj_get(r, "file")),
               (int)yyjson_get_int(yyjson_obj_get(r, "line")));
@@ -615,7 +745,15 @@ void srv_poll(Srv *v, int ms) {
     v->nc = kept;
 }
 
-void srv_swapped(Srv *v, const void *old) { push_changed(v, old, eng_part(v->eng, ENG_SERVE)); }
+void srv_swapped(Srv *v, const void *old) {
+    Index *nw = eng_part(v->eng, ENG_SERVE);
+    const Index *o = old;
+    for (int i = 0; i < nw->n; i++) { /* since when each file reads the same */
+        int k = o ? strmap_get(&o->ix, nw->path[i]) : -1;
+        nw->since[i] = k >= 0 && o->same[k] == nw->same[i] ? o->since[k] : eng_rev(v->eng);
+    }
+    push_changed(v, o, nw);
+}
 
 void srv_release(Srv *v) {
     if (v->lfd >= 0) close(v->lfd); /* first: the next host can bind while the clients hear it */

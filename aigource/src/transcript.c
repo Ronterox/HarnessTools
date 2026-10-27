@@ -209,7 +209,7 @@ static Event mk(Transcript *t, EvKind kind, double ts, char *path, char *text, i
                    .src = t->ev_id ? t->src : NULL, .src_off = t->ev_off,
                    .tool_id = dup_or_null(t->ev_id),
                    .note_off = t->ev_id ? t->ev_note_off : 0, .notes = t->ev_id ? t->ev_notes : 0,
-                   .via = t->ev_via};
+                   .from = t->src, .from_off = t->line_off, .via = t->ev_via};
 }
 
 static void emit(Transcript *t, EvKind kind, double ts, char *path, char *text,
@@ -1056,9 +1056,10 @@ typedef struct {
     bool gave_up; /* no result within SCAN_MAX */
 } Call;
 
-/* The call with tool_use `id` on the line at byte `off` of `src`: 0 found, -1 no
- * such file or line, -2 the line holds no such call. */
-static int call_read(const char *src, long off, const char *id, Call *c) {
+/* The call with tool_use `id` on the line at byte `off` of `src`, its result
+ * looked for in the next `scan` bytes: 0 found, -1 no such file or line, -2
+ * the line holds no such call. */
+static int call_read(const char *src, long off, const char *id, long scan, Call *c) {
     *c = (Call){0};
     FILE *f = src && id ? fopen(src, "r") : NULL;
     if (!f || fseeko(f, off, SEEK_SET)) {
@@ -1080,7 +1081,7 @@ static int call_read(const char *src, long off, const char *id, Call *c) {
     yyjson_doc *res_doc = NULL;
     yyjson_val *block = NULL, *res = NULL;
     long scanned = 0;
-    while (!block && scanned < SCAN_MAX && (line = read_line(f, &len))) {
+    while (!block && scanned < scan && (line = read_line(f, &len))) {
         scanned += (long)len + 1;
         if (strstr(line, id) && strstr(line, "\"tool_result\"")) {
             res_doc = parse_line(line, len);
@@ -1100,7 +1101,7 @@ static int call_read(const char *src, long off, const char *id, Call *c) {
     c->res_doc = res_doc;
     c->block = block;
     c->res = res;
-    c->gave_up = !block && scanned >= SCAN_MAX;
+    c->gave_up = !block && scanned >= scan;
     return 0;
 }
 
@@ -1113,7 +1114,7 @@ Detail *tr_detail(const char *src, long off, const char *id, const char *path) {
     Detail *d = xcalloc(1, sizeof *d);
     d->state = -1;
     Call c;
-    int rc = call_read(src, off, id, &c);
+    int rc = call_read(src, off, id, SCAN_MAX, &c);
     if (rc) {
         d->tool = xstrdup("?");
         dl_fmt(d, DL_DIM, rc == -1 ? "no record of this step" : "the transcript changed: record not found");
@@ -1153,9 +1154,13 @@ static void change_hunks(Change *ch, yyjson_val *hunks) {
 static char *jdup(yyjson_val *v) { return yyjson_is_str(v) ? xstrndup(yyjson_get_str(v), yyjson_get_len(v)) : NULL; }
 
 Change *tr_change(const char *src, long off, const char *id, const char *root, const char *path) {
+    return tr_change_within(src, off, id, root, path, SCAN_MAX);
+}
+
+Change *tr_change_within(const char *src, long off, const char *id, const char *root, const char *path, long scan) {
     Change *ch = xcalloc(1, sizeof *ch);
     Call c;
-    if (call_read(src, off, id, &c)) {
+    if (call_read(src, off, id, scan, &c)) {
         ch->state = -1;
         return ch;
     }
@@ -1195,6 +1200,76 @@ Change *tr_change(const char *src, long off, const char *id, const char *root, c
     }
     call_free(&c);
     return ch;
+}
+
+/* The text of a JSON string starting at s (after its opening quote), up to
+ * its closing quote or the end of the buffer (a line cut short): escapes
+ * decoded, a lone surrogate as U+FFFD. */
+static char *json_prefix(const char *s, const char *end) {
+    Buf b = {0};
+    while (s < end && *s != '"') {
+        if (*s != '\\') {
+            buf_put(&b, s++, 1);
+            continue;
+        }
+        if (end - s < 2) break;
+        char e = s[1], c = e == 'n' ? '\n' : e == 't' ? '\t' : e == 'r' ? '\r' : e == 'b' ? '\b' : e == 'f' ? '\f' : e;
+        if (e != 'u') {
+            buf_put(&b, &c, 1), s += 2;
+            continue;
+        }
+        unsigned u, w;
+        if (end - s < 6 || !hex4(s + 2, &u)) break;
+        s += 6;
+        if (u >= 0xD800 && u <= 0xDBFF && end - s >= 6 && s[0] == '\\' && s[1] == 'u' && hex4(s + 2, &w) &&
+            w >= 0xDC00 && w <= 0xDFFF)
+            u = 0x10000 + ((u - 0xD800) << 10) + (w - 0xDC00), s += 6;
+        else if (u >= 0xD800 && u <= 0xDFFF) u = 0xFFFD;
+        char o[4];
+        int n = u < 0x80 ? (o[0] = (char)u, 1)
+              : u < 0x800 ? (o[0] = (char)(0xC0 | u >> 6), o[1] = (char)(0x80 | (u & 63)), 2)
+              : u < 0x10000 ? (o[0] = (char)(0xE0 | u >> 12), o[1] = (char)(0x80 | (u >> 6 & 63)), o[2] = (char)(0x80 | (u & 63)), 3)
+                            : (o[0] = (char)(0xF0 | u >> 18), o[1] = (char)(0x80 | (u >> 12 & 63)), o[2] = (char)(0x80 | (u >> 6 & 63)),
+                               o[3] = (char)(0x80 | (u & 63)), 4);
+        buf_put(&b, o, (size_t)n);
+    }
+    return b.s ? b.s : xstrdup("");
+}
+
+char *tr_prompt(const char *src, long off, const char *title, size_t max, bool *cut) {
+    *cut = false;
+    FILE *f = src && title ? fopen(src, "r") : NULL;
+    if (!f || fseeko(f, off, SEEK_SET)) {
+        if (f) fclose(f);
+        return NULL;
+    }
+    char *line = xmalloc(max + 1);
+    size_t len = fread(line, 1, max, f);
+    fclose(f);
+    line[len] = 0;
+    char *nl = memchr(line, '\n', len), *text = NULL;
+    if (nl) { /* the whole record */
+        yyjson_doc *doc = parse_line(line, (size_t)(nl - line));
+        yyjson_val *rec = doc ? yyjson_doc_get_root(doc) : NULL;
+        if (jis(rec, "type", "user")) text = dup_or_null(user_text(content_of(rec)));
+        yyjson_doc_free(doc);
+    } else if (len) { /* longer than max: the prompt's start, from its JSON (a string, or the first text block) */
+        *cut = true;
+        const char *k = strstr(line, "\"content\":\""), *a = k ? NULL : strstr(line, "\"content\":[");
+        const char *t = a ? strstr(a, "\"text\":\"") : NULL;
+        if (k) text = json_prefix(k + 11, line + len);
+        else if (t) text = json_prefix(t + 8, line + len);
+    }
+    free(line);
+    if (!text) return NULL;
+    /* as prompt_text reads it: leading spaces and newlines, a paste's tag; then its title must be this turn's */
+    const char *s = text;
+    while (*s == ' ' || *s == '\n') s++;
+    if (!strncmp(s, "<pasted_content", 15) && strchr(s, '>')) s = strchr(s, '>') + 1;
+    char *t = prompt_line(s), *out = !strcmp(t, title) ? xstrdup(s) : NULL;
+    free(t);
+    free(text);
+    return out;
 }
 
 void change_free(Change *ch) {

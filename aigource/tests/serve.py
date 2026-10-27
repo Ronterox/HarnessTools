@@ -313,6 +313,45 @@ def run(tmp):
     r = c.req("turn_lines", turn_key="0\x1fno such turn")
     check("turn_lines of no turn: empty", r["status"] == "ok" and r["files"] == [], r)
 
+    # detail: one line's change in full, at the blame's rev
+    rev = drev = c.req("blame", file="src/app.py")["rev"]
+    with open(os.path.join(cfg, "projects", slug(repo), "st1.jsonl")) as f:
+        prompts = [json.loads(l)["message"]["content"] for l in f if '"origin"' in l]
+    for path, runs in sorted(want.items()):
+        at = 1
+        for n, o in runs:
+            if o >= 0:
+                break
+            at += n
+        if o < 0:
+            continue
+        ch = dump["changes"][o]
+        r = c.req("detail", file=path, line=at, rev=rev)
+        t = dump["turns"][ch[0]] if ch[0] >= 0 else None
+        note = ch[1] if ch[1] >= 0 else -1 - ch[1]
+        check("detail %s:%d: its change" % (path, at), r["status"] == "ok" and r["cid"] == o and r["tool"] == ch[2] and
+              r["ts"] == ch[7] and r["turn_key"] == (keys[ch[0]] if t else None), r)
+        full = [p for p in prompts if isinstance(p, str) and p.startswith(t["title"])] if t else []
+        check("detail %s:%d: the turn's whole prompt" % (path, at), t and r["prompt"] in full + [t["title"]] and
+              (not full or r["prompt"] == full[0]), (r.get("prompt"), full))
+        check("detail %s:%d: the comment" % (path, at), r["comment"] == (dump["comments"][note] or None) and
+              r["prompt_truncated"] is False and r["comment_truncated"] is False, r["comment"])
+        lines = [l for h in r["hunks"] for l in h["lines"]]
+        check("detail %s:%d: its patch" % (path, at), r["hunks"] and r["truncated"] is False and
+              all(l[:1] in "+- " for l in lines) and all({"old_start", "old_lines", "new_start", "new_lines"} <= set(h)
+                                                         for h in r["hunks"]), r["hunks"])
+    unknown = next((p, sum(n for n, _ in runs[:k]) + 1) for p, runs in sorted(want.items())
+                   for k, (n, o) in enumerate(runs) if o < 0)
+    r = c.req("detail", file=unknown[0], line=unknown[1], rev=rev)
+    check("detail of an unknown line: none", r["status"] == "none", r)
+    for f, l in (("img.bin", 1), ("nope.txt", 1), ("src/app.py", 0), ("src/app.py", 10 ** 6)):
+        r = c.req("detail", file=f, line=l, rev=rev)
+        check("detail %s:%d: none" % (f, l), r["status"] == "none", r)
+    r = c.req("detail", file="src/app.py", line=1, rev=rev + 1)
+    check("detail at another rev: stale", r["status"] == "stale" and r["rev"] == rev, r)
+    r = c.req("detail", file="src/app.py", line=1)
+    check("detail with no rev: stale", r["status"] == "stale", r)
+
     # saved: an edit on disk (an AI line gone), a rebuild, the push, the new blame.
     c2 = Client(ns, repo)
     check("subscribe", c2.req("subscribe")["status"] == "ok")
@@ -346,6 +385,13 @@ def run(tmp):
     time.sleep(2.5)
     r = c.req("blame", file="README.md")
     check("saved, nothing changed: rebuilt, no push", r["rev"] > rev2 and c2.push("changed", timeout=0.3) is None, r)
+    # detail at an older rev: answered while the file reads the same since, stale once it changed
+    other = next(p for p, runs in sorted(want.items()) if p != path and any(o >= 0 for _, o in runs))
+    oline = 1 + sum(n for n, o in want[other][:next(k for k, (n, o) in enumerate(want[other]) if o >= 0)])
+    r = c.req("detail", file=other, line=oline, rev=drev)
+    check("detail at an older rev of a file unchanged since: answered", r["status"] == "ok" and r["rev"] > drev, r)
+    r = c.req("detail", file=path, line=1, rev=drev)
+    check("detail at an older rev of a file changed since: stale", r["status"] == "stale", r)
     # saved, then the client shuts its side: the request still counts, its reply comes, then EOF
     rev3 = r["rev"]
     h = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -407,6 +453,55 @@ def run(tmp):
     check("quit: exits 0", gone(p, 5) and p.returncode == 0, p.returncode)
     c.close()
     shutil.rmtree(fifo_dir)
+
+    # detail's caps: a 10 KB prompt, a 9 KB comment, a 500-line file written whole.
+    big = os.path.realpath(os.path.join(tmp, "big"))
+    os.makedirs(big)
+    body = "".join("line %d \u00e9\n" % i for i in range(500))
+    with open(os.path.join(big, "big.py"), "w") as f:
+        f.write(body)
+    # pasted (its tag isn't the prompt's), 100 KB: past the 64 KB read, so from the record's start
+    prompt = '<pasted_content index="1">Write big.py\n' + "\u00e9" * 50000
+    said = "Writing it. " + "\u00e9" * 4600
+    recs = [
+        {"type": "user", "timestamp": "2026-10-14T12:00:00.000Z", "cwd": big, "origin": {"kind": "human"},
+         "message": {"role": "user", "content": prompt}},
+        {"type": "assistant", "timestamp": "2026-10-14T12:00:05.000Z", "cwd": big, "message": {
+            "role": "assistant", "id": "b1", "content": [{"type": "text", "text": said}, {
+                "type": "tool_use", "id": "wb", "name": "Write",
+                "input": {"file_path": big + "/big.py", "content": body}}]}},
+        {"type": "user", "timestamp": "2026-10-14T12:00:06.000Z", "cwd": big, "message": {"role": "user", "content": [
+            {"type": "tool_result", "tool_use_id": "wb", "is_error": False, "content": "ok"}]},
+         "toolUseResult": {"type": "create", "filePath": big + "/big.py", "content": body, "structuredPatch": []}},
+    ]
+    bproj = os.path.join(cfg, "projects", slug(big))
+    os.makedirs(bproj)
+    with open(os.path.join(bproj, "b1.jsonl"), "w") as f:
+        f.write("".join(json.dumps(x, separators=(",", ":")) + "\n" for x in recs))
+    ns = tag + "e"
+    p = spawn(big, env, ns, idle=30)
+    c = Client(ns, big)
+    b = wait_ok(c, "big.py")
+    r = c.req("detail", file="big.py", line=1, rev=b["rev"])
+    nlines = sum(len(h["lines"]) for h in r.get("hunks", []))
+    whole = prompt.split(">", 1)[1]
+    check("detail caps: the prompt to 8 KB at a character, the comment as the snapshot keeps it", r["status"] == "ok" and
+          len(r["prompt"].encode()) <= 8192 and whole.startswith(r["prompt"]) and len(r["prompt"]) > 4000 and
+          r["prompt_truncated"] is True and r["comment_truncated"] is False and
+          len(r["comment"].encode()) <= 8192 and r["comment"].startswith("Writing it."),  # as the snapshot keeps it (900 characters)
+          (len(r.get("prompt", "")), r.get("comment", "")[:40]))
+    check("detail caps: 400 patch lines, truncated", nlines == 400 and r["truncated"] is True and
+          r["hunks"][0]["new_lines"] == 500 and r["hunks"][0]["lines"][0] == "+line 0 \u00e9", (nlines, r.get("truncated")))
+    # the transcript rewritten before the next build: another prompt where this one was, so its title instead
+    recs[0]["message"]["content"] = "Another prompt entirely"
+    with open(os.path.join(bproj, "b1.jsonl"), "w") as f:
+        f.write("".join(json.dumps(x, separators=(",", ":")) + "\n" for x in recs))
+    r = c.req("detail", file="big.py", line=1, rev=b["rev"])
+    check("detail after a rewrite: the turn's title, not the prompt now there", r["status"] == "ok" and
+          r["prompt"] == "Write big.py" and r["prompt_truncated"] is False, r.get("prompt"))
+    c.s.sendall(b'{"cmd":"quit"}\n')
+    check("that server quits", gone(p, 5) and p.returncode == 0, p.returncode)
+    c.close()
 
     # A root with no sessions: up, every line unknown.
     bare = os.path.realpath(os.path.join(tmp, "bare"))

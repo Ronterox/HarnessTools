@@ -19,7 +19,8 @@
  * files on disk and git: it may run on a worker thread while more events are
  * added (an_add and an_build take turns on a lock), but an_free must not run
  * during a build, and builds of one Analysis run one at a time. Its snapshot
- * is immutable and owned by the caller. A build reuses what the ones before
+ * is immutable and owned by the caller (a few of its strings, the records'
+ * places, are the Analysis': read them only while it lives). A build reuses what the ones before
  * it computed (caches the Analysis keeps), so a rebuild costs what changed;
  * the result is the same as a fresh Analysis'.
  * AIG_NO_DEFS in the environment (read by an_new) turns functions off;
@@ -65,6 +66,8 @@ typedef struct {
     long long tok[3];   /* output, new input, cached input of its responses (has_tok) */
     int actor;          /* the session it ran in */
     long secs;          /* prompt to last response, gaps capped at 5 min */
+    const char *src;    /* its prompt's record: the transcript (NULL unknown) and the line's offset, for */
+    long src_off;       /* tr_prompt; borrowed from the Analysis (valid while it lives); not in the JSON */
 } AnTurn;
 
 typedef struct { int path, n; } AnRead;                /* a path (index) read n times */
@@ -81,6 +84,10 @@ typedef struct {
     int actor;
     long long tok[3];   /* its agent's responses since its previous change in the turn */
     long secs;
+    /* its record, as tr_change reads it (the call's line, its id, the file):
+     * borrowed from the Analysis (valid while it lives); not in the JSON */
+    const char *src, *tool_id, *path;
+    long src_off;
 } AnChange;
 
 typedef struct {

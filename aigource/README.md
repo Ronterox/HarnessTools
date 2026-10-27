@@ -383,6 +383,7 @@ build; docs/STRUCTURE.md §1). `{"status":"building"}` before the first build; `
 | `{"cmd":"subscribe"}` | `{"status":"ok"}`; then after each build whose resolved blame (the turn key of each line) changed for some files, a push `{"event":"changed","files":[…],"rev":N}` naming them (every file after the first build; files gone from the tree too) |
 | `{"cmd":"saved","file":F}` | `{"status":"ok"}`; the file changed on disk (a save, a checkout): builds read today's files, so it counts as an event toward the next rebuild |
 | `{"cmd":"turn_lines","turn_key":K}` | `{"status":"ok","files":[{"file","runs"},…]}`: every file holding lines of that turn, its runs with other turns' lines as -1; `building` before the first build |
+| `{"cmd":"detail","file":F,"line":N,"rev":R}` | line N (1-based in the `text` of build R's blame of F) in full: `{"status":"ok","cid","turn_key","tool","agent","ts","prompt","prompt_truncated","comment","comment_truncated","hunks":[{"old_start","old_lines","new_start","new_lines","lines":["+…","-…"," …"]}],"truncated"}`. `prompt` is the turn's whole prompt as recorded, re-read from its transcript (a paste's `<pasted_content…>` tag dropped; 64 KB of the record read at most; the turn's first line when the record is gone or another prompt is there now, the file rewritten), `comment` the agent's text the structure view shows for the change (null when none), both cut to 8 KB at a character, `*_truncated` true when cut; `hunks` the change's own patch of F (a file it created: one hunk of all of it; its result looked for 4 MB past the call at most), 400 lines at most in all, `truncated` true when cut. R may be an older build while F's text and each line's change have stayed the same since (any build since then answers); else `{"status":"stale"}` (blame again). `{"status":"none"}` for a line no known change wrote or a file outside the tree, `building` before the first build. Each read is bounded: on this repo (82 MB transcripts) a detail takes 0.3 ms typically, 2 ms at most |
 | `{"cmd":"focus","turn_key":K,"file":F,"line":L}` | headless: `{"status":"ok","host":"headless"}`. A GUI host opens the structure screen on F (its folder in view, its code inspected, line L lit) with turn K selected, the context screen giving way, and answers `{"status":"ok","host":"gui","turn_key":K,"file":F}` once it shows them; an unknown turn key or file is `{"status":"error"}` and nothing changes |
 | `{"cmd":"quit"}` | no reply: `{"event":"handover","rev":N}` to every client, then it closes and exits 0 |
 
@@ -485,7 +486,8 @@ transcript appended), and the window layout (settled apart, pinned windows
 kept, newest nearest); with `AIG_TEST_DISPLAY`, a `--shot` of the fixture's main
 agent with an action selected (plain and asan).
 `tests/serve.py` (part of `make test`, plain and leak-checked) runs `--serve`
-end to end on the structure fixture: every request above, blame runs against
+end to end on the structure fixture: every request above (`detail`'s caps on a
+session of its own), blame runs against
 `--structure-dump`'s and text against the file, two servers started at once
 (one serves), `building` before the first build, `saved` after an edit (the
 `changed` push, the new blame), quit's handover, a root with no transcripts,

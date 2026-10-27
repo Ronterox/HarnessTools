@@ -768,6 +768,8 @@ void an_add(Analysis *a, const Event *evs, size_t n) {
             v.text = dup_or_null(e->text);
         }
         v.tool_id = dup_or_null(e->tool_id);
+        if ((kind == EV_TURN || kind == EV_TURN_COPY) && e->from) /* where the whole prompt is */
+            v.src = intern(a, e->from), v.src_off = e->from_off;
         if (kind == EV_READ) v.first = e->range.first, v.last = e->range.last;
         if (kind == EV_USAGE) v.tok[0] = e->tok.out, v.tok[1] = e->tok.in, v.tok[2] = e->tok.cached;
         if (kind == EV_TURN || kind == EV_TURN_COPY) v.prompt = e->prompt;
@@ -809,6 +811,8 @@ typedef struct {
     double ts;
     char *title;
     int key;
+    int src;    /* its record: transcript (name index, -1 unknown), line offset */
+    long off;
 } Prompt;
 
 typedef struct { /* what an agent gathered toward its next change */
@@ -1013,7 +1017,8 @@ static int turn_of(B *b, int session, double ts, bool make) {
     AnSnapshot *s = b->s;
     const Prompt *p = &b->nm[session].pr[i];
     const char *nxt = i + 1 < b->nm[session].npr ? b->nm[session].pr[i + 1].title : NULL;
-    AnTurn t = {.title = xstrdup(p->title), .ts = p->ts, .actor = session,
+    AnTurn t = {.title = xstrdup(p->title), .ts = p->ts, .actor = session, .src_off = p->off,
+                .src = p->src >= 0 ? b->name[p->src] : NULL,
                 .corr = an_corr_prompt(nxt) ? xstrdup(nxt) : NULL, .fix = an_fix_prompt(p->title)};
     PUSH(s->turns, s->nturns, b->capturns, t);
     return b->turn_of_key[key] = s->nturns - 1;
@@ -1462,6 +1467,7 @@ static void replay_change(B *b, int ei) {
     int cid = s->nchanges;
     AnChange ch = {.turn = t, .comment = comment_of(b, e), .actor = actor_out(b, e->actor), .verify = AN_UNTESTED};
     ch.tool = xstrdup(cmd ? "Bash" : chg->tool ? chg->tool : create ? "Write" : "Edit");
+    ch.src = b->name[e->src], ch.src_off = e->src_off, ch.tool_id = e->tool_id, ch.path = e->path; /* the Analysis' */
     ch.epoch = (long long)nearbyint(epoch(e->ts));
     s->stats.no_text_before += !cmd && !create && !chg->original;
     /* Context cost: what this agent read and searched in this turn before it. */
@@ -1878,7 +1884,7 @@ static void setup_prompts(B *b) {
         bool prompt = (e->kind == EV_TURN || e->kind == EV_TURN_COPY) && e->text &&
                       (e->prompt == PROMPT_HUMAN || e->prompt == PROMPT_PASTED);
         Name *n = &b->nm[e->actor];
-        if (prompt && !n->sub) PUSH(n->pr, n->npr, n->cappr, ((Prompt){e->ts, e->text, -1}));
+        if (prompt && !n->sub) PUSH(n->pr, n->npr, n->cappr, ((Prompt){e->ts, e->text, -1, e->src, e->src_off}));
         if (prompt || e->kind == EV_COMPACT) PUSH(n->resets, n->nresets, n->capresets, e->ts);
         if (e->tool_id && e->src >= 0 && e->notes > 0 && e->kind != EV_USAGE) {
             char k[600];

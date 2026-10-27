@@ -65,6 +65,11 @@ typedef struct {
      * blocks (0 = none), the first on the line at byte note_off of src. */
     long note_off;
     int notes;
+    /* The transcript and byte offset of the line it came from (TURN: the
+     * prompt's record), for what an event doesn't carry (the whole prompt);
+     * borrowed like src, not dumped; NULL for the watcher's. */
+    const char *from;
+    long from_off;
     int via;    /* where a file event comes from: VIA_* */
     int failed; /* BASH: the call failed with no recorded changes (set by the viewer) */
     union {     /* by kind; zero for the others */

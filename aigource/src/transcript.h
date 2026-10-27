@@ -78,6 +78,16 @@ typedef struct {
     int nhunks;
 } Change;
 Change *tr_change(const char *src, long off, const char *id, const char *root, const char *path);
+/* The same with its result looked for in the next `scan` bytes only (tr_change: 512 MB). */
+Change *tr_change_within(const char *src, long off, const char *id, const char *root, const char *path, long scan);
+/* A prompt re-read from its record (the user record on the line at `off` of
+ * `src`, AnTurn.src), reading `max` bytes of it at most (*cut: the record was
+ * longer, the text is its start): its text as recorded (the string, or the
+ * first text block) past leading spaces and newlines and a paste's
+ * <pasted_content…> tag, as prompt_text reads it. NULL when unreadable, or
+ * when its title (prompt_line) isn't `title`: the file rewritten since.
+ * Caller frees. */
+char *tr_prompt(const char *src, long off, const char *title, size_t max, bool *cut);
 void change_free(Change *ch);
 void notes_free(Notes *ns);
 Detail *detail_new(const char *tool);
