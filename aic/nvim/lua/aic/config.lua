@@ -7,6 +7,10 @@ local nvim_dir = vim.fn.fnamemodify(debug.getinfo(1, 'S').source:sub(2), ':p:h:h
 M.defaults = {
   -- path to the aic executable (default: <aic>/bin/aic next to the plugin dir)
   bin = vim.fn.fnamemodify(nvim_dir, ':h') .. '/bin/aic',
+  -- the aigource executable, for AI blame (`aigource --serve` per repo)
+  aigource = 'aigource',
+  -- AI blame skips buffers longer than this (lines)
+  blame_max_lines = 50000,
   -- prefix for the default keymaps
   prefix = '<leader>z',
   -- install default keymaps under `prefix`

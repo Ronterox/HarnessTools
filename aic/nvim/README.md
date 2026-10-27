@@ -18,13 +18,15 @@ lazy.nvim (local dir):
       -- keymaps = true,               -- install the default keys below
       -- winbar = true,               -- usage winbar on the aic views
       -- history_turns = 'closed',    -- history: turns start collapsed ('open': expanded)
+      -- aigource = 'aigource',       -- AI blame's engine (see AI blame)
+      -- blame_max_lines = 50000,     -- AI blame skips longer buffers
     })
   end,
 }
 ```
 
 `plugin/aic.lua` only defines commands and `<Plug>` mappings. `setup()`
-installs keymaps and the autocmds that place signs and record your code saves.
+installs keymaps and the autocmds that draw AI blame and record your code saves.
 It also activates aic in the background (one `aic status --json`, no prompts) when
 the cwd or an opened file is inside a project that has `.aic/`. Commands call
 `setup({})` themselves if you haven't.
@@ -49,7 +51,7 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
   in another project starts one there too). Every watcher it started is
   stopped on exit.
 - **Watching**: `vim.uv` fs_event on the session dir (falls back to 500 ms
-  polling), debounced 150 ms. Changes reload the trace, seen state, signs,
+  polling), debounced 150 ms. Changes reload the trace, seen state,
   statusline, questions, usage winbars, and (when a `diagnostics.<doc>.json` changes) that doc's diagnostics and the quickfix list.
 
 ## Keymaps (default prefix `<leader>z`)
@@ -69,13 +71,15 @@ the cwd or an opened file is inside a project that has `.aic/`. Commands call
 | `<prefix>?` | `:AicAsk`: ask about the thing under the cursor (any buffer) | `(aic-ask)` |
 | `<prefix>A` | `:AicAskTemplate [name]`: pick the compiler template that questions and ask-at-cursor use (`ask` = the default; see [Compiler templates](#compiler-templates)) | `(aic-ask-template)` |
 | `<prefix>w` | `:AicWhatIf` | `(aic-whatif)` |
-| `<prefix>b` | `:AicBlame`: trace event for the touched range under the cursor | `(aic-blame)` |
+| `<prefix>b` | `:AicBlame`: the AI turn and change that wrote the line (see [AI blame](#ai-blame)) | `(aic-blame)` |
 | `<prefix>a` | `:AicAttach`: pick the worker session (or auto) | `(aic-attach)` |
 | `<prefix>e` | `:AicDiagnostics`: load the last compile into the quickfix list (no window: `:copen`/`]q` are yours) | `(aic-diagnostics)` |
 | `<prefix>f` (n, x) | `:AicFix`: ask the compiler for edits to the current doc that fix its diagnostics, then pick them in a float (see [Fixes](#fixes)); with a range, only the items about those lines. `:AicFix!` shows the last proposal again | `(aic-fix)` |
 | `<prefix>u` | `:AicNextUnseen`: show the history and go to the next unseen node | `(aic-next-unseen)` |
 | `<prefix>U` | `:AicUsage`: context/cost per session, account quota, compact/reset (see [Usage](#usage)) | `(aic-usage)` |
-| `<prefix>]` / `<prefix>[` | `:AicNextTouched` / `:AicPrevTouched` | `(aic-next-touched)` / `(aic-prev-touched)` |
+| `<prefix>]` / `<prefix>[` | `:AicNextTouched` / `:AicPrevTouched`: next / previous AI run | `(aic-next-touched)` / `(aic-prev-touched)` |
+| `<prefix>o` | `:AicBlameShow`: the line's turn in aigource | `(aic-blame-show)` |
+| `<prefix>r` | `:AicBlameLines`: every range of the line's turn, in the quickfix list (no window) | `(aic-blame-lines)` |
 | `<prefix>g` | follow the anchor under the cursor, in any buffer (see [Anchors](#anchors)) | `(aic-follow)` |
 
 Other commands: `:Aic` (show the last aic view here), `:AicDoc [name]`, `:AicCompile`,
@@ -146,11 +150,8 @@ what you've typed. Anchors in your input are sent as-is (the backend resolves
 them); `gd`, highlighting and `<C-x><C-o>` work as in docs. Questions are
 about the current doc (`aic ask --doc`).
 
-**Code buffers** with touched ranges: `]w` / `[w` go to the next / previous
-touched range. Signs: `▎` in `AicWorker` (worker) or `AicHuman` (you). Signs
-are drawn only within 200 lines of what each window shows (redrawn on
-scroll), and a `touched.json` change only re-applies buffers whose ranges
-changed, so big writes stay cheap.
+**Code buffers** with AI blame: `]w` / `[w` go to the next / previous AI run
+(see [AI blame](#ai-blame)).
 
 **Ask / what-if float**: `q`/`<Esc>` close. Action keys are uppercase so
 `y`, `p`, `f` and the other motions still work for copying from the float.
@@ -379,8 +380,94 @@ sections = { lualine_x = { function() return require('aic').status() end, 'filet
 
 All are defined with `default = true` links, so you can override them:
 `AicUnseen` `AicSeen` `AicTurn` `AicPrompt` `AicTime` `AicTitle` `AicWhy` `AicHunk`
-`AicWorker` `AicHuman` `AicSubmit` `AicHold` `AicCompact` `AicText` `AicError` `AicAnchor`
+`AicHuman` `AicSubmit` `AicHold` `AicCompact` `AicText` `AicError` `AicAnchor`
 `AicUsageOk` (Comment) `AicUsageWarn` (WarningMsg) `AicUsageHot` (ErrorMsg).
+`AicTurn1`…`AicTurn8` are colours (aigource's blame palette), also `default = true`.
+
+## AI blame
+
+Every line an AI wrote shows it, in any file of a git repo (`buftype` empty;
+a symlink counts as its target, in the target's repo) where Claude Code has
+transcripts, with or without an aic session: its **line number** takes the colour of the
+turn that wrote it (`number_hl_group` `AicTurn1`…`AicTurn8`, the turn's slot in
+aigource's palette, the same colour aigource's structure screen draws), and
+the cursor line's blame text says `◆ <prompt's first line> · <when the change
+was made>`. Lines no AI wrote (or that you changed since) keep gitsigns' git
+blame. gitsigns keeps the sign column.
+
+**Engine.** [aigource](../../aigource/README.md#serve) replays the repo's
+Claude Code transcripts. A root gets a server only when it has some, found as
+aigource finds them: `~/.claude/projects/<slug>` (or under
+`$CLAUDE_CONFIG_DIR`), the root with every character but `A-Za-z0-9` as `-`,
+or a `<slug>-…` dir holding a transcript whose `cwd` is below the root (those
+dirs are read off the main loop, and a rejected one again only once its
+mtime changes). A root
+without, or a dir in no repo, is asked again on `BufEnter` 30 s later at the
+earliest, so a first session or a `git init` shows up without a restart. The
+plugin connects, per repo root (git toplevel, real path), to `aigource --serve`'s socket in Linux's abstract namespace
+(`\0aigource/<sha1(root)[:16]>`, the prefix `$AIG_SOCK_NS` when set),
+through `vim.uv.pipe_connect2` (it passes the name's length, so the leading
+NUL works; `pipe_connect` refuses it). No server: it starts `aigource
+--serve -r <root>` (option `aigource`, default `aigource` on `PATH`) and asks
+again 50 ms … 1 s apart. A `handover` (an `aigource -a` GUI taking over) waits
+up to 30 s for the new host without starting one; a plain disconnect (the GUI
+exited) starts a server again. A missing binary gives one notice and turns AI
+blame off. The first open of a repo waits for aigource's replay (~10 s on a
+big history); meanwhile the server answers `building` and nothing is drawn.
+
+**Per buffer.** `blame` is asked on `BufReadPost` (and `BufWinEnter` for a
+buffer not seen yet): the file as the build read it (`text`), its runs, the
+changes and turns they name. Your unsaved edits shift the colours: every
+change (typing, undo, an RPC edit such as undograft's, a reload) maps the
+buffer against `text` with `vim.diff`, 150 ms after the last; lines you added
+or changed get none. A file without AI lines keeps no base and maps nothing; a
+buffer over `blame_max_lines` lines (default 50000) drops its colours, with
+one notice. `BufWritePost` and `FileChangedShellPost` send `saved`;
+a `changed` push from the server (after its next build) fetches the named
+loaded buffers again, replacing the base, and refreshes gitsigns' cursor-line
+blame. Colours are drawn within 200 lines of what each window shows.
+
+`]w`/`[w` are buffer-local (only with `keymaps = true`); the `<prefix>` keys
+are aic's global ones.
+
+| key (blamed buffers) | |
+|---|---|
+| `]w` / `[w`, `<prefix>]` / `<prefix>[` | next / previous AI run (lines of one turn in a row) |
+| `<prefix>b` | float from aigource's `detail` for the line: the full prompt, tool, agent, when the change and the prompt were made, the agent's comment and the change's diff (a stale rev fetches the blame again and asks once more; a host without `detail` gives what the blame has) |
+| `<prefix>o` | show the turn and file in aigource's structure screen (`focus`). With a headless server it starts `aigource -a -r <root> --structure icicle::<file>`, which takes the socket over once its replay is built; the plugin then sends the focus again, selecting the turn |
+| `<prefix>r` | the quickfix list: every range of the line's turn in every file (`turn_lines`; lines as the files were read at the build). No window opens |
+
+**gitsigns setup.** Turn the cursor-line blame on and let `aic.blame` format
+it; the functions fall back to gitsigns' default when aic isn't there:
+
+```lua
+local function blame_text(nc)
+  return function(username, info)
+    local ok, blame = pcall(require, 'aic.blame')
+    if ok then
+      return blame.format(username, info)
+    end
+    local key = nc and 'current_line_blame_formatter_nc' or 'current_line_blame_formatter'
+    local fmt = require('gitsigns.config').schema[key].default
+    return { { require('gitsigns.blame_formatter').expand_string(fmt, username, info, { self_author_text = 'You' }),
+      'GitSignsCurrentLineBlame' } }
+  end
+end
+require('gitsigns').setup({
+  current_line_blame = true,
+  current_line_blame_formatter = blame_text(false),
+  current_line_blame_formatter_nc = blame_text(true),
+})
+```
+
+`require('aic.blame').format(username, blame_info)` reads the current buffer
+at `blame_info.final_lnum`; a line no AI wrote gets gitsigns' default text
+through its own expander (`gitsigns.blame_formatter`, an internal module;
+` author, ago - summary ` if it moves). gitsigns draws no cursor-line blame in
+an untracked file, so there aic draws the same text itself (eol virtual text,
+cursor line, not in insert mode; checked again on `:w` and on gitsigns'
+`User GitSignsUpdate`, so a `git add` hands it back to gitsigns). Without gitsigns, the colours, keys and
+float still work.
 
 ## nvim-ufo
 
@@ -411,8 +498,9 @@ back from each view, `<C-o>` back to the trace line; views never take over the
 quickfix window; only aic's own floats are closed; view options never leak
 into a fresh buffer), trace rendering and folds (including `compact` events), `]u`, seen
 persistence, the watcher (one per root, all stopped on exit, no leaked
-timers), quickfix and diagnostics, signs and `]w` (bounded to the view, only
-changed buffers re-applied), human-edit hunks, the
+timers), quickfix and diagnostics, AI blame against a fake aigource
+(`tests/fake_aigource.py`: colours, `]w`, bounded to the view, a push
+refetches only the files it names), human-edit hunks, the
 statusline, hold/continue, submit (picker order, broken templates, input,
 preview header flag, `:w` sends the edited text with its receipt, leaving
 cancels, render errors, `:AicPrompts` copy/new), docs (new doc with/without the compile
@@ -424,3 +512,28 @@ winbars (plus null ctx window, null quota, gone with the view, back with it), th
 with one commit, for anchors: parsing of every form (and non-anchors, plus
 the shared fixture `../tests/anchor_cases.json`), `gd` on
 each kind, highlighting (visible lines only in a long chat), the omnifunc and `<prefix>g`.
+
+```sh
+nvim --headless -u NONE -l tests/blame.lua       # AI blame, fake aigource
+nvim --headless -u NONE -l tests/blame_e2e.lua   # AI blame, real aigource
+```
+
+`tests/blame.lua` runs `tests/fake_aigource.py` (aigource's protocol, answers
+from a spec file the test rewrites) under its own `AIG_SOCK_NS`, started by a
+stub `aigource` that records its arguments: colours on the right lines and
+slots, unsaved edits shifting them, the formatter (AI chunks, gitsigns'
+default, the plain fallback), untracked-buffer text (and `git add` handing it
+to gitsigns), a symlink into the repo, a file without AI lines (no base),
+`blame_max_lines`, `keymaps = false`, roots without transcripts (a sibling's
+`<slug>-…` dir doesn't count, a `<slug>-sub` one does, asked again after
+`M.recheck`), a dir that becomes a repo, `none` and `building`,
+`saved` on `:w` but not on a `noautocmd write` whose push then replaces the
+base, `]w`/`[w`, the `detail` float (full prompt, comment, diff; a stale rev
+refetched and asked again), `<prefix>r`'s quickfix list, two roots with two
+clients, `handover` (waits, no spawn, the new host asked again), EOF (spawned
+again), `<prefix>o` on a headless host (the GUI started, the focus sent again
+to it) and a missing binary. `tests/blame_e2e.lua` builds aigource's
+structure fixture (`tests/blame_fixture.py`, through
+`aigource/tests/serve.py`) and checks the colours against
+`--structure-dump`'s turns with the real `aigource --serve` that the plugin
+starts, then quits it.

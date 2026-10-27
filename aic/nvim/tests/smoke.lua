@@ -194,10 +194,35 @@ git('init', '-q')
 git('add', '-A')
 git('commit', '-qm', 'init')
 
+-- AI blame: a fake aigource (tests/fake_aigource.py) that the stub `aigource`
+-- starts when the plugin finds no server; src/app.js 3-5 and 10 are AI lines
+local fake_dir = vim.fn.resolve(vim.fn.tempname()) -- outside the repo
+vim.fn.mkdir(fake_dir, 'p')
+local aig_stub = fake_dir .. '/aigource'
+write(aig_stub, ('#!/bin/sh\necho "$*" >> "$AIG_FAKE_DIR/argv"\n[ "$1" = --serve ] && exec python3 %s "$@"\nexit 0\n')
+  :format(plugin_dir .. '/tests/fake_aigource.py'))
+vim.fn.setfperm(aig_stub, 'rwxr-xr-x')
+vim.env.AIG_SOCK_NS = 'aicsmoke' .. vim.uv.os_getpid()
+vim.env.AIG_FAKE_DIR = fake_dir
+vim.env.AIG_SERVE_IDLE = '3'
+vim.env.CLAUDE_CONFIG_DIR = fake_dir .. '/cfg' -- blame only where Claude Code has transcripts
+vim.fn.mkdir(fake_dir .. '/cfg/projects/' .. root:gsub('[^A-Za-z0-9]', '-'), 'p')
+local K1, K2 = '1700000000000000\31Add a greeting', '1700000100000000\31Fix line 10'
+local aig_turns = { [K1] = { slot = 2, prompt = 'Add a greeting', ts = now }, [K2] = { slot = 5, prompt = 'Fix line 10', ts = now } }
+local aig_changes = { ['0'] = { turn_key = K1, tool = 'Edit', agent = 'greeting', ts = now }, ['1'] = { turn_key = K2, tool = 'Edit', agent = 'greeting', ts = now } }
+local aig_spec = { [root] = { rev = 1, files = {
+  ['src/app.js'] = { text = table.concat(app, '\n') .. '\n', runs = { { 2, -1 }, { 3, 0 }, { 4, -1 }, { 1, 1 }, { 20, -1 } },
+    changes = aig_changes, turns = aig_turns },
+} } }
+local function put_aig_spec()
+  write(fake_dir .. '/spec.json', vim.json.encode(aig_spec))
+end
+put_aig_spec()
+
 ---------------------------------------------------------------------------
 vim.cmd.cd(root)
 local aic = require('aic')
-aic.setup({ bin = bin })
+aic.setup({ bin = bin, aigource = aig_stub })
 local state = require('aic.state')
 local trace = require('aic.trace')
 local view = require('aic.view')
@@ -330,14 +355,18 @@ do
   vim.api.nvim_set_current_buf(cbuf)
 end
 ok(vim.api.nvim_buf_get_name(cbuf) == root .. '/src/app.js' and vim.fn.line('.') == 3, 'cursor at hunk start')
-local signs = require('aic.signs')
-local marks = vim.api.nvim_buf_get_extmarks(cbuf, signs.ns, 0, -1, { details = true })
-ok(#marks == 4, 'signs placed on touched lines (' .. #marks .. ')')
-ok(marks[1] and marks[1][4].sign_text and marks[1][4].sign_text:find('▎', 1, true), 'sign text ▎')
+local blame = require('aic.blame')
+local marks
+ok(wait(5000, function()
+  marks = vim.api.nvim_buf_get_extmarks(cbuf, blame.ns, 0, -1, { details = true })
+  return #marks == 4
+end), 'AI blame: number highlights on the AI lines (' .. #marks .. ')')
+ok(marks[1] and marks[1][2] == 2 and marks[1][4].number_hl_group == 'AicTurn3' and marks[4][4].number_hl_group == 'AicTurn6',
+  'their turns\' colours')
 vim.api.nvim_win_set_cursor(0, { 1, 0 })
-ok(signs.jump(1) == 3, ']w -> 3')
-ok(signs.jump(1) == 10, ']w -> 10')
-ok(signs.jump(-1) == 3, '[w -> 3')
+ok(blame.jump(1) == 3, ']w -> 3')
+ok(blame.jump(1) == 10, ']w -> 10')
+ok(blame.jump(-1) == 3, '[w -> 3')
 
 -- gd on anchor
 vim.cmd.edit(vim.fn.fnameescape(spec_path))
@@ -1247,24 +1276,25 @@ do
 end
 
 ---------------------------------------------------------------------------
--- signs: bounded to the visible lines ±200, only changed buffers re-applied
+-- AI blame: drawn around the view (±200 lines), a push refetches only the
+-- files it names
 do
-  local signs = require('aic.signs')
+  local blame = require('aic.blame')
   local bl = {}
   for i = 1, 3000 do
     bl[i] = 'b' .. i
   end
   write(root .. '/src/big.js', table.concat(bl, '\n') .. '\n')
-  local function touched(app_end)
-    write(dir .. '/touched.json', vim.json.encode({
-      ['src/app.js'] = { { start = 3, ['end'] = app_end, event = 'e2', actor = 'worker' } },
-      ['src/big.js'] = { { start = 1, ['end'] = 3000, event = 'e2', actor = 'worker' } },
-    }))
+  local function app_runs(app_end)
+    aig_spec[root].rev = aig_spec[root].rev + 1
+    aig_spec[root].files['src/app.js'] = { text = read(root .. '/src/app.js'), runs = { { 2, -1 }, { app_end - 2, 0 }, { 10000, -1 } },
+      changes = { ['0'] = aig_changes['0'] }, turns = { [K1] = aig_turns[K1] } }
+    aig_spec[root].files['src/big.js'] = { text = read(root .. '/src/big.js'), runs = { { 3000, 0 } },
+      changes = { ['0'] = aig_changes['0'] }, turns = { [K1] = aig_turns[K1] },
+      detail = { ['2500'] = { turn_key = K1, tool = 'Edit', agent = 'greeting', ts = now, prompt = 'Add a greeting', hunks = {} } } }
+    put_aig_spec()
   end
-  touched(5)
-  ok(wait(3000, function()
-    return state.touched['src/big.js'] ~= nil
-  end), 'touched.json with a 3000-line range loaded')
+  app_runs(5)
   vim.cmd('silent! only')
   vim.cmd.edit(vim.fn.fnameescape(root .. '/src/big.js'))
   local bbuf = vim.api.nvim_get_current_buf()
@@ -1274,43 +1304,56 @@ do
   vim.api.nvim_set_current_win(bwin)
   local function rows(b)
     local r = {}
-    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(b, signs.ns, 0, -1, {})) do
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(b, blame.ns, 0, -1, {})) do
       r[#r + 1] = m[2]
     end
     return r
   end
   local function ids(b)
     local r = {}
-    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(b, signs.ns, 0, -1, {})) do
+    for _, m in ipairs(vim.api.nvim_buf_get_extmarks(b, blame.ns, 0, -1, {})) do
       r[#r + 1] = m[1]
     end
     return r
   end
+  -- app.js was already open: the push brings its new blame
+  local pid = tonumber(vim.split(read(fake_dir .. '/pids'), '\n')[1])
+  local function push(files)
+    local f = assert(io.open(fake_dir .. '/ctl.' .. pid, 'a'))
+    f:write(vim.json.encode({ push = files }) .. '\n')
+    f:close()
+  end
+  push({ 'src/app.js' })
   local h = vim.api.nvim_win_get_height(bwin)
-  local br = rows(bbuf)
-  ok(#br > 0 and #br <= h + 2 * signs.margin + 1 and br[1] == 0,
-    ('big range: signs only around the view (%d marks for 3000 lines)'):format(#br))
+  local br
+  ok(wait(3000, function()
+    br = rows(bbuf)
+    return #br > 0 and vim.deep_equal(rows(abuf), { 2, 3, 4 })
+  end), 'big file and app.js blamed')
+  ok(#br > 0 and #br <= h + 2 * blame.margin + 1 and br[1] == 0,
+    ('big run: colours only around the view (%d marks for 3000 lines)'):format(#br))
   vim.api.nvim_win_set_cursor(bwin, { 2500, 0 })
   vim.cmd('normal! zt')
   vim.api.nvim_exec_autocmds('WinScrolled', {})
   ok(wait(2000, function()
     local r = rows(bbuf)
     return vim.tbl_contains(r, 2499) and not vim.tbl_contains(r, 0)
-  end), 'signs follow the view after WinScrolled')
-  ok(signs.jump(1) == nil and signs.jump(-1) == 1, 'inside one big range: ]w finds none, [w goes to its start')
+  end), 'colours follow the view after WinScrolled')
+  ok(blame.jump(1) == nil and blame.jump(-1) == 1, 'inside one big run: ]w finds none, [w goes to its start')
   vim.api.nvim_win_set_cursor(bwin, { 2500, 0 })
-  signs.blame()
-  local fb = vim.api.nvim_get_current_buf()
-  ok(vim.api.nvim_buf_get_lines(fb, 0, 1, false)[1] == '# Edit src/app.js:3-5', 'blame on a line outside the drawn signs uses the range')
+  blame.detail()
+  ok(wait(3000, function()
+    return vim.api.nvim_win_get_config(0).relative ~= ''
+  end) and vim.api.nvim_buf_get_lines(0, 0, 1, false)[1] == '# Add a greeting', 'blame float on a line outside the drawn colours')
   vim.api.nvim_win_close(0, true)
   vim.api.nvim_set_current_win(bwin)
-  local before_big, before_app = ids(bbuf), rows(abuf)
-  ok(vim.deep_equal(before_app, { 2, 3, 4 }), 'app.js signs 3-5: ' .. vim.inspect(before_app))
-  touched(7)
+  local before_big = ids(bbuf)
+  app_runs(7)
+  push({ 'src/app.js' })
   ok(wait(3000, function()
     return vim.deep_equal(rows(abuf), { 2, 3, 4, 5, 6 })
-  end), 'changed file re-applied (app.js 3-7)')
-  ok(vim.deep_equal(ids(bbuf), before_big), 'unchanged file not re-applied (same extmark ids)')
+  end), 'a pushed file refetched (app.js 3-7)')
+  ok(vim.deep_equal(ids(bbuf), before_big), 'a file the push did not name is left alone (same extmark ids)')
 end
 
 ---------------------------------------------------------------------------
@@ -1915,8 +1958,8 @@ do
   end
   local steps = { 'Aic', 'AicHistory', 'AicQuestions', 'AicDoc', 'AicToggle', 'AicToggle', 'AicDiagnostics',
     'AicNextUnseen', 'AicPrevUnseen', 'AicAttach', 'AicUsage', 'AicBlame', 'AicLastAnswer', 'AicAsk', 'AicWhatIf',
-    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue', 'AicFix', 'AicFix!', 'AicAskTemplate' }
-  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p', 'f', 'A' }
+    'AicRefresh', 'AicCompile', 'AicHold', 'AicContinue', 'AicFix', 'AicFix!', 'AicAskTemplate', 'AicBlameShow', 'AicBlameLines' }
+  local keys = { 'z', 't', 'q', 'd', 'e', 'u', 'U', 'b', 'l', '?', 'w', 'h', 'c', 'g', ']', '[', 'a', 's', 'S', 'p', 'f', 'A', 'o', 'r' }
   for _, c in ipairs(steps) do
     pcall(vim.cmd, c)
     vim.wait(50)
@@ -2100,6 +2143,13 @@ do
   ok(next(backend.watch_jobs) == nil and wait(3000, function()
     return j1:is_closing() and j2:is_closing()
   end), 'VimLeavePre stops every watcher')
+end
+
+-- the fake aigource servers this test started
+for _, p in ipairs(vim.split(read(fake_dir .. '/pids') or '', '\n', { trimempty = true })) do
+  if (read('/proc/' .. p .. '/cmdline') or ''):find('fake_aigource.py', 1, true) then
+    vim.uv.kill(tonumber(p), 'sigterm')
+  end
 end
 
 io.stdout:write(('\n%d failure(s)\n'):format(failures))

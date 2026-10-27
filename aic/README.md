@@ -39,6 +39,11 @@ cd your-project
    `<leader>zh` holds the worker at its next tool call; `<leader>zc` continues.
 5. Read along in the trace (`]u` next unseen, `<CR>` show/hide a node's diff, `gf` jump to code, `W` what-if),
    ask about anything with `<leader>z?`, see who touched a line with `<leader>zb`.
+6. **AI blame**, in any git repo (aic session or not): line numbers take the
+   colour of the AI turn that wrote them, the cursor line's gitsigns blame
+   names the prompt, `]w`/`[w` jump between AI runs. It needs
+   [aigource](../aigource/README.md) on `PATH`; see
+   [nvim/README.md](nvim/README.md#ai-blame).
 
 ## Ways of working (all tested live)
 
@@ -155,6 +160,8 @@ aic hold | continue [MESSAGE]
 ```sh
 python3 -m unittest discover -s aic/tests          # backend
 cd aic/nvim && nvim --headless -u NONE -l tests/smoke.lua   # Neovim client
+cd aic/nvim && nvim --headless -u NONE -l tests/blame.lua   # AI blame (fake aigource)
+cd aic/nvim && nvim --headless -u NONE -l tests/blame_e2e.lua   # AI blame, real aigource
 ```
 
 ## Known limits

@@ -21,7 +21,6 @@ local highlights = {
   AicTitle = 'Function',
   AicWhy = 'Comment',
   AicHunk = 'Identifier',
-  AicWorker = 'DiagnosticInfo',
   AicHuman = 'DiagnosticHint',
   AicSubmit = 'Special',
   AicHold = 'WarningMsg',
@@ -38,14 +37,12 @@ local function define_highlights()
   for name, link in pairs(highlights) do
     api.nvim_set_hl(0, name, { link = link, default = true })
   end
+  mod('blame').define_highlights()
 end
 
 local function wire()
   state.on('trace', function()
     mod('trace').render()
-  end)
-  state.on('touched', function()
-    mod('signs').apply_all()
   end)
   state.on('diagnostics', function(name, d, initial)
     mod('doc').on_diagnostics(name, d, initial)
@@ -61,7 +58,6 @@ local function wire()
     mod('view').on_session()
     mod('trace').render()
     mod('chat').render()
-    mod('signs').apply_all()
   end)
   state.on('refresh', function()
     mod('status').update()
@@ -93,9 +89,7 @@ local function setup_autocmds()
         mod('doc').attach(a.buf)
       end
       mod('human').snapshot(a.buf, a.event == 'BufNewFile')
-      if state.active() then
-        mod('signs').apply(a.buf, true) -- (re)read: extmarks are gone
-      else
+      if not state.active() then
         passive(vim.fs.dirname(name))
       end
     end,
@@ -152,13 +146,15 @@ local function setup_keymaps(prefix)
   map('n', 'A', '<Plug>(aic-ask-template)', 'ask with which compiler template')
   map('n', 'l', '<Plug>(aic-last-answer)', 'reopen last answer')
   map('n', 'w', '<Plug>(aic-whatif)', 'what-if')
-  map('n', 'b', '<Plug>(aic-blame)', 'blame')
+  map('n', 'b', '<Plug>(aic-blame)', 'AI blame of the line (float)')
   map('n', 'a', '<Plug>(aic-attach)', 'attach worker')
   map('n', 'u', '<Plug>(aic-next-unseen)', 'next unseen')
   map('n', 'U', '<Plug>(aic-usage)', 'usage / compact')
   map('n', 'g', '<Plug>(aic-follow)', 'follow anchor under cursor')
-  map('n', ']', '<Plug>(aic-next-touched)', 'next touched range')
-  map('n', '[', '<Plug>(aic-prev-touched)', 'previous touched range')
+  map('n', ']', '<Plug>(aic-next-touched)', 'next AI run')
+  map('n', '[', '<Plug>(aic-prev-touched)', 'previous AI run')
+  map('n', 'o', '<Plug>(aic-blame-show)', "show the line's AI turn in aigource")
+  map('n', 'r', '<Plug>(aic-blame-lines)', "the line's AI turn: its ranges -> quickfix list")
 end
 
 function M.setup(opts)
@@ -170,6 +166,7 @@ function M.setup(opts)
   end
   configured = true
   setup_autocmds()
+  mod('blame').setup()
   mod('view').setup()
   if o.keymaps then
     setup_keymaps(o.prefix)
@@ -354,16 +351,25 @@ function M.doc_new(name)
   end, true)
 end
 
+-- AI blame (aigource): any file in a git repo, aic session or not.
 function M.blame()
-  ensure(function()
-    mod('signs').blame()
-  end)
+  ensure_setup()
+  mod('blame').detail()
 end
 
 function M.next_touched(dir)
-  ensure(function()
-    mod('signs').jump(dir or 1)
-  end)
+  ensure_setup()
+  mod('blame').jump(dir or 1)
+end
+
+function M.blame_show()
+  ensure_setup()
+  mod('blame').show()
+end
+
+function M.blame_lines()
+  ensure_setup()
+  mod('blame').lines()
 end
 
 -- Load the last compile into the quickfix list. Never opens a window:
