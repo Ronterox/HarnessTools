@@ -77,7 +77,7 @@ dim, heredoc bodies plain), warnings, and any word listed in
 (error/failed) or green (ok/passed).
 
 **Comments.** What the agent wrote just before a step (its text since the last
-tool result) is that step's comment. Opening a step shows them in a panel left
+tool result, prompt, or a message resuming a subagent) is that step's comment. Opening a step shows them in a panel left
 of it, one message box each, oldest first; parallel calls share the text that
 led to them. Steps with comments carry a bubble in the turn window, and
 hovering one previews its comments beside the row. Wheel scrolls the panel,
@@ -377,7 +377,7 @@ are absolute or below the root; in replies, below the root.
 
 | request | reply |
 |---|---|
-| `{"cmd":"blame","file":F}` | `{"status":"ok","text":…,"runs":[[n,cid],…],"changes":{cid:{"turn_key","tool","agent","ts"}},"turns":{turn_key:{"slot","prompt","ts"}}}`: `text` is the file as the build read it, the base the runs fit (n lines by change cid, -1 unknown: written before these transcripts, or by no agent); `changes` and `turns` hold those the runs name (`turn_key` null for a change outside any turn; `agent` the session's title or the subagent's `type · task`; `ts` epoch seconds; `slot` the turn's colour, 0–7, as the structure screen
+| `{"cmd":"blame","file":F}` | `{"status":"ok","text":…,"runs":[[n,cid],…],"changes":{cid:{"turn_key","tool","agent","said","ts"}},"turns":{turn_key:{"slot","prompt","ts"}}}`: `text` is the file as the build read it, the base the runs fit (n lines by change cid, -1 unknown: written before these transcripts, or by no agent); `changes` and `turns` hold those the runs name (`turn_key` null for a change outside any turn; `agent` the session's title or the subagent's `type · task`; `said` the first readable line of the change's comment (as `detail`'s `comment`; markdown marks and code fences skipped, 200 bytes at most, cut at a character), null when none; `ts` epoch seconds; `slot` the turn's colour, 0–7, as the structure screen
 draws it: FNV-1a 32 of the turn key's UTF-8 bytes modulo 8, the same in every
 build; docs/STRUCTURE.md §1). `{"status":"building"}` before the first build; `{"status":"none"}` for a file outside the tree (ignored, binary, over 8 MB, past the 5000-file cap, missing) |
 | `{"cmd":"subscribe"}` | `{"status":"ok"}`; then after each build whose resolved blame (the turn key of each line) changed for some files, a push `{"event":"changed","files":[…],"rev":N}` naming them (every file after the first build; files gone from the tree too) |

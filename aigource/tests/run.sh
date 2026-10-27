@@ -394,6 +394,11 @@ if python3 tests/title_parity.py "$BIN" "$OUT" > "$OUT/title-parity.txt" 2>&1; t
     echo "ok   titles ($(grep -c '^ok' "$OUT/title-parity.txt") checks; $(grep '^slot parity' "$OUT/title-parity.txt"))"
 elif [ $? = 2 ]; then skip_parity titles "no node"
 else cat "$OUT/title-parity.txt"; echo "FAIL titles"; fail=1; fi
+# Which comment a change gets, through both data paths (tests/fixtures/comments:
+# one message's several calls, a subagent resumed by the coordinator).
+if python3 tests/comment_parity.py "$BIN" > "$OUT/comment-parity.txt" 2>&1; then
+    echo "ok   comments ($(grep -c '^ok' "$OUT/comment-parity.txt") checks)"
+else cat "$OUT/comment-parity.txt"; echo "FAIL comments"; fail=1; fi
 d3js=${D3_JS:-vendor/d3-7.9.0.min.js}
 for p in st titles metrics/A metrics/B metrics/C metrics/R1 metrics/R2 metrics/R3; do
     if ! command -v node > /dev/null; then skip_parity "$p" "no node"

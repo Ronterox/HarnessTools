@@ -820,6 +820,8 @@ for f in sorted(glob.glob(PROJ + "/**/*.jsonl", recursive=True)):
                 c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
             if isinstance(c, str) and c.startswith("[Request interrupted"):
                 push(ts, "interrupt", key=("i", ts), session=session)
+            elif (r.get("origin") or {}).get("kind") in ("coordinator", "peer"):
+                pending, said = [], ""  # another agent's message (a subagent resumed): earlier text is about earlier work
             elif prompt_of(r, c):
                 pending, said = [], ""
                 if not sub:

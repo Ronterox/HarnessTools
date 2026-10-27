@@ -40,6 +40,9 @@ typedef enum {
                    * before any output): it neither passes nor fails a verification. */
     EV_TURN_COPY, /* a prompt a resumed session's file copied from an earlier one: as TURN.
                    * Not drawn (the original was), but it starts a turn of this session too. */
+    EV_RESUME,    /* another agent's message (text = its origin: "coordinator", a SendMessage
+                   * resuming a subagent; "peer"): no turn, but the agent's text before it is no
+                   * comment on its calls after it */
     EV_KIND_COUNT
 } EvKind;
 

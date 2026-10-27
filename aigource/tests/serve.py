@@ -503,6 +503,28 @@ def run(tmp):
     check("that server quits", gone(p, 5) and p.returncode == 0, p.returncode)
     c.close()
 
+    # said: a change's comment in a line (tests/fixtures/comments): the first readable line, code fences and
+    # markdown marks skipped, cut at 200 bytes between characters; null with no comment.
+    sys.path.insert(0, HERE)
+    import comment_parity
+    crepo, cenv = comment_parity.setup(os.path.join(tmp, "comments"))
+    cenv["AIG_TEST_TMP"] = tmp
+    ns = tag + "f"
+    p = spawn(crepo, cenv, ns, idle=30)
+    c = Client(ns, crepo)
+    wait_ok(c, "src/a.py")
+    want_said = {"a.py": "Writing all three files.", "b.py": "Writing all three files.", "c.py": "Writing all three files.",
+                 "d.py": "Fixing the cut", "f.py": "-1 means unknown, `**kw` stays", "g.py": "#include <x.h> is needed", "h.py": "Heading here", "e.py": "a" + "\u00e9" * 99, "r1.py": "Round one edit.", "r2.py": None,
+                 "r3.py": "Round two, with words."}
+    for f, w in sorted(want_said.items()):
+        got = [ch.get("said") for ch in c.req("blame", file="src/" + f)["changes"].values()]
+        check("said for src/%s" % f, got == [w], got)
+        if f == "e.py":  # 301 bytes of text: 200 would end inside an é
+            check("said cut at 200 bytes, between characters", len(got[0].encode()) == 199, len(got[0].encode()))
+    c.s.sendall(b'{"cmd":"quit"}\n')
+    check("that server quits", gone(p, 5) and p.returncode == 0, p.returncode)
+    c.close()
+
     # A root with no sessions: up, every line unknown.
     bare = os.path.realpath(os.path.join(tmp, "bare"))
     os.makedirs(bare)

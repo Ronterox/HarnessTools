@@ -240,6 +240,14 @@ static char *prompt_line(const char *s) {
     return line;
 }
 
+/* A message another agent sent this one (origin coordinator: a SendMessage
+ * resuming a subagent; peer): new instructions, though Claude Code marks it
+ * isMeta. */
+static bool from_agent(yyjson_val *rec) {
+    const char *o = jstr(yyjson_obj_get(rec, "origin"), "kind");
+    return o && (!strcmp(o, "coordinator") || !strcmp(o, "peer"));
+}
+
 /* Text of a prompt record and its PROMPT_* kind, or NULL when the record isn't one. */
 static char *prompt_text(yyjson_val *rec, yyjson_val *content, int *kind) {
     if (yyjson_get_bool(yyjson_obj_get(rec, "isMeta")) ||
@@ -739,12 +747,14 @@ static bool is_note(const char *s) {
 }
 
 /* A record after which earlier text is no comment on later calls: a tool
- * result, or a typed or pasted prompt. Task notifications, slash commands and
- * interrupts aren't: the agent's text before them still leads to its next call. */
+ * result, a typed or pasted prompt, or another agent's message (a subagent
+ * resumed: its last round's report is no comment on the next). Task
+ * notifications, slash commands and interrupts aren't: the agent's text
+ * before them still leads to its next call. */
 static bool ends_notes(yyjson_val *rec) {
     if (!jis(rec, "type", "user")) return false;
     yyjson_val *content = content_of(rec);
-    if (n_results(content)) return true;
+    if (n_results(content) || from_agent(rec)) return true;
     int kind = -1;
     char *text = prompt_text(rec, content, &kind);
     bool typed = text && (kind == PROMPT_HUMAN || kind == PROMPT_PASTED);
@@ -801,6 +811,8 @@ void tr_feed(Transcript *t, const char *line, size_t len, long off) {
         const char *said = had_result ? NULL : user_text(content);
         if (said && !strncmp(said, "[Request interrupted", 20)) {
             emit(t, EV_INTERRUPT, ts, NULL, first_line(said, MAX_TEXT), 0, 0, -1);
+        } else if (!had_result && from_agent(rec)) {
+            emit(t, EV_RESUME, ts, NULL, dup_or_null(jstr(yyjson_obj_get(rec, "origin"), "kind")), 0, 0, -1);
         } else if (!had_result) {
             int kind = 0;
             char *text = prompt_text(rec, content, &kind);

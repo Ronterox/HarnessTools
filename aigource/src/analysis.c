@@ -755,7 +755,7 @@ void an_add(Analysis *a, const Event *evs, size_t n) {
             keep = starts(e->text, "Grep") || starts(e->text, "Glob");
             break;
         case EV_TURN: case EV_TURN_COPY: case EV_READ: case EV_SEARCH: case EV_USAGE: case EV_COMPACT:
-        case EV_INTERRUPT: case EV_TITLE: case EV_BASH_END: keep = true; break;
+        case EV_INTERRUPT: case EV_TITLE: case EV_BASH_END: case EV_RESUME: keep = true; break;
         default: keep = false;
         }
         if (!keep && e->tool_id && e->src && e->notes > 0) keep = true, kind = K_NOTE;
@@ -1885,7 +1885,8 @@ static void setup_prompts(B *b) {
                       (e->prompt == PROMPT_HUMAN || e->prompt == PROMPT_PASTED);
         Name *n = &b->nm[e->actor];
         if (prompt && !n->sub) PUSH(n->pr, n->npr, n->cappr, ((Prompt){e->ts, e->text, -1, e->src, e->src_off}));
-        if (prompt || e->kind == EV_COMPACT) PUSH(n->resets, n->nresets, n->capresets, e->ts);
+        if (prompt || e->kind == EV_COMPACT || e->kind == EV_RESUME) /* RESUME: a subagent's next round */
+            PUSH(n->resets, n->nresets, n->capresets, e->ts);
         if (e->tool_id && e->src >= 0 && e->notes > 0 && e->kind != EV_USAGE) {
             char k[600];
             snprintf(k, sizeof k, "%d\x1f%s", e->actor, e->tool_id);

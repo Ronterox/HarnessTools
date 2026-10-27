@@ -7,7 +7,7 @@
 
 static const char *KIND_NAMES[EV_KIND_COUNT] = {
     "turn", "read", "search", "create", "edit", "delete", "touch", "bash", "tool", "failed",
-    "usage", "compact", "interrupt", "title", "bash_end", "turn_copy",
+    "usage", "compact", "interrupt", "title", "bash_end", "turn_copy", "resume",
 };
 
 static const char *ev_kind_name(EvKind k) { return k < EV_KIND_COUNT ? KIND_NAMES[k] : "?"; }

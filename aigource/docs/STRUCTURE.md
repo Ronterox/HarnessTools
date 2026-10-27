@@ -219,11 +219,16 @@ attaches to turns that exist. So the turn strip, the rework gap (5) and turn
 counts all count these turns only.
 
 ### Comments
-The agent's comment on a call is the text it wrote since the last tool result
-or typed or pasted prompt, before that `tool_use` (parallel calls share it).
-Task notifications, slash commands and interrupts don't end it. When there is
-none, the turn's latest text stands in, shown as "earlier in the turn"
-(`comment_of`; stored as `-1 - index`). Trimmed to 900 characters. The text is
+The agent's comment on a call is the text it wrote since the last tool result,
+typed or pasted prompt, or message from another agent (`EV_RESUME`: the
+coordinator resuming a subagent with SendMessage, or a peer; Claude Code marks
+it `isMeta`), before that `tool_use`. Task notifications, slash commands and
+interrupts don't end it. When there is none, the agent's latest text since its
+last prompt, compaction or resume stands in, shown as "earlier in the turn"
+(`comment_of`; stored as `-1 - index`): so a message's calls after the first,
+each recorded with the result of the one before between them, share the text
+before the first; and a resumed subagent's change with no text since has no
+comment, never its last round's report. Trimmed to 900 characters. The text is
 read back from the transcript (`tr_notes`) for the calls that need it.
 
 ### Functions and classes

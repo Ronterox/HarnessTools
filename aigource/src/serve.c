@@ -302,6 +302,56 @@ static void j_agent(FILE *f, const AnSnapshot *s, int a) {
     free(nm);
 }
 
+/* The first line of a change's comment worth reading on its own: code blocks (``` or ~~~
+ * fences and all between them) and rules (---, * * *) skipped; leading quotes, headings
+ * (#…# and a space) and list markers (-, *, + and a space) and every ** outside code spans
+ * dropped; at most SAID_MAX bytes, cut between characters; null when there is none. */
+#define SAID_MAX 200
+static void j_said(FILE *f, const AnSnapshot *s, const AnChange *c) {
+    int note = c->comment >= 0 ? c->comment : -1 - c->comment;
+    const char *p = note < s->ncomments ? s->comments[note] : NULL;
+    bool fence = false;
+    while (p && *p) {
+        const char *e = strchr(p, '\n');
+        size_t n = e ? (size_t)(e - p) : strlen(p), a = 0;
+        while (n > a && strchr(" \t\r", p[n - 1])) n--;
+        while (a < n && strchr(" \t>", p[a])) a++;
+        bool marker = n - a >= 3 && (!strncmp(p + a, "```", 3) || !strncmp(p + a, "~~~", 3));
+        if (marker) fence = !fence;
+        bool rule = n > a;
+        for (size_t i = a; i < n && rule; i++) rule = strchr("-*_ \t", p[i]) != NULL;
+        for (size_t was = n + 1; a != was && !marker && !fence && !rule;) {
+            was = a;
+            size_t h = a;
+            while (h < n && h - a < 6 && p[h] == '#') h++;
+            if (h > a && h < n && p[h] == ' ') a = h + 1;
+            if (a + 1 < n && strchr("-*+", p[a]) && p[a + 1] == ' ') a += 2;
+            while (a < n && strchr(" \t>", p[a])) a++;
+        }
+        if (n > a && !marker && !fence && !rule) {
+            char out[SAID_MAX + 1];
+            size_t m = 0, i = a;
+            bool code = false; /* inside `…`, where ** is text */
+            for (; i < n && m < SAID_MAX; i++) {
+                if (p[i] == '`') code = !code;
+                if (!code && p[i] == '*' && i + 1 < n && p[i + 1] == '*') i++;
+                else out[m++] = p[i];
+            }
+            if (i < n && ((unsigned char)p[i] & 0xC0) == 0x80) { /* cut inside a character: drop it */
+                while (m && ((unsigned char)out[m - 1] & 0xC0) == 0x80) m--;
+                if (m) m--;
+            }
+            if (m) {
+                fputs(",\"said\":", f);
+                json_strn(f, out, m);
+                return;
+            }
+        }
+        p = e ? e + 1 : NULL;
+    }
+    fputs(",\"said\":null", f);
+}
+
 static void blame(const Srv *v, FILE *f, const char *file) {
     Index *x;
     const AnSnapshot *s = eng_snap(v->eng);
@@ -331,6 +381,7 @@ static void blame(const Srv *v, FILE *f, const char *file) {
         json_str(f, c->tool ? c->tool : "");
         fputs(",\"agent\":", f);
         j_agent(f, s, c->actor);
+        j_said(f, s, c);
         fprintf(f, ",\"ts\":%lld}", c->epoch);
     }
     fputs("},\"turns\":{", f);
