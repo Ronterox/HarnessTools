@@ -5,7 +5,7 @@ import os
 import signal
 import sys
 
-from . import anchors, compiler, compiler_prompts, docs, fixes, history, hook, paths, prompts, usage, watch, worker
+from . import anchors, compiler, compiler_prompts, docs, fixes, history, hook, paths, prompts, sources, usage, watch, worker
 
 BIN = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "bin", "aic")
 
@@ -39,9 +39,13 @@ def main(argv=None):
     sub.add_parser("watch", help="tail worker transcript into the trace")
     p = sub.add_parser("docs", help="list docs")
     p.add_argument("--json", action="store_true")
-    p = sub.add_parser("compile", help="compile a doc against worker activity")
-    p.add_argument("--doc", default=docs.DEFAULT)
+    p = sub.add_parser("compile", help="compile FILE, answered like rustc (or --doc: a doc against worker activity)")
+    p.add_argument("file", nargs="?", help="any file; its context (compiler session, diagnostics) is kept per file")
+    p.add_argument("--doc")
     p.add_argument("--print", dest="dry", action="store_true", help="print the prompt; ask nothing")
+    p.add_argument("--reset", action="store_true", help="FILE: start its compiler session afresh")
+    p.add_argument("--color", choices=["auto", "always", "never"], default="auto")
+    p.add_argument("-v", "--verbose", action="store_true", help="FILE: show what the compiler reads and says as it works")
     p = sub.add_parser("ask", help="ask the compiler")
     p.add_argument("--doc", default=docs.DEFAULT)
     p.add_argument("--template", help="a `task: ask` compiler template (with --whatif: `task: whatif`)")
@@ -49,8 +53,13 @@ def main(argv=None):
     p.add_argument("--context-file")
     p.add_argument("--whatif", action="store_true")
     p.add_argument("question", nargs="+")
-    p = sub.add_parser("fix", help="ask the compiler for edits to a doc that fix its diagnostics (never applied here)")
-    p.add_argument("--doc", default=docs.DEFAULT)
+    p = sub.add_parser("fix", help="apply FILE's suggestions hunk by hunk (or --doc: propose doc edits, never applied here)")
+    p.add_argument("file", nargs="?", help="a file compiled with `aic compile FILE`")
+    p.add_argument("--all", dest="apply_all", action="store_true", help="FILE: apply every suggestion, no questions")
+    p.add_argument("--warnings", action="store_true",
+                   help="FILE: first ask the compiler for edits to the warnings that came without one")
+    p.add_argument("-v", "--verbose", action="store_true", help="FILE --warnings: show what the compiler does")
+    p.add_argument("--doc")
     p.add_argument("--from", dest="line_from", type=int)
     p.add_argument("--to", dest="line_to", type=int)
     p.add_argument("--content-file", help="the doc's text as the editor has it (default: the saved doc)")
@@ -94,7 +103,22 @@ def main(argv=None):
 
     if a.cmd == "hook":
         return hook.main()
+    if a.cmd in ("compile", "fix"):
+        if a.file and a.doc:
+            ap.error("%s: FILE or --doc, not both" % a.cmd)
+        doc_only = ["line_from", "line_to", "content_file", "json"] if a.cmd == "fix" else []
+        file_only = ["apply_all", "warnings", "verbose"] if a.cmd == "fix" else ["reset", "verbose"]
+        wrong = [f for f in (doc_only if a.file else file_only) if getattr(a, f)]
+        if a.cmd == "compile" and not a.file and a.color != "auto":
+            wrong.append("color")
+        if wrong:
+            flag = {"line_from": "from", "line_to": "to", "apply_all": "all"}.get(wrong[0], wrong[0].replace("_", "-"))
+            ap.error("%s: --%s %s" % (a.cmd, flag, "is for --doc" if a.file else "needs FILE"))
+        if not a.file:
+            a.doc = a.doc or docs.DEFAULT
     try:
+        if a.cmd in ("compile", "fix") and a.file:
+            return _file_cmd(a)
         if a.cmd == "init":  # (WorkerError on a broken settings file is reported below)
             root = paths.init_root()
             sp = worker.init(root, BIN)
@@ -215,3 +239,27 @@ def main(argv=None):
         sys.stderr.write("aic: %s\n" % e)
         return 1
     return 0
+
+
+def _file_cmd(a):
+    """aic compile FILE / aic fix FILE: rustc-style, on stderr like rustc."""
+    try:
+        return _file_cmd_run(a)
+    except OSError as e:
+        raise compiler.CompilerError(str(e))
+
+
+def _file_cmd_run(a):
+    st = sources.Style({"always": True, "never": False}.get(getattr(a, "color", "auto"), sys.stderr))
+    progress = (lambda ctx: sources.Progress(ctx, st)) if a.verbose else None
+    if a.cmd == "fix":
+        return sources.fix_file(a.file, a.apply_all, warnings=a.warnings, progress=progress)
+    if a.dry:
+        c = sources.compile_file(a.file, a.reset, dry=True)
+        print("(model %s)\n%s" % (c["model"], c["prompt"]))
+        return 0
+    sys.stderr.write("%s %s\n" % (st("note", "   Compiling"), a.file))
+    sys.stderr.flush()
+    d = sources.compile_file(a.file, a.reset, progress=progress)
+    sys.stderr.write(sources.render(d, a.file, st))
+    return 1 if any(it["severity"] == "error" for it in d["items"]) else 0

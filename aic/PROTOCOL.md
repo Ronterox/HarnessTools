@@ -18,6 +18,7 @@ All JSON files are UTF-8. `*.jsonl` = one JSON object per line, append-only.
   docs/<name>.md          the human's docs, shared by all worker sessions (editor writes; see Docs)
   prompts/<name>.md       project prompt templates (see Prompt templates)
   prompts/compiler/<name>.md  project compiler templates (see Compiler templates)
+  files/<path>/           one file's context for `aic compile FILE` (see Files)
   sessions/<sid>/
     sent.<doc>.md         what this worker last received of doc <doc> as work (marker stripped): set by a `marks_sent` send
     trace.jsonl           normalized events (written ONLY by `aic watch`)
@@ -200,18 +201,18 @@ the body, pasted under the header: {{doc}}, {{diff}}, … anywhere
 
 ## Compiler templates
 
-What compile, ask, what-if and fix tell the compiler (`aic/compiler_prompts.py`).
+What compile, ask, what-if, fix and `aic compile FILE` tell the compiler (`aic/compiler_prompts.py`).
 Same language as prompt templates, in a `compiler/` subdirectory of the same
 three places: `.aic/prompts/compiler/` (project),
 `$XDG_CONFIG_HOME/aic/prompts/compiler/` (user), `aic/prompts/compiler/`
-(built-in: `compile`, `ask`, `whatif`, `fix`). The compiler's role (system
+(built-in: `compile`, `ask`, `whatif`, `fix`, `file`, `fixfile`). The compiler's role (system
 prompt: read-only, never edits files, never talks to the worker) is not a
 template.
 
 ```markdown
 ---
 description: one line for the pickers
-task: ask        # compile | ask | whatif | fix (a built-in name implies it)
+task: ask        # compile | ask | whatif | fix | file | fixfile (a built-in name implies it)
 model: haiku     # optional, user/built-in templates only: overrides AIC_COMPILE_MODEL / AIC_ASK_MODEL / AIC_FIX_MODEL
 ---
 instructions, with the data placed anywhere: {{doc}} … {{activity}}
@@ -222,19 +223,23 @@ instructions, with the data placed anywhere: {{doc}} … {{activity}}
   - ask: `aic ask --template <name>` (a `task: ask` one), else `ask`.
   - what-if: `whatif`.
   - fix: `fix`.
+  - `aic compile FILE`: `file`; `aic fix --warnings FILE`: `fixfile`.
   - A same-named project or user file overrides a built-in. A template whose
     `task` is not the one asked for is an error (for a compile, it is recorded
     in that doc's diagnostics).
 - **Variables.** Each data variable is a whole block with its `== HEADING ==`
   line, or empty when there is nothing (for example `diagnostics` before any
   compile), so `{{#var}}` sections work. The exception is `question`, the
-  human's raw text. All tasks also have `doc.name`.
+  human's raw text. All tasks also have `doc.name`, except `file` and `fixfile`, which have
+  `file.name` (the path relative to the compiler's cwd).
 
 | task | data variables, in append order |
 |---|---|
 | compile | `doc` (numbered), `previous_items`, `anchors`, `activity` |
 | ask, whatif | `doc`, `diagnostics`, `activity`, `pointing` (context at the cursor, trace event), `question`, `anchors` |
 | fix | `doc` (numbered, as the editor has it), `items` |
+| file | `file` (numbered), `previous_items`, `changes` (diff since the last compile of it) |
+| fixfile | `items` (the warnings to fix, numbered; the file is already in the session) |
 
 - **A template places the data; it can't drop it.** Every non-empty data
   variable the template doesn't emit is appended after it, in the order above
@@ -342,6 +347,54 @@ and the editor applies the ones the human picks to its own buffer.
 - `skipped`: items the compiler answered without a doc change, plus every
   item it did not answer at all (`no doc change proposed`).
 
+## Files
+
+`aic compile FILE` / `aic fix FILE` work on any file, inside an aic project or
+not, and need no worker. Each file keeps its own context in
+`.aic/files/<path relative to the project>/` (outside a project:
+`$XDG_STATE_HOME/aic/files/<absolute path>/`, default `~/.local/state`; then
+nothing is written into the file's tree). The compiler runs with cwd = the aic
+root, else the git toplevel, else the file's directory, and may Read around it.
+
+```
+files/<path>/
+  state.json              {"compile": "<compiler session id>"}  resumed by every compile of this file
+  diagnostics.json        the last compile (below)
+  usage.json              context/cost (see Usage)
+  git/                    private bare repo for `aic fix`'s hunk picker (the project's repo is never touched)
+```
+
+```json
+{"file": "src/m.py", "path": "/abs/src/m.py", "compiled_at": 1760000000.0, "summary": "one sentence",
+ "base": "<the file's text this compile saw>", "cost_usd": 0.05,
+ "items": [{"severity": "error|warning|note", "code": "off-by-one", "message": "...", "line": 3,
+            "snippet": "range(1, n)", "label": "starts at 1",
+            "secondary": [{"line": 4, "snippet": "xs[i]", "label": "indexed here"}],
+            "note": "...", "help": "...",
+            "fix": [{"line": 3, "old": "whole lines of base\n", "new": "their replacement\n"}],
+            "fix_error": "why the suggested edit was dropped",
+            "no_fix": "why `aic fix --warnings` gave no edit (it is not asked again)"}]}
+```
+- `fix` edits are whole-line replacements of `base` (`old` empty: insert
+  before `line`), checked when compiled: `old` is in the file, `new` has no
+  invisible or bidi characters, and no two items' edits overlap. A failing one
+  is dropped and `fix_error` says why.
+- `aic fix --warnings` adds `fix` (same checks, also against the other
+  items' edits; its `help` may replace the item's) or `no_fix` to warnings
+  that had neither, and rewrites diagnostics.json; the next compile replaces
+  it all.
+- Each compile sends the whole file, the previous items and the diff since
+  the last compile (template `file`, see Compiler templates); the new list
+  replaces the old. `--reset` starts the file's session afresh.
+- `aic fix FILE` moves each item's edits from `base` onto the file as it is now
+  (by line diff): an item applies when its lines (an insertion: the lines on
+  both sides) are unchanged since the compile; one whose text is already there
+  counts as applied; the others are skipped with a warning. The result goes to
+  `git restore -p` from `git/` (index = the file now, source = with the
+  suggestions), so only the compiler's hunks are offered, through your git
+  config (colors, `interactive.diffFilter`). `--all` writes them all, no
+  questions.
+
 ## Usage
 
 `sessions/<sid>/usage.json` (written by the backend under `usage.json.lock`):
@@ -445,8 +498,10 @@ resolved content (bounded). Editors use it for `gd` on `@diff…`/`@turn:…`.
 | `aic watch` | long-running: tails transcript + human.jsonl → trace.jsonl, touched.json. Follows `current`/auto attach. Exits when stdin closes or on SIGTERM. Writes watch.pid. | log lines |
 | `aic docs [--json]` | list docs | JSON `[{name, path, mtime, compile, compile_template, prompt}]`, newest first |
 | `aic compile [--doc D] [--print]` | doc D (default `spec`) + activity since the last compile → compiler Claude → diagnostics.D.json, through D's compile template (see Compiler templates). Busy: queues one more run of D and prints `compile queued: …`. `--print`: the prompt only | summary line |
+| `aic compile FILE [-v] [--reset] [--color auto\|always\|never] [--print]` | FILE (any file, see Files) → its own compiler session → files/<path>/diagnostics.json. `-v`: the compiler runs with `--output-format stream-json` and each step is printed as it happens (`Reading`/`Searching`/`Listing` what, its in-between text, `Failed` tool calls, `Finished` with time and cost). `--print`: the prompt only. Exit 1 when there are errors | nothing; rustc-style diagnostics on stderr |
 | `aic ask [--doc D] [--context-file F] [--whatif] [--template T] [--print] <question...>` | ask the chat compiler about doc D (default `spec`; it may not exist yet), through compiler template T (default `ask`; `whatif` with `--whatif`); appends to chat.md | answer markdown |
 | `aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]` | the compile session proposes edits to doc D that fix its diagnostics (with a range: only the items about those doc lines). F = the doc's text as the editor has it, unsaved edits included (default: the saved doc). Never edits anything. Errors if there are no diagnostics to fix | `fixes.D.json` content (`--json`), else a readable list |
+| `aic fix FILE [--all] [--warnings [-v]]` | apply the last compile's suggestions to FILE hunk by hunk with git's picker, skipping lines changed since the compile (see Files). `--warnings`: first ask the file's compiler session (template `fixfile`) for edits to the warnings that have no `fix` and no `no_fix`; `-v` shows that call's steps | git's picker; notes on stderr |
 | `aic prompts [--json]` | list templates (the winning one per name) | JSON `[{name, source, overrides, path, description, header, requires, input, uses_input, marks_sent}]` (`overrides`: the sources it shadows); a broken one has `error` instead |
 | `aic prompts --compiler [--json]` | list compiler templates | JSON `[{name, source, overrides, path, builtin?, description, task, model}]` (`builtin`: the built-in of that name; `model`: the one that counts, null for project templates); a broken one has `error` |
 | `aic render --prompt P [--doc D] [--from N --to M] [--input TEXT] [--json]` | render template P for doc D: what a submit would send | `{header, body, receipt}` |

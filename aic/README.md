@@ -101,12 +101,41 @@ cd your-project
   a 483k-token compile session took it to 67k and the next compile from
   $4.28 to $0.26. aic only hints at 80%; it never compacts by itself.
 
+## Compile any file
+
+No worker or spec needed: `aic compile FILE` reviews one file and answers like
+rustc (errors, warnings, notes, `help:` with the suggested change, in rustc's
+colors; exit 1 on errors). Context is kept per file: the next compile of it
+resumes the same compiler session and sees what changed since.
+
+```sh
+aic compile src/stats.js        # diagnostics on stderr
+aic compile -v src/stats.js     # also what it reads/searches and says while it works, cargo-style
+aic fix src/stats.js            # git add -p style: y/n/s/e per hunk
+aic fix src/stats.js --all      # apply every suggestion
+aic fix src/stats.js --warnings # first ask for edits to the warnings that came without one
+```
+
+`aic fix` applies the suggestions to the file as it is now. Your edits since
+the compile are never offered as hunks (they are on both sides), and a
+suggestion on lines you changed is skipped with a warning. The picker is git's
+own (`git restore -p` on a private git dir), so your `interactive.diffFilter`
+(delta, diff-so-fancy) highlights it.
+
+Warnings usually come without an edit (the compiler only gives one when it is
+sure). `--warnings` asks the file's compiler session for edits to those, shows
+them rustc-style, then opens the same picker; the ones it declines say why (a
+design decision, other files...). They stay with the diagnostics until the
+next compile, so it asks only once.
+
 ## CLI
 
 ```
 aic init | sessions | attach [sid|--auto] | status
 aic watch                    # trace builder (the plugin starts it)
 aic docs [--json]            # list docs
+aic compile FILE [-v] [--reset] [--color WHEN] [--print]   # any file, rustc-style; context per file
+aic fix FILE [--all] [--warnings [-v]]   # apply its suggestions hunk by hunk (git's picker)
 aic compile [--doc D] [--print]   # doc vs worker activity -> diagnostics.D.json (queues if busy)
 aic fix [--doc D] [--from N --to M] [--content-file F] [--json] [--print]   # proposed doc edits for its diagnostics
 aic anchor [--json] TEXT     # resolve @anchors (what the compiler/worker will see)

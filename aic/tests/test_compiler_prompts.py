@@ -168,7 +168,7 @@ class CompilerTemplatesTest(unittest.TestCase):
         self.put("project", "ask", "---\ntask: ask\n---\n{{question}}\n")
         self.put("user", "nokey", bad["nokey"][0])
         ls = {t["name"]: t for t in compiler_prompts.listing(self.root)}
-        self.assertEqual(sorted(ls), ["ask", "compile", "fix", "nokey", "whatif"])
+        self.assertEqual(sorted(ls), ["ask", "compile", "file", "fix", "fixfile", "nokey", "whatif"])
         self.assertEqual((ls["ask"]["source"], ls["ask"]["overrides"], ls["ask"]["task"]), ("project", ["built-in"], "ask"))
         self.assertEqual(ls["whatif"]["task"], "whatif")
         self.assertIn("unknown key", ls["nokey"]["error"])

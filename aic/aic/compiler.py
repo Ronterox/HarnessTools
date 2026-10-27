@@ -8,7 +8,10 @@ fire for them.
 import fcntl
 import json
 import os
+import signal
 import subprocess
+import tempfile
+import threading
 import uuid
 
 from . import anchors, compiler_prompts, docs, paths, prompts, usage
@@ -117,14 +120,63 @@ def _set_state(sdir, **changes):
     paths.update_json(os.path.join(sdir, "state.json"), **changes)
 
 
-def run_claude(root, sdir, key, model, prompt, schema=None, timeout=600, add_dirs=(), note=None):
+def run_claude(root, sdir, key, model, prompt, schema=None, timeout=600, add_dirs=(), note=None, progress=None):
     """Run one turn of the persistent compiler session `key`; returns the result JSON.
-    Turns of one session are serialized (a second ask waits for the first)."""
+    Turns of one session are serialized (a second ask waits for the first).
+    progress: called with each stream-json event as it happens (the last is the result)."""
     with paths.locked(os.path.join(sdir, "claude-" + key)):
-        return _run_claude(root, sdir, key, model, prompt, schema, timeout, add_dirs, note or key)
+        return _run_claude(root, sdir, key, model, prompt, schema, timeout, add_dirs, note or key, progress)
 
 
-def _run_claude(root, sdir, key, model, prompt, schema, timeout, add_dirs, note):
+def _kill_group(p):
+    try:
+        os.killpg(p.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def _stream(cmd, prompt, root, env, timeout, progress):
+    """claude with --output-format stream-json: each event to progress(); -> (result line, stderr)."""
+    i = cmd.index("--output-format")
+    cmd = cmd[:i + 1] + ["stream-json"] + cmd[i + 2:] + ["--verbose"]
+    with tempfile.TemporaryFile("w+") as err:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err, cwd=root,
+                             env=env, text=True, start_new_session=True)
+        # the whole group: a child left holding stdout would keep the read below waiting
+        timer = threading.Timer(timeout, _kill_group, (p,))
+        timer.start()
+        result = ""
+        try:
+            try:
+                p.stdin.write(prompt)
+                p.stdin.close()
+            except BrokenPipeError:  # it died before reading: its stderr says why
+                pass
+            for line in p.stdout:
+                try:
+                    ev = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(ev, dict) and ev.get("type") == "result":
+                    result = line
+                try:
+                    progress(ev)
+                except Exception:  # progress display must never break a compile
+                    pass
+            p.wait()
+        finally:
+            timer.cancel()
+            if p.poll() is None:
+                _kill_group(p)
+                p.wait()
+            p.stdout.close()
+        if p.returncode == -9 and not result:
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        err.seek(0)
+        return result, err.read()
+
+
+def _run_claude(root, sdir, key, model, prompt, schema, timeout, add_dirs, note, progress=None):
     st = _state(sdir)
     sid = st.get(key)
     seed = None if sid else st.get(key + "_seed")
@@ -145,19 +197,24 @@ def _run_claude(root, sdir, key, model, prompt, schema, timeout, add_dirs, note)
     else:
         sid = str(uuid.uuid4())
         cmd += ["--session-id", sid]
-        paths.add_compiler_id(root, sid)
+        if os.path.isdir(paths.aic_dir(root)):  # (aic compile FILE outside a project writes nothing there)
+            paths.add_compiler_id(root, sid)
     env = dict(os.environ, AIC_ROLE="compiler")
     try:
-        p = subprocess.run(cmd, input=prompt, cwd=root, env=env, capture_output=True,
-                           text=True, timeout=timeout)
+        if progress:
+            stdout, stderr = _stream(cmd, prompt, root, env, timeout, progress)
+        else:
+            p = subprocess.run(cmd, input=prompt, cwd=root, env=env, capture_output=True,
+                               text=True, timeout=timeout)
+            stdout, stderr = p.stdout, p.stderr
     except subprocess.TimeoutExpired:
         raise CompilerError("compiler timed out after %ds" % timeout)
     except FileNotFoundError:
         raise CompilerError("`claude` not found on PATH")
     try:
-        out = json.loads(p.stdout)
+        out = json.loads(stdout)
     except ValueError:
-        raise CompilerError("compiler failed: " + (p.stderr or p.stdout).strip()[:300])
+        raise CompilerError("compiler failed: " + (stderr or stdout).strip()[:300])
     if out.get("is_error"):
         raise CompilerError("compiler error: %s" % str(out.get("result"))[:300])
     changes = {key: out.get("session_id") or sid}

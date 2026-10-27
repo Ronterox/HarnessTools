@@ -6,12 +6,12 @@ $XDG_CONFIG_HOME/aic/prompts/compiler/, built-in aic/prompts/compiler/.
 
     ---
     description: one line for the pickers
-    task: ask                # compile | ask | whatif | fix (built-in names imply it)
+    task: ask                # compile | ask | whatif | fix | file | fixfile (built-in names imply it)
     model: haiku             # optional: the model for this template's calls
     ---
     instructions, with the data placed: {{doc}} {{activity}} ...
 
-The built-ins `compile`, `ask`, `whatif` and `fix` can be overridden by name.
+The built-ins `compile`, `ask`, `whatif`, `fix`, `file` and `fixfile` can be overridden by name.
 Other names are extra templates: `task: ask` ones are offered when asking,
 `task: compile` ones are picked per doc (`<!-- aic: compile=NAME -->`).
 
@@ -43,6 +43,8 @@ TASKS = {
     "ask": ASK,
     "whatif": ASK,
     "fix": ["doc", "items"],
+    "file": ["file", "previous_items", "changes"],  # aic compile FILE (sources.py)
+    "fixfile": ["items"],  # aic fix --warnings FILE: the file is in the session already
 }
 APPEND = {"question": "== QUESTION ==\n%s"}  # the one raw value; the others carry their heading
 FOOTER = ("== FROM AIC, NOT FROM THE TEMPLATE ==\n"
@@ -52,7 +54,7 @@ FOOTER = ("== FROM AIC, NOT FROM THE TEMPLATE ==\n"
 
 
 def known(task):
-    return ["doc.name"] + TASKS[task]
+    return ["file.name" if task in ("file", "fixfile") else "doc.name"] + TASKS[task]
 
 
 def dirs(root):
