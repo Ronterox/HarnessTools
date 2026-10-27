@@ -25,8 +25,6 @@
 #define INSP_W 420.0f
 #define DIM_A 0.14f       /* nodes the selected turn didn't touch */
 #define CW_CLIP 7.2f      /* the draft's clip(): px per character, whatever the size */
-#define DEBOUNCE 3.0      /* live: rebuild this long after the last event... */
-#define DEBOUNCE_MAX 15.0 /* ...or once events have waited this long */
 #define SEARCH_WAIT 0.12  /* a content search starts this long after the last key */
 #define NAMES_MAX 100     /* name results listed (all of them are emphasised) */
 #define SHEAD_H 24.0f     /* the result list: a section's heading, */
@@ -117,6 +115,7 @@ typedef struct {
 struct SView {
     char *root;
     Engine *eng;           /* the analysis, its builds; snap and m are its latest */
+    bool own;              /* the engine is the screen's own (else a host's, render.c, which swaps builds in) */
     AnSnapshot *snap;
     StMetrics *m;
     bool open;
@@ -408,7 +407,7 @@ static SsNames *names_index(const StMetrics *m) {
 }
 
 /* On the engine's worker: the metrics, and the names folded for the search. */
-static void *derive(const AnSnapshot *snap) {
+static void *sv_derive(const AnSnapshot *snap) {
     StMetrics *m = st_build(snap);
     if (!m) return NULL;
     Built *b = xmalloc(sizeof *b);
@@ -417,17 +416,22 @@ static void *derive(const AnSnapshot *snap) {
     return b;
 }
 
-static void drop(AnSnapshot *snap, void *x) {
+static void sv_drop(void *x) {
     Built *b = x;
-    if (b) ss_names_free(b->ix);
-    st_free_pair(b ? b->m : NULL, snap);
+    ss_names_free(b->ix);
+    st_free(b->m);
     free(b);
 }
 
-SView *sv_new(const char *root) {
+EngPart sv_part(void) { return (EngPart){sv_derive, sv_drop}; }
+
+static void adopt(SView *s);
+
+SView *sv_new(const char *root, Engine *host) {
     SView *s = xcalloc(1, sizeof *s);
     s->root = xstrdup(root);
-    s->eng = eng_new(root, &(EngOpts){.quiet = DEBOUNCE, .cap = DEBOUNCE_MAX, .derive = derive, .drop = drop});
+    s->own = !host;
+    s->eng = host ? host : eng_new(root, &(EngOpts){.any = {SV_QUIET, SV_CAP}, .part[ENG_STRUCTURE] = sv_part()});
     s->view = 2;
     s->focus = s->shown = s->shown_turn = s->hov = s->turn = -1;
     s->insp.legend_turn = INT_MIN;
@@ -435,6 +439,7 @@ SView *sv_new(const char *root) {
     s->insp.doc.card = s->insp.card.card = -1;
     s->insp.mark.node = -1;
     s->press_node = s->drag_body = -1;
+    if (eng_snap(s->eng)) adopt(s); /* a host's engine: what it built so far */
     return s;
 }
 
@@ -507,7 +512,7 @@ static void drop_press(SView *s) {
 void sv_free(SView *s) {
     if (!s) return;
     search_free(s); /* first: its engine reads the snapshot's texts */
-    eng_free(s->eng);
+    if (s->own) eng_free(s->eng);
     lay_free(&s->lay);
     si_free(&s->insp);
     arcs_free(s);
@@ -835,13 +840,11 @@ void sv_search(SView *s, const char *query, int pick) {
     if (!s->open) sv_toggle(s);
 }
 
-/* A finished build: the same folder, node and turns when they're still there. */
-static void swap_in(SView *s) {
-    AnSnapshot *os;
-    void *ox;
-    if (!eng_swap(s->eng, &os, &ox)) return;
-    Built *b;
-    AnSnapshot *ns = eng_snap(s->eng, (void **)&b);
+/* The engine's latest build in place of the one shown (the old pair is still
+ * there): the same folder, node and turns when they're still there. */
+static void adopt(SView *s) {
+    Built *b = eng_part(s->eng, ENG_STRUCTURE);
+    AnSnapshot *ns = eng_snap(s->eng);
     StMetrics *nm = b->m;
     StMetrics *om = s->m;
     NodeRef f = ref_of(om, s->focus), sh = ref_of(om, s->shown), mk = ref_of(om, s->insp.mark.node);
@@ -855,7 +858,6 @@ static void swap_in(SView *s) {
     s->insp.doc.m = NULL;
     search_files(s, nm, b->ix); /* before the old texts go: the search may be reading them */
     b->ix = NULL;
-    eng_drop(s->eng, os, ox);
     s->snap = ns;
     s->m = nm;
     s->focus = find_ref(nm, f);
@@ -869,6 +871,41 @@ static void swap_in(SView *s) {
     free(f.id);
     free(sh.id);
     free(mk.id);
+}
+
+static void swap_in(SView *s) {
+    AnSnapshot *os;
+    void *ox[ENG_PARTS];
+    if (!s->own || !eng_swap(s->eng, &os, ox)) return;
+    adopt(s);
+    eng_drop(s->eng, os, ox);
+}
+
+void sv_swapped(SView *s) {
+    if (s && eng_snap(s->eng)) adopt(s);
+}
+
+bool sv_focus(SView *s, const char *file, int turn, int line) {
+    const StMetrics *m = s->m;
+    int n = m ? st_find(m, file) : -1;
+    if (n < 0 || turn < 0 || turn >= m->nturns) return false;
+    if (!s->open) sv_toggle(s);
+    s->sr.open = false; /* the search box gives its keys back */
+    int p = m->nodes[n].parent;
+    s->focus = p >= 0 ? p : n;
+    inspect(s, n);
+    s->turn = turn; /* selected: what it didn't touch dims; the inspector keeps the file's code */
+    si_mark(&s->insp, line > 0 ? n : -1, line, "", false);
+    s->sr.hold = true, s->sr.hold_at = (Vector2){-1, -1}; /* the mouse doesn't inspect elsewhere until it moves */
+    return true;
+}
+
+void sv_shown(const SView *s, char *file, size_t n, int *turn, int *line) {
+    const StMetrics *m = s ? s->m : NULL;
+    bool node = m && s->open && s->shown >= 0 && s->shown_turn < 0;
+    snprintf(file, n, "%s", node ? sv_rel(m->nodes[s->shown].id) : "");
+    *turn = m && s->open ? s->turn : -1;
+    *line = node && s->insp.mark.node == s->shown ? s->insp.mark.line : 0;
 }
 
 static void apply_hooks(SView *s) {
@@ -1897,7 +1934,7 @@ void sv_frame(SView *s, Vector2 mp, float dt) {
     swap_in(s);
     apply_hooks(s);
     if (!s->open) return;
-    eng_tick(s->eng); /* live: a rebuild once events stop for a moment (or have waited long enough) */
+    if (s->own) eng_tick(s->eng); /* live: a rebuild once events stop for a moment (or have waited long enough) */
     search_update(s);
     Search *q = &s->sr;
     if (q->hold && q->hold_at.x < 0) q->hold_at = mp;

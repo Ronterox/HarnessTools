@@ -21,6 +21,7 @@ typedef struct {
     const char *context;   /* test hook: open the context screen on this transcript */
     int context_call;      /* test hook: at this call (negative from the end; main gives -1, the last, when none) */
     int context_sel;       /* test hook: with this action item selected (-1 none) */
+    int host;              /* -a: one engine for the whole run, serving AI blame on the root's socket (serve.h) */
 } VizOpts;
 
 int viz_run(const VizOpts *o, EvQueue *q);

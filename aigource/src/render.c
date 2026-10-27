@@ -17,6 +17,7 @@
 #include "transcript.h"
 #include "raylib.h"
 #include "rlgl.h"
+#include "serve.h"
 #include "sview.h"
 #include "timeline.h"
 #include "turns.h"
@@ -94,6 +95,8 @@ typedef struct {
     const VizOpts *o;
     Scene *m;
     SView *sv;    /* the structure screen (S), made when first opened */
+    Engine *eng;  /* -a: the analysis, built whatever screen shows; the structure screen's and the socket's */
+    Server *srv;  /* -a: serving it once its first build is in (until another host asks; again once the name is free) */
     CView *cv;    /* the context screen (X, or a turn window's "context"), made when first opened */
     Event *aside; /* until then: the analysis-only events the stage drops */
     size_t naside, capaside;
@@ -255,14 +258,15 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
     size_t n = evq_drain(q, &in);
     if (!n) { free(in); return; }
     qsort(in, n, sizeof *in, ev_cmp);
-    if (v->sv) sv_add(v->sv, in, n); /* all of them: the analysis-only kinds are freed below */
+    if (v->eng) eng_add(v->eng, in, n); /* all of them: the analysis-only kinds are freed below */
+    else if (v->sv) sv_add(v->sv, in, n);
     ts_add(v->ts, in, n);
     size_t kept = 0;
     for (size_t i = 0; i < n; i++) {
         if (in[i].kind == EV_FAILED) {
             mark_failed(v, in, kept, &in[i]);
             ev_free(&in[i]);
-        } else if (!ev_staged(in[i].kind) && v->sv) {
+        } else if (!ev_staged(in[i].kind) && (v->sv || v->eng)) {
             ev_free(&in[i]);
         } else if (!ev_staged(in[i].kind)) { /* kept for the structure screen, should it open */
             PUSH(v->aside, v->naside, v->capaside, in[i]);
@@ -286,7 +290,8 @@ static void ingest_new_events(Viz *v, EvQueue *q) {
  * they come. */
 static SView *structure(Viz *v) {
     if (v->sv) return v->sv;
-    v->sv = sv_new(v->o->root);
+    if (v->eng) return v->sv = sv_new(v->o->root, v->eng); /* the host's engine has every event */
+    v->sv = sv_new(v->o->root, NULL);
     sv_add(v->sv, v->h.ev, v->h.n);
     sv_add(v->sv, v->aside, v->naside);
     for (size_t i = 0; i < v->naside; i++) ev_free(&v->aside[i]);
@@ -294,6 +299,37 @@ static SView *structure(Viz *v) {
     v->aside = NULL;
     v->naside = v->capaside = 0;
     return v->sv;
+}
+
+/* -a, a focus request: the structure screen on the file and turn (the context
+ * screen gives way); what it shows then, read back. */
+static void host_focus(void *ctx, int turn, const char *file, int line, SrvShown *shown) {
+    Viz *v = ctx;
+    if (sv_focus(structure(v), file, turn, line) && cv_is_open(v->cv)) cv_close(v->cv);
+    sv_shown(v->sv, shown->file, sizeof shown->file, &shown->turn, &shown->line);
+}
+
+/* -a, every frame: the engine's cadence (the structure screen's own on every
+ * event while it is open) and swaps, for the structure screen and the socket
+ * at once; once its first build is in, the socket taken over from whoever
+ * serves the root and served, never blocking (srv_take, srv_poll). A quit from
+ * another host hands the clients over and ends the serving, not the window;
+ * the engine stays warm and the name is taken again once it is free. */
+static void host_frame(Viz *v) {
+    if (!v->eng) return;
+    eng_any(v->eng, sv_is_open(v->sv));
+    eng_tick(v->eng);
+    AnSnapshot *os;
+    void *ox[ENG_PARTS];
+    if (eng_swap(v->eng, &os, ox)) {
+        sv_swapped(v->sv);
+        if (v->srv) srv_swapped(v->srv, ox[ENG_SERVE]);
+        eng_drop(v->eng, os, ox);
+    }
+    if (!v->srv || !eng_snap(v->eng)) return; /* the takeover waits for the first build: blame never drops out */
+    srv_take(v->srv);
+    srv_poll(v->srv, 0);
+    if (srv_quitting(v->srv)) srv_release(v->srv);
 }
 
 /* The context screen on an actor: its transcript, from its events (Event.src)
@@ -1703,7 +1739,15 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     Viz v = {.o = o, .m = model_new(o->root), .speed = o->speed > 0 ? o->speed : 60,
              .auto_cam = true, .legend = true, .cam = {.zoom = 1}, .ts = ts_new(o->root)};
     v.sim = -1e18; /* nothing is in the past yet: the first batch goes to history unapplied */
+    if (o->host) {
+        /* the server's cadence, and the structure screen's own on every event while it is open */
+        v.eng = eng_new(o->root, &(EngOpts){.changes = {SRV_QUIET, SRV_CAP}, .any = {SV_QUIET, SV_CAP},
+                                            .part = {[ENG_STRUCTURE] = sv_part(), [ENG_SERVE] = srv_part()}});
+        eng_any(v.eng, false);
+        v.srv = srv_new(o->root, v.eng, host_focus, &v);
+    }
     ingest_new_events(&v, q);
+    if (v.eng) eng_request(v.eng, false); /* the first build, on the history */
     v.sim = v.h.n ? v.h.ev[0].ts - 1 : now_wall();
     if (o->live) {
         seek(&v, now_wall());
@@ -1723,6 +1767,7 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     int frame = 0;
     while (!WindowShouldClose()) {
         float dt = o->shot ? 1.0f / 60 : GetFrameTime();
+        host_frame(&v);
         v.hand = false;
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) v.click_at = GetMousePosition(); /* either screen: a hint shows there */
         bool typing = sv_typing(v.sv) || cv_typing(v.cv); /* a screen's search or filter box takes every key */
@@ -1808,6 +1853,8 @@ int viz_run(const VizOpts *o, EvQueue *q) {
     free(v.hov_id);
     free(v.press_file);
     sv_free(v.sv);
+    srv_free(v.srv); /* clients see EOF and start a headless server */
+    eng_free(v.eng);
     cv_free(v.cv);
     ts_free(v.ts);
     for (size_t i = 0; i < v.naside; i++) ev_free(&v.aside[i]);

@@ -316,11 +316,16 @@ text, at file level only, and changed unread.
 `engine.c` keeps one root's `Analysis` warm: it is fed the events, runs builds
 on a worker thread one at a time (`an_build`, then what its owner derives from
 the snapshot there: the structure screen's metrics and search names, the
-server's file index), keeps the latest snapshot and decides when to rebuild,
-on a monotonic clock. The structure screen (`sview.c`) rebuilds 3 s after new
-events of any kind, at most 15 s after the first one waiting, and only while it
-is open; `--serve` (`serve.c`) 1 s after the last create, edit, delete or turn,
-at most 3 s after the first (other events don't trigger one), and on `saved`.
+server's file index; each consumer's part), keeps the latest snapshot and
+decides when to rebuild, on a monotonic clock, by two cadences: on changes (1 s
+after the last create, edit, delete or turn, or `saved`; 3 s at most after the
+first) and on any event (3 s after the last, 15 s at most). The structure
+screen (`sview.c`) on its own engine uses the second, only while it is open; a
+serving engine (`--serve`) the first. A GUI started with `-a` makes one engine
+at startup for both the structure screen and the socket and keeps it building
+whatever screen shows, on changes, and on any event too while the structure
+screen is open. Opening the screen asks for a build when any event arrived
+since the last one.
 `R` cancels a running build and starts again; otherwise a request during a
 build waits for it. A finished build becomes the latest only when the owner
 swaps it in (the screen at the start of a frame), and the pair before it is

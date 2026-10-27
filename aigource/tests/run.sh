@@ -335,6 +335,23 @@ else
     echo "skip serve (asan): no build/asan (make asan)"
 fi
 
+# A GUI started with -a hosting that server (tests/host.py, ~40 s): takeover
+# after its first build, the same blame, focus, a server back in the gap quit
+# again, no -a leaves the socket alone, its exit frees it. It opens windows, so
+# only on AIG_TEST_DISPLAY (a private X display); the asan build's GUIs with
+# leaks unchecked (the GL driver's own), its headless servers checked.
+if [ -n "${AIG_TEST_DISPLAY:-}" ]; then
+    for bin in $BIN build/asan/aigource; do
+        [ -x "$bin" ] || continue
+        name=host; [ "$bin" = "$BIN" ] || name=host-asan
+        if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 python3 tests/host.py "$bin" > "$OUT/$name.txt" 2>&1
+        then echo "ok   $name ($(tail -1 "$OUT/$name.txt"))"
+        else cat "$OUT/$name.txt"; echo "FAIL $name"; fail=1; fi
+    done
+else
+    echo "skip host (set AIG_TEST_DISPLAY to a private X display)"
+fi
+
 # The stage's per-turn stats (turns.c), by the analysis' rules.
 cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_turns" tests/test_turns.c \
    src/turns.c src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o \

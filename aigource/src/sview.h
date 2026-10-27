@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 
+#include "engine.h"
 #include "event.h"
 #include "raylib.h"
 
@@ -16,11 +17,29 @@
  * nothing builds, and opening rebuilds when events arrived. */
 typedef struct SView SView;
 
-SView *sv_new(const char *root);
-/* Cancels and joins a running build, frees everything. */
+#define SV_QUIET 3.0 /* live: rebuild this long after the last event of any kind... */
+#define SV_CAP 15.0  /* ...or once events have waited this long */
+
+/* host NULL: its own engine, fed by sv_add, building only while the screen is
+ * open (3 s after the last event, 15 s at most). Else a host's engine, with
+ * sv_part as its ENG_STRUCTURE part: the host feeds it, ticks it, swaps its
+ * builds in and calls sv_swapped before it drops the old one. */
+SView *sv_new(const char *root, Engine *host);
+EngPart sv_part(void);
+/* A host's build just swapped in: show it. */
+void sv_swapped(SView *s);
+/* Its own engine: cancels and joins a running build; frees everything. */
 void sv_free(SView *s);
-/* Events for the analysis (copied), each once; any kind. */
+/* Its own engine: events for the analysis (copied), each once; any kind. */
 void sv_add(SView *s, const Event *evs, size_t n);
+/* A file (path below the root) in view, its code inspected with line lit (0
+ * none), turn (an index of the build shown) selected; opens the screen. False
+ * when the build has no such file or turn (nothing changes then). */
+bool sv_focus(SView *s, const char *file, int turn, int line);
+/* What the open screen shows: the inspected node's path below the root ("" when
+ * closed or a turn is inspected), the selected turn (-1 none), the lit line of
+ * the inspected node's code (0 none). */
+void sv_shown(const SView *s, char *file, size_t n, int *turn, int *line);
 /* S: open (building first, or again when events arrived since the last
  * build) or close. */
 void sv_toggle(SView *s);

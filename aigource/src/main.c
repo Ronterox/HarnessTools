@@ -364,6 +364,9 @@ int main(int argc, char **argv) {
     }
 
     vo.root = root;
+    /* the whole history, so its blame is the server's: no watcher (its events would feed the engine), and
+     * a --shot takes the socket only on a test's own name */
+    vo.host = all && !nfiles && !watch && (!vo.shot || getenv("AIG_SOCK_NS"));
     ingest_poll(in); /* load history before the first frame */
     if (!ingest_nfiles(in)) {
         fprintf(stderr, "aigource: no Claude sessions found for %s\n", root);

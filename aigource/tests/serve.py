@@ -30,13 +30,16 @@ fails = 0
 procs = []  # (process, its stderr's file)
 
 
+NAME = "serve"  # what check() prints (tests/host.py's own)
+
+
 def check(name, cond, detail=""):
     global fails
     if cond:
-        print("ok   serve: " + name)
+        print("ok   %s: %s" % (NAME, name))
     else:
         fails += 1
-        print("FAIL serve: " + name + (": " + str(detail) if detail else ""))
+        print("FAIL %s: %s" % (NAME, name) + (": " + str(detail) if detail else ""))
 
 
 def git(repo, *args):
@@ -156,10 +159,10 @@ def gone(p, timeout):
         return False
 
 
-def main():
+def main(run=None):
     tmp = tempfile.mkdtemp(prefix="aigs.")
     try:
-        run(tmp)
+        (run or globals()["run"])(tmp)
         # Every server exited by itself (quit, idle): under ASan its reports are in its stderr.
         for i, (p, err) in enumerate(procs):
             with open(err, errors="replace") as f:
@@ -172,12 +175,13 @@ def main():
                 p.kill()
                 p.wait()
         shutil.rmtree(tmp, ignore_errors=True)
-    print("serve: %s" % ("all passed" if not fails else "%d failed" % fails))
+    print("%s: %s" % (NAME, "all passed" if not fails else "%d failed" % fails))
     sys.exit(1 if fails else 0)
 
 
-def run(tmp):
-    tag = "aigtest%d" % os.getpid()
+def fixture(tmp):
+    """The structure fixture as a repo under tmp with its sessions where discovery finds them: the repo, the
+    config dir, an environment for both, --structure-dump's snapshot, each file's blame, each turn's key."""
     cfg = os.path.join(tmp, "cfg")
     repo = os.path.realpath(os.path.join(tmp, "repo"))
     shutil.copytree(os.path.join(FIX, "repo", "before"), repo)
@@ -216,6 +220,12 @@ def run(tmp):
         ts = datetime.datetime.strptime(t["ts"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=datetime.timezone.utc)
         keys[i] = "%d\x1f%s" % (round(ts.timestamp() * 1e6), t["title"])
     check("fixture has blamed lines", any(o >= 0 for runs in want.values() for _, o in runs), want)
+    return repo, cfg, env, dump, want, keys
+
+
+def run(tmp):
+    tag = "aigtest%d" % os.getpid()
+    repo, cfg, env, dump, want, keys = fixture(tmp)
 
     # Two at once: one binds, the other leaves at once with 0.
     ns = tag + "a"
@@ -260,6 +270,24 @@ def run(tmp):
     c.s.sendall(b"not json\n")
     m = c._line(time.time() + 5)
     check("malformed line: an error, id null", m and m["status"] == "error" and m["id"] is None, m)
+    # a request that never ends: read a slice per pass, dropped past 1 MB, the others answered meanwhile
+    flood = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    flood.connect(sock_name(ns, repo))
+    flood.settimeout(10)
+    sent, dropped = 0, False
+    try:
+        while sent < 8 << 20:
+            sent += flood.send(b"x" * 65536)
+    except (BrokenPipeError, ConnectionResetError, socket.timeout):
+        dropped = True
+    if not dropped:
+        try:
+            dropped = flood.recv(16) == b""
+        except (ConnectionResetError, socket.timeout):
+            dropped = True
+    flood.close()
+    check("a line past 1 MB drops its client", dropped and sent < 8 << 20, sent)
+    check("the others are answered meanwhile", c.req("blame", file="src/app.py")["status"] == "ok")
 
     # turn_lines: every file holding the turn's lines, other lines unknown.
     tkey = None

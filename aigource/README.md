@@ -128,7 +128,11 @@ numbers only. `AIG_NO_DEFS=1` turns functions off.
 (or after 15 s while they keep coming), one build at a time; the screen stays
 as it is, with "updating…" in the bar, and keeps the folder, the inspected node
 or turn, the selected turn, view, mode and scroll. While it's closed nothing is
-built; opening it rebuilds if events arrived. `R` rebuilds now instead of
+built; opening it rebuilds if events arrived. Started with `-a`, aigource hosts
+the root's blame server instead (Serve, below): one analysis for the whole run,
+built from the start and kept live whatever screen shows, 1 s after the last
+create, edit, delete or turn (3 s at most); the structure screen shows it, and
+while it is open every event also counts as above (3 s, 15 s). `R` rebuilds now instead of
 waiting, dropping a build already running (when events arrived since the last
 build). Quitting stops a build midway. What each number means, and where in the
 code, is in [docs/STRUCTURE.md](docs/STRUCTURE.md).
@@ -268,7 +272,9 @@ tests use it).
 -r, --root DIR     repo root (default: current directory)
 -s, --since HOURS  sessions written to in the last HOURS (default 2; the
                    newest session when none qualify)
--a, --all          every session of the repo
+-a, --all          every session of the repo; with no transcript files given
+                   and no --watch, also host the root's blame server (Serve,
+                   below)
 -x, --speed N      replay speed multiplier (default 60)
 -l, --live         skip the replay animation, start at now
 -w, --watch        also show filesystem changes (yours, other tools), live
@@ -377,7 +383,7 @@ build; docs/STRUCTURE.md §1). `{"status":"building"}` before the first build; `
 | `{"cmd":"subscribe"}` | `{"status":"ok"}`; then after each build whose resolved blame (the turn key of each line) changed for some files, a push `{"event":"changed","files":[…],"rev":N}` naming them (every file after the first build; files gone from the tree too) |
 | `{"cmd":"saved","file":F}` | `{"status":"ok"}`; the file changed on disk (a save, a checkout): builds read today's files, so it counts as an event toward the next rebuild |
 | `{"cmd":"turn_lines","turn_key":K}` | `{"status":"ok","files":[{"file","runs"},…]}`: every file holding lines of that turn, its runs with other turns' lines as -1; `building` before the first build |
-| `{"cmd":"focus","turn_key":K,"file":F,"line":L}` | `{"status":"ok","host":"headless"}` (a GUI host will select it) |
+| `{"cmd":"focus","turn_key":K,"file":F,"line":L}` | headless: `{"status":"ok","host":"headless"}`. A GUI host opens the structure screen on F (its folder in view, its code inspected, line L lit) with turn K selected, the context screen giving way, and answers `{"status":"ok","host":"gui","turn_key":K,"file":F}` once it shows them; an unknown turn key or file is `{"status":"error"}` and nothing changes |
 | `{"cmd":"quit"}` | no reply: `{"event":"handover","rev":N}` to every client, then it closes and exits 0 |
 
 Anything else gets `{"status":"error","error":…}`. A line over 1 MB drops its
@@ -386,6 +392,25 @@ key; a key is matched in that form, so one sent back as received works). A
 client may send its requests and shut its side (`shutdown(SHUT_WR)`): they are
 answered, then it is closed. On `quit` the socket is released before the
 handover goes out, so the next host can bind at once.
+
+**Hosting.** `aigource -a` (every session, no transcript files given, no
+`--watch`) hosts the server for its root, so editors and the GUI share one
+analysis. With `--watch` it doesn't: the watcher's events would go into the
+analysis, and blame must be the same whoever hosts. A `--shot` run hosts only
+on a test's own name (`AIG_SOCK_NS` set). Once the GUI's own first build is
+in (so blame never drops out while it replays), it takes the socket over: it
+binds when the name is free, else connects, sends `quit` and binds as soon as
+the server's listener is gone (trying every 20 ms, 5 s at most), asking again
+50 ms to 1 s apart; a headless server an editor starts in the gap is asked to
+quit too. A holder that doesn't go is reported once on stderr and asked again
+5 s to 60 s apart. None of it blocks a frame. **The newest `-a` GUI wins:** a
+`quit` a GUI receives (another `-a` GUI taking over) hands its clients over
+and ends its serving, not its window; its analysis stays warm, and it hosts
+again only once the name is free (it tries every 5 s, never asking anyone to
+quit). Without `-a` the GUI never connects or binds: its history is partial,
+so a headless server keeps running beside it. When the GUI exits the socket
+is released with nothing sent: clients see EOF and start a headless server
+again (a cold replay).
 
 ## Where the data comes from
 
@@ -465,6 +490,14 @@ end to end on the structure fixture: every request above, blame runs against
 (one serves), `building` before the first build, `saved` after an edit (the
 `changed` push, the new blame), quit's handover, a root with no transcripts,
 and the idle exit.
+`tests/host.py` (part of `make test` with `AIG_TEST_DISPLAY`, plain and asan)
+runs a GUI with `-a` against it: the takeover after the GUI's first build (held
+back with `AIG_ENG_DELAY_FIRST`, seconds, while its window is up), the client's
+handover and the same blame from the GUI, `focus` read back from the screen, a
+second `-a` GUI taking over and the first hosting again only once the name is
+free, a server back in the gap asked to quit again, a holder that never quits,
+a GUI without `-a` or with `-a -w` leaving the socket alone, and the socket
+free after the GUI quits.
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 `make asan` builds `build/asan/aigource` with AddressSanitizer and UBSan (its
 own objects, the normal build is untouched); run it with the same flags, e.g.

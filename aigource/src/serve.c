@@ -22,8 +22,6 @@
 #include "util.h"
 #include "yyjson.h"
 
-#define QUIET 1.0             /* rebuild this long after the last create, edit, delete or turn... */
-#define CAP 3.0               /* ...or once the first of them waited this long */
 #define IDLE 300.0            /* seconds with no client before exiting (AIG_SERVE_IDLE) */
 #define TICK_MS 50            /* the loop wakes at least this often: new events, a finished build */
 #define LINE_MAX_IN (1 << 20) /* a request longer than this drops its client */
@@ -31,6 +29,9 @@
 #define OUT_KEEP (1 << 20)    /* sent bytes kept at the head of a client's queue before it's compacted */
 #define EOF_WAIT 5.0          /* a half-closed client's replies get this long to go out */
 #define ACCEPT_PAUSE 0.1      /* out of descriptors: stop accepting this long */
+#define READ_PASS (1 << 18)   /* bytes read from one client per pass: a flood can't hold a frame or grow past the cap */
+#define BYE_WAIT 2.0          /* after a handover, clients get this long to read it */
+#define RETAKE_WAIT 5.0       /* a host that was asked to quit tries the free name this often */
 
 /* SHA-1 (FIPS 180-4) of n bytes as 40 hex digits: the socket's name. */
 static void sha1_hex(const char *msg, size_t n, char out[41]) {
@@ -75,6 +76,7 @@ typedef struct {
     int *node;
     char **sig;  /* its lines' turn keys, run-length; "" for unknown */
     char **key;  /* per turn: its key */
+    int nkey;
 } Index;
 
 /* A turn's identity across builds and sessions: what analysis.c keys prompts by,
@@ -113,6 +115,7 @@ static void *derive(const AnSnapshot *s) {
     Index *x = xcalloc(1, sizeof *x);
     x->key = xmalloc(sizeof *x->key * (size_t)(s->nturns + 1));
     for (int t = 0; t < s->nturns; t++) x->key[t] = turn_key(&s->turns[t]);
+    x->nkey = s->nturns;
     int cap = 0;
     char **dir = xcalloc((size_t)s->nnodes + 1, sizeof *dir); /* a folder's path; parents come first */
     for (int i = 1; i < s->nnodes; i++) {
@@ -138,18 +141,17 @@ static void *derive(const AnSnapshot *s) {
     return x;
 }
 
-static void drop(AnSnapshot *s, void *p) {
+static void drop(void *p) {
     Index *x = p;
-    if (x) {
-        strmap_free(&x->ix);
-        strv_free(x->path, x->n);
-        strv_free(x->sig, x->n);
-        free(x->node);
-        strv_free(x->key, s ? s->nturns : 0);
-        free(x);
-    }
-    an_snapshot_free(s);
+    strmap_free(&x->ix);
+    strv_free(x->path, x->n);
+    strv_free(x->sig, x->n);
+    free(x->node);
+    strv_free(x->key, x->nkey);
+    free(x);
 }
+
+EngPart srv_part(void) { return (EngPart){derive, drop}; }
 
 /* ---- clients ---------------------------------------------------------------- */
 
@@ -160,16 +162,32 @@ typedef struct {
     size_t sent;
     bool sub;    /* gets `changed` pushes */
     bool gone;   /* hung up, failed, or too slow: closed after this pass */
+    double bye;  /* handed over (now_mono then + BYE_WAIT; 0 not): no more requests, closed once that is read */
     double eof;  /* it shut its side (now_mono then; 0 not): no more requests, closed once its replies are out */
 } Client;
 
-typedef struct {
-    const char *root;
+struct Server {
+    char *root;
     Engine *eng;
+    SrvFocus focus;     /* a GUI host's (NULL headless), with ctx */
+    void *ctx;
+    struct sockaddr_un sa;
+    socklen_t salen;
+    int lfd;            /* listening, -1 until bound */
     Client *c;
     int nc, capc;
-    bool quit;
-} Srv;
+    bool quit;          /* a client asked */
+    double idle_since;  /* the last client left then (or the server was made) */
+    double accept_at;   /* out of descriptors: accepting again then */
+    struct pollfd *pf;
+    int cappf;
+    /* srv_take: the server asked to quit (its connection, -1 none), how long it gets; the next try */
+    int peer;
+    double peer_until, next_try, backoff;
+    bool polite;        /* asked to quit once: from then on only a free name is taken */
+    bool warned;        /* said that the holder doesn't quit */
+};
+typedef struct Server Srv;
 
 /* As much of c's queue as the socket takes now; the rest waits for POLLOUT. */
 static void flush_out(Client *c) {
@@ -254,7 +272,8 @@ static void j_agent(FILE *f, const AnSnapshot *s, int a) {
 
 static void blame(const Srv *v, FILE *f, const char *file) {
     Index *x;
-    const AnSnapshot *s = eng_snap(v->eng, (void **)&x);
+    const AnSnapshot *s = eng_snap(v->eng);
+    x = eng_part(v->eng, ENG_SERVE);
     int i = s && file ? find_file(v, x, file) : -1;
     if (!s || i < 0) {
         fprintf(f, ",\"status\":\"%s\"", s ? "none" : "building");
@@ -302,8 +321,8 @@ static void blame(const Srv *v, FILE *f, const char *file) {
 /* Every file holding lines of the turn: its runs, with other turns' lines as unknown (-1). */
 static void turn_lines(const Srv *v, FILE *f, const char *req) {
     char *key = req ? utf8_fix(req) : NULL; /* as the keys are kept */
-    Index *x;
-    const AnSnapshot *s = eng_snap(v->eng, (void **)&x);
+    const AnSnapshot *s = eng_snap(v->eng);
+    const Index *x = eng_part(v->eng, ENG_SERVE);
     if (!s) {
         fputs(",\"status\":\"building\"", f);
         free(key);
@@ -338,6 +357,37 @@ static void turn_lines(const Srv *v, FILE *f, const char *req) {
     free(key);
 }
 
+/* A GUI host shows the turn and the file (line lit); headless, nothing to show. */
+static void focus(const Srv *v, FILE *f, const char *req, const char *file, int line) {
+    if (!v->focus) {
+        fputs(",\"status\":\"ok\",\"host\":\"headless\"", f);
+        return;
+    }
+    const AnSnapshot *s = eng_snap(v->eng);
+    const Index *x = eng_part(v->eng, ENG_SERVE);
+    if (!s) {
+        fputs(",\"status\":\"building\"", f);
+        return;
+    }
+    char *key = req ? utf8_fix(req) : NULL;
+    int t = -1, i = file ? find_file(v, x, file) : -1;
+    for (int k = 0; key && k < x->nkey && t < 0; k++)
+        if (!strcmp(x->key[k], key)) t = k;
+    free(key);
+    if (t < 0 || i < 0) {
+        fprintf(f, ",\"status\":\"error\",\"error\":\"%s\"", t < 0 ? "unknown turn_key" : "unknown file");
+        return;
+    }
+    SrvShown sh = {.turn = -1};
+    v->focus(v->ctx, t, x->path[i], line, &sh);
+    fputs(",\"status\":\"ok\",\"host\":\"gui\",\"shown\":{\"file\":", f); /* what the GUI shows now, read back */
+    json_str(f, sh.file);
+    fputs(",\"turn_key\":", f);
+    if (sh.turn >= 0 && sh.turn < x->nkey) json_str(f, x->key[sh.turn]);
+    else fputs("null", f);
+    fprintf(f, ",\"line\":%d}", sh.line);
+}
+
 static void handle(Srv *v, Client *c, const char *line, size_t n) {
     yyjson_doc *doc = yyjson_read(line, n, YYJSON_READ_ALLOW_INVALID_UNICODE);
     yyjson_val *r = yyjson_doc_get_root(doc);
@@ -361,7 +411,8 @@ static void handle(Srv *v, Client *c, const char *line, size_t n) {
     } else if (!strcmp(cmd, "turn_lines")) {
         turn_lines(v, f, yyjson_get_str(yyjson_obj_get(r, "turn_key")));
     } else if (!strcmp(cmd, "focus")) {
-        fputs(",\"status\":\"ok\",\"host\":\"headless\"", f);
+        focus(v, f, yyjson_get_str(yyjson_obj_get(r, "turn_key")), yyjson_get_str(yyjson_obj_get(r, "file")),
+              (int)yyjson_get_int(yyjson_obj_get(r, "line")));
     } else {
         fputs(",\"status\":\"error\",\"error\":", f);
         char *e = xasprintf("unknown cmd %s", cmd);
@@ -374,10 +425,11 @@ static void handle(Srv *v, Client *c, const char *line, size_t n) {
 
 static void read_client(Srv *v, Client *c) {
     char b[65536];
-    for (;;) {
+    for (size_t got = 0; got < READ_PASS;) { /* the rest waits for the next pass */
         ssize_t k = recv(c->fd, b, sizeof b, MSG_DONTWAIT);
         if (k > 0) {
             buf_put(&c->in, b, (size_t)k);
+            got += (size_t)k;
             continue;
         }
         if (k < 0 && errno == EINTR) continue;
@@ -402,7 +454,9 @@ static void read_client(Srv *v, Client *c) {
 }
 
 /* Closed after this pass: gone, or half-closed with its replies out (or given up on). */
-static bool done_with(const Client *c) { return c->gone || (c->eof && (!c->out.n || now_mono() - c->eof > EOF_WAIT)); }
+static bool done_with(const Client *c) {
+    return c->gone || (c->eof && (!c->out.n || now_mono() - c->eof > EOF_WAIT)) || (c->bye && (!c->out.n || now_mono() > c->bye));
+}
 
 /* After a build: to each subscriber, the files whose lines' turns differ from
  * the build before (any file, on the first), and the ones gone from the tree. */
@@ -440,6 +494,154 @@ static void close_client(Client *c) {
     buf_free(&c->out);
 }
 
+/* ---- the server ----------------------------------------------------------------- */
+
+Srv *srv_new(const char *root, Engine *e, SrvFocus focus, void *ctx) {
+    const char *ns = getenv("AIG_SOCK_NS");
+    char hex[41];
+    sha1_hex(root, strlen(root), hex);
+    Srv *v = xcalloc(1, sizeof *v);
+    v->sa.sun_family = AF_UNIX; /* sun_path[0] = 0: the abstract namespace */
+    int nl = snprintf(v->sa.sun_path + 1, sizeof v->sa.sun_path - 1, "%s/%.16s", ns && *ns ? ns : "aigource", hex);
+    if (nl < 0 || (size_t)nl >= sizeof v->sa.sun_path - 1) {
+        fputs("aigource: AIG_SOCK_NS is too long for a socket name\n", stderr);
+        free(v);
+        return NULL;
+    }
+    v->salen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + (size_t)nl);
+    v->root = xstrdup(root), v->eng = e, v->focus = focus, v->ctx = ctx;
+    v->lfd = v->peer = -1;
+    v->idle_since = now_mono();
+    v->backoff = 0.05;
+    signal(SIGPIPE, SIG_IGN); /* a client gone mid-reply; stderr a pipe the spawning editor no longer reads */
+    return v;
+}
+
+int srv_bind(Srv *v) {
+    if (v->lfd >= 0) return 0;
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    if (fd >= 0 && !bind(fd, (struct sockaddr *)&v->sa, v->salen) && !listen(fd, 64)) {
+        v->lfd = fd;
+        return 0;
+    }
+    int err = errno;
+    if (fd >= 0) close(fd);
+    errno = err;
+    return err == EADDRINUSE ? 1 : -1;
+}
+
+bool srv_take(Srv *v) {
+    if (v->lfd >= 0) return true;
+    double now = now_mono();
+    if (now < v->next_try) return false;
+    if (!srv_bind(v)) { /* free (the one asked has closed its listener, whatever else it still sends) */
+        if (v->peer >= 0) close(v->peer), v->peer = -1;
+        return true;
+    }
+    if (v->polite) { /* another host has it: wait for it to go */
+        v->next_try = now + RETAKE_WAIT;
+        return false;
+    }
+    if (v->peer >= 0) { /* the one asked to quit: binding again soon, until it hangs up (or had its time) */
+        char b[4096];
+        ssize_t k;
+        while ((k = recv(v->peer, b, sizeof b, MSG_DONTWAIT)) > 0) {}
+        bool waiting = k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
+        if (waiting && now < v->peer_until) {
+            v->next_try = now + 0.02;
+            return false;
+        }
+        close(v->peer);
+        v->peer = -1;
+        if (waiting) { /* it never went: not an aigource, or stuck; ask again, less and less often */
+            if (!v->warned) fprintf(stderr, "aigource: the blame socket of %s is held by a process that doesn't quit\n", v->root);
+            v->warned = true;
+            v->backoff = fmax(v->backoff, 5);
+            v->next_try = now + v->backoff;
+            v->backoff = fmin(v->backoff * 2, 60);
+            return false;
+        }
+    } /* gone, and the name taken again (a server started in the gap): ask that one */
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+    static const char quit[] = "{\"cmd\":\"quit\"}\n";
+    if (fd >= 0 && !connect(fd, (struct sockaddr *)&v->sa, v->salen) &&
+        send(fd, quit, sizeof quit - 1, MSG_NOSIGNAL) == (ssize_t)sizeof quit - 1) {
+        v->peer = fd, v->peer_until = now + 5, v->next_try = now + 0.02;
+        if (v->backoff > 1) return false; /* a holder that didn't quit before keeps its long backoff */
+        v->backoff = 0.05;
+        return false;
+    }
+    if (fd >= 0) close(fd); /* going away already, or not answering: again a little later */
+    v->next_try = now + v->backoff;
+    v->backoff = fmin(v->backoff * 2, v->warned ? 60 : 1.0);
+    return false;
+}
+
+bool srv_bound(const Srv *v) { return v->lfd >= 0; }
+bool srv_quitting(const Srv *v) { return v->quit; }
+int srv_clients(const Srv *v) { return v->nc; }
+double srv_idle(const Srv *v) { return v->nc ? 0 : now_mono() - v->idle_since; }
+
+void srv_poll(Srv *v, int ms) {
+    int np = 0;
+    GROW(v->pf, np, v->cappf);
+    v->pf[np++] = (struct pollfd){.fd = v->lfd >= 0 && now_mono() >= v->accept_at ? v->lfd : -1, .events = POLLIN};
+    for (int i = 0; i < v->nc; i++) {
+        const Client *c = &v->c[i];
+        GROW(v->pf, np, v->cappf);
+        v->pf[np++] = (struct pollfd){.fd = c->fd, .events = (short)((c->eof || c->bye ? 0 : POLLIN) | (c->out.n ? POLLOUT : 0))};
+    }
+    if (poll(v->pf, (nfds_t)np, ms) < 0 && errno != EINTR) return;
+    int nc = v->nc; /* the clients polled: pf[1 + i] */
+    for (int i = 0; i < nc && !v->quit; i++) {
+        Client *c = &v->c[i];
+        if (v->pf[1 + i].revents & POLLOUT) flush_out(c);
+        if (!c->eof && !c->bye && v->pf[1 + i].revents & (POLLIN | POLLHUP | POLLERR)) read_client(v, c);
+        else if (v->pf[1 + i].revents & (POLLHUP | POLLERR)) c->gone = true;
+    }
+    if (v->pf[0].revents & POLLIN) {
+        int fd = 0;
+        while (!v->quit && (fd = accept4(v->lfd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC)) >= 0)
+            PUSH(v->c, v->nc, v->capc, ((Client){.fd = fd}));
+        if (fd < 0 && (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM))
+            v->accept_at = now_mono() + ACCEPT_PAUSE; /* the pending connect stays; poll would wake at once */
+    }
+    int kept = 0;
+    for (int i = 0; i < v->nc; i++) {
+        if (done_with(&v->c[i])) close_client(&v->c[i]);
+        else v->c[kept++] = v->c[i];
+    }
+    if (v->nc && !kept) v->idle_since = now_mono();
+    v->nc = kept;
+}
+
+void srv_swapped(Srv *v, const void *old) { push_changed(v, old, eng_part(v->eng, ENG_SERVE)); }
+
+void srv_release(Srv *v) {
+    if (v->lfd >= 0) close(v->lfd); /* first: the next host can bind while the clients hear it */
+    v->lfd = -1;
+    v->quit = false, v->polite = true;
+    char h[64];
+    int hn = snprintf(h, sizeof h, "{\"event\":\"handover\",\"rev\":%ld}\n", eng_rev(v->eng));
+    for (int i = 0; i < v->nc; i++) {
+        queue(&v->c[i], h, (size_t)hn);
+        v->c[i].bye = now_mono() + BYE_WAIT;
+    }
+}
+
+void srv_free(Srv *v) {
+    if (!v) return;
+    for (int i = 0; i < v->nc; i++) close_client(&v->c[i]);
+    if (v->lfd >= 0) close(v->lfd);
+    if (v->peer >= 0) close(v->peer);
+    free(v->c);
+    free(v->pf);
+    free(v->root);
+    free(v);
+}
+
+/* ---- --serve ---------------------------------------------------------------------- */
+
 /* The history's first read, off the loop so it answers ("building") meanwhile. */
 typedef struct {
     Ingest *in;
@@ -465,32 +667,15 @@ int serve_run(const IngestOpts *o) {
     IngestOpts io = *o;
     io.since = 0;  /* every session: blame is about all of today's lines */
     io.watch = 0;  /* your own saves aren't anyone's changes */
-    signal(SIGPIPE, SIG_IGN); /* stderr may be a pipe the spawning editor no longer reads */
-    const char *ns = getenv("AIG_SOCK_NS");
-    char hex[41];
-    sha1_hex(io.root, strlen(io.root), hex);
-    struct sockaddr_un sa = {.sun_family = AF_UNIX}; /* sun_path[0] = 0: the abstract namespace */
-    int nl = snprintf(sa.sun_path + 1, sizeof sa.sun_path - 1, "%s/%.16s", ns && *ns ? ns : "aigource", hex);
-    if (nl < 0 || (size_t)nl >= sizeof sa.sun_path - 1) {
-        fputs("aigource: AIG_SOCK_NS is too long for a socket name\n", stderr);
-        return 2;
-    }
-    int lfd = socket(AF_UNIX, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (lfd < 0 || bind(lfd, (struct sockaddr *)&sa, (socklen_t)(offsetof(struct sockaddr_un, sun_path) + 1 + (size_t)nl))) {
-        int err = errno;
-        if (lfd >= 0) close(lfd);
-        if (err == EADDRINUSE) { /* another one serves this root */
-            fprintf(stderr, "aigource: a server for %s is already up\n", io.root);
-            return 0;
-        }
-        errno = err;
-        perror("aigource: serve socket");
-        return 1;
-    }
-    if (listen(lfd, 64)) {
-        perror("aigource: serve socket");
-        close(lfd);
-        return 1;
+    Engine *e = eng_new(io.root, &(EngOpts){.changes = {SRV_QUIET, SRV_CAP}, .part[ENG_SERVE] = srv_part()});
+    Srv *v = srv_new(io.root, e, NULL, NULL);
+    int r = v ? srv_bind(v) : -1;
+    if (r) { /* before any transcript is read */
+        if (r > 0) fprintf(stderr, "aigource: a server for %s is already up\n", io.root); /* it serves this root */
+        else if (v) perror("aigource: serve socket");
+        srv_free(v);
+        eng_free(e);
+        return r > 0 ? 0 : v ? 1 : 2;
     }
     const char *ie = getenv("AIG_SERVE_IDLE");
     double idle = ie && *ie ? atof(ie) : IDLE;
@@ -502,89 +687,32 @@ int serve_run(const IngestOpts *o) {
     pthread_t lt;
     bool loading = !pthread_create(&lt, NULL, load, &ld);
     if (!loading) ingest_poll(in), atomic_store(&ld.done, true);
-    Srv v = {.root = io.root,
-             .eng = eng_new(io.root, &(EngOpts){.quiet = QUIET, .cap = CAP, .changes_only = true,
-                                                .derive = derive, .drop = drop})};
     bool started = false; /* the history read, the first build asked, ingest following */
-    double idle_since = now_mono(), accept_at = 0; /* accept_at: accepting again then */
-    struct pollfd *pf = NULL;
-    int cappf = 0;
-    while (!v.quit) {
-        int np = 0;
-        GROW(pf, np, cappf);
-        pf[np++] = (struct pollfd){.fd = now_mono() >= accept_at ? lfd : -1, .events = POLLIN};
-        for (int i = 0; i < v.nc; i++) {
-            const Client *c = &v.c[i];
-            GROW(pf, np, cappf);
-            pf[np++] = (struct pollfd){.fd = c->fd, .events = (short)((c->eof ? 0 : POLLIN) | (c->out.n ? POLLOUT : 0))};
-        }
-        if (poll(pf, (nfds_t)np, TICK_MS) < 0 && errno != EINTR) {
-            perror("aigource: serve poll");
-            break;
-        }
-        int nc = v.nc; /* the clients polled: pf[1 + i] */
-        for (int i = 0; i < nc && !v.quit; i++) {
-            Client *c = &v.c[i];
-            if (pf[1 + i].revents & POLLOUT) flush_out(c);
-            if (!c->eof && pf[1 + i].revents & (POLLIN | POLLHUP | POLLERR)) read_client(&v, c);
-            else if (pf[1 + i].revents & (POLLHUP | POLLERR)) c->gone = true;
-        }
-        if (pf[0].revents & POLLIN) {
-            int fd = 0;
-            while (!v.quit && (fd = accept4(lfd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC)) >= 0)
-                PUSH(v.c, v.nc, v.capc, ((Client){.fd = fd}));
-            if (fd < 0 && (errno == EMFILE || errno == ENFILE || errno == ENOBUFS || errno == ENOMEM))
-                accept_at = now_mono() + ACCEPT_PAUSE; /* the pending connect stays; poll would wake at once */
-        }
-        drain(v.eng, &q);
+    while (!srv_quitting(v)) {
+        srv_poll(v, TICK_MS);
+        drain(e, &q);
         if (!started && atomic_load(&ld.done)) {
             if (loading) pthread_join(lt, NULL);
-            drain(v.eng, &q);
+            drain(e, &q);
             if (ingest_start(in)) perror("aigource: ingest thread");
-            eng_request(v.eng, false); /* the first build, even with no history: today's files, all unknown */
+            eng_request(e, false); /* the first build, even with no history: today's files, all unknown */
             started = true;
         }
-        eng_tick(v.eng);
+        eng_tick(e);
         AnSnapshot *os;
-        void *ox;
-        if (eng_swap(v.eng, &os, &ox)) {
-            Index *nx;
-            eng_snap(v.eng, (void **)&nx);
-            push_changed(&v, ox, nx);
-            eng_drop(v.eng, os, ox);
+        void *ox[ENG_PARTS];
+        if (eng_swap(e, &os, ox)) {
+            srv_swapped(v, ox[ENG_SERVE]);
+            eng_drop(e, os, ox);
         }
-        int kept = 0;
-        for (int i = 0; i < v.nc; i++) {
-            if (done_with(&v.c[i])) close_client(&v.c[i]);
-            else v.c[kept++] = v.c[i];
-        }
-        if (v.nc && !kept) idle_since = now_mono();
-        v.nc = kept;
-        if (!v.nc && now_mono() - idle_since >= idle) break;
+        if (!srv_clients(v) && srv_idle(v) >= idle) break;
     }
-    close(lfd); /* first: the next host can bind while the clients hear the handover */
-    if (v.quit) { /* to every client, then give them a moment to read it */
-        char h[64];
-        int hn = snprintf(h, sizeof h, "{\"event\":\"handover\",\"rev\":%ld}\n", eng_rev(v.eng));
-        for (int i = 0; i < v.nc; i++) queue(&v.c[i], h, (size_t)hn);
-        for (double until = now_mono() + 2; now_mono() < until;) {
-            int np = 0;
-            for (int i = 0; i < v.nc; i++)
-                if (!v.c[i].gone && v.c[i].out.n) {
-                    GROW(pf, np, cappf);
-                    pf[np++] = (struct pollfd){.fd = v.c[i].fd, .events = POLLOUT};
-                }
-            if (!np) break;
-            poll(pf, (nfds_t)np, TICK_MS);
-            for (int i = 0; i < v.nc; i++) flush_out(&v.c[i]);
-        }
-    }
-    for (int i = 0; i < v.nc; i++) close_client(&v.c[i]);
-    free(v.c);
-    free(pf);
+    if (srv_quitting(v)) /* the handover read (or BYE_WAIT), then gone */
+        for (srv_release(v); srv_clients(v);) srv_poll(v, TICK_MS);
+    srv_free(v);
     if (!started && loading) pthread_join(lt, NULL);
     ingest_free(in);
-    eng_free(v.eng);
+    eng_free(e);
     Event *evs; /* what came after the last pass */
     size_t n = evq_drain(&q, &evs);
     for (size_t i = 0; i < n; i++) ev_free(&evs[i]);
