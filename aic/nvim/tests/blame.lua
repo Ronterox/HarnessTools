@@ -110,7 +110,7 @@ local turns = {
   [K2] = { slot = 5, prompt = 'Refactor the loop', ts = now - 4000 },
 }
 local changes = {
-  ['0'] = { turn_key = K1, tool = 'Edit', agent = 'main session', ts = now - 120 },
+  ['0'] = { turn_key = K1, tool = 'Edit', agent = 'main session', ts = now - 120, said = 'Fall back to hello when the name is empty.' },
   ['1'] = { turn_key = K2, tool = 'Write', agent = 'Explore · find x', ts = now - 3600 },
 }
 local spec = {
@@ -224,8 +224,11 @@ ok(marks_are(abuf, { [5] = T3, [7] = T3, [9] = T6, [10] = T6 }), 'unsaved edit: 
 -- gitsigns' formatter
 local util = require('aic.util')
 local f = blame.format('t', { final_lnum = 5, author = 't', author_time = now, summary = 's' })
-ok(vim.deep_equal(f, { { '◆ ', T3 }, { 'Add the greeting · ' .. util.ago(now - 120) .. ' ago', 'GitSignsCurrentLineBlame' } }),
-  'format: an AI line gives the turn chunks: ' .. vim.inspect(f))
+ok(vim.deep_equal(f, { { '◆ ', T3 }, { 'Fall back to hello when the name is empty. · ' .. util.ago(now - 120) .. ' ago', 'GitSignsCurrentLineBlame' } }),
+  'format: an AI line names what the agent said before the change: ' .. vim.inspect(f))
+f = blame.format('t', { final_lnum = 9, author = 't', author_time = now, summary = 's' })
+ok(vim.deep_equal(f, { { '◆ ', T6 }, { 'Refactor the loop · ' .. util.ago(now - 3600) .. ' ago', 'GitSignsCurrentLineBlame' } }),
+  'format: nothing said: the turn\'s prompt: ' .. vim.inspect(f))
 local info = { final_lnum = 1, author = 't', author_time = now - 3600, summary = 'init commit', abbrev_sha = 'abc1234' }
 f = blame.format('t', info)
 if has_gitsigns then

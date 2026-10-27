@@ -73,7 +73,7 @@ end
 
 local paths = vim.tbl_keys(fx.lines)
 table.sort(paths)
-local ai_lines = 0
+local ai_lines, saids = 0, 0
 for _, path in ipairs(paths) do
   local want = {}
   for l, t in ipairs(fx.lines[path]) do
@@ -91,8 +91,13 @@ for _, path in ipairs(paths) do
   for l, t in ipairs(fx.lines[path]) do
     if t ~= vim.NIL then
       local f = blame.format('t', { final_lnum = l })
-      ok(f[1][1] == '◆ ' and f[1][2] == 'AicTurn' .. (t[1] + 1) and vim.startswith(f[2][1], t[2]:sub(1, 20)),
-        path .. ':' .. l .. ': formatter chunks name the turn: ' .. vim.inspect(f))
+      local b = blame.bufs[buf]
+      local ch = b.changes[tostring(b.cid[l])] or {}
+      local said = type(ch.said) == 'string' and ch.said or nil -- its rule is aigource's (tests/serve.py)
+      local what = said or t[2] -- what the agent said, else the prompt
+      ok(f[1][1] == '◆ ' and f[1][2] == 'AicTurn' .. (t[1] + 1) and vim.startswith(f[2][1], what:sub(1, 20)),
+        path .. ':' .. l .. ': formatter chunks say what the agent said (else the prompt): ' .. vim.inspect(f))
+      saids = saids + (said and 1 or 0)
       vim.api.nvim_win_set_cursor(0, { 1, 0 })
       local j = blame.jump(1)
       ok(j ~= nil and fx.lines[path][j] ~= vim.NIL, path .. ': ]w lands on an AI line (' .. tostring(j) .. ')')
@@ -145,6 +150,7 @@ for _, path in ipairs(paths) do
   end
 end
 ok(ai_lines > 0, 'the fixture has AI lines (' .. ai_lines .. ')')
+ok(saids > 0, 'and lines whose change has a comment (' .. saids .. ')')
 ok(#notes == #vim.tbl_filter(function(m)
   return m:find('ranges of this turn', 1, true) ~= nil
 end, notes), 'no other notices: ' .. vim.inspect(notes))

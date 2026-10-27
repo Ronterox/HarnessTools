@@ -391,8 +391,10 @@ a symlink counts as its target, in the target's repo) where Claude Code has
 transcripts, with or without an aic session: its **line number** takes the colour of the
 turn that wrote it (`number_hl_group` `AicTurn1`…`AicTurn8`, the turn's slot in
 aigource's palette, the same colour aigource's structure screen draws), and
-the cursor line's blame text says `◆ <prompt's first line> · <when the change
-was made>`. Lines no AI wrote (or that you changed since) keep gitsigns' git
+the cursor line's blame text says `◆ <what the agent said before the change> ·
+<when the change was made>`: the first line of its comment, as in the detail
+float (one prompt often drives many edits), or the turn's prompt when the
+agent said nothing. Lines no AI wrote (or that you changed since) keep gitsigns' git
 blame. gitsigns keeps the sign column.
 
 **Engine.** [aigource](../../aigource/README.md#serve) replays the repo's

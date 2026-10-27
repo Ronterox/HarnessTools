@@ -1,6 +1,7 @@
 -- AI blame from aigource (`aigource --serve`, aigource/README.md "Serve"): the
 -- line number of a line an AI turn wrote takes that turn's colour, the cursor
--- line's blame text (gitsigns' formatter) names the prompt; ]w/[w, the detail
+-- line's blame text (gitsigns' formatter) says what the agent said before the
+-- change (else the turn's prompt); ]w/[w, the detail
 -- float, focus in aigource and the turn's lines in the quickfix list.
 local config = require('aic.config')
 local util = require('aic.util')
@@ -411,11 +412,13 @@ local function ago(ts)
   return util.ago(ts) .. ' ago'
 end
 
--- The cursor line's blame text for an AI line `i`.
+-- The cursor line's blame text for an AI line `i`: what the agent said before
+-- the change (one prompt often drives many edits), else the turn's prompt.
 local function chunks(i)
-  local what = i.turn and util.first_line(i.turn.prompt) or (i.change.agent or i.change.tool or 'AI')
-  if vim.fn.strchars(what) > 60 then
-    what = vim.fn.strcharpart(what, 0, 59) .. '…'
+  local said = type(i.change.said) == 'string' and i.change.said ~= '' and i.change.said
+  local what = said or (i.turn and util.first_line(i.turn.prompt)) or (i.change.agent or i.change.tool or 'AI')
+  if vim.fn.strchars(what) > 80 then
+    what = vim.fn.strcharpart(what, 0, 79) .. '…'
   end
   local hl = 'GitSignsCurrentLineBlame'
   return { { '◆ ', i.slot and ('AicTurn' .. (i.slot % 8 + 1)) or hl }, { what .. ' · ' .. ago(i.change.ts), hl } }

@@ -41,7 +41,7 @@ cd your-project
    ask about anything with `<leader>z?`, see who touched a line with `<leader>zb`.
 6. **AI blame**, in any git repo (aic session or not): line numbers take the
    colour of the AI turn that wrote them, the cursor line's gitsigns blame
-   names the prompt, `]w`/`[w` jump between AI runs. It needs
+   names what the agent said before the change, `]w`/`[w` jump between AI runs. It needs
    [aigource](../aigource/README.md) on `PATH`; see
    [nvim/README.md](nvim/README.md#ai-blame).
 
