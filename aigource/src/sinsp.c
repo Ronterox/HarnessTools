@@ -754,7 +754,7 @@ static void blame_legend(Doc *d, const StNode *n, float x, float *y, float w) {
         int t = n->blame[i].turn;
         char em[32];
         snprintf(em, sizeof em, "%d ln", n->blame[i].n);
-        legend_row(d, x, y, w, t < 0 ? C_UNKNOWN : sv_blame_col(st_blame_slot(n, t)),
+        legend_row(d, x, y, w, t < 0 ? C_UNKNOWN : sv_blame_col(d->m->turns[t].slot),
                    t < 0 ? "before these transcripts" : turn_title(d->m->snap, t), NULL, em, t);
     }
 }
@@ -1250,7 +1250,6 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
     d->code_scroll = fmaxf(0, fminf(max_scroll, d->code_scroll));
     d->code_hscroll = fmaxf(0, fminf(mh, d->code_hscroll));
     float gw = gutter_w(d), sx = b.x + 6 + gw + 10;
-    const StNode *n = &d->m->nodes[d->code_node];
     int on_c = in->strip_line >= 0 ? d->orig[in->strip_line] : INT_MIN;
     int hot = in->nvim ? (int)((mp.y - b.y - 6 + d->code_scroll) / CODE_ROW) : -1; /* a click opens it in nvim */
     for (int i = (int)(d->code_scroll / CODE_ROW); i < d->cv.n; i++) {
@@ -1280,7 +1279,7 @@ static void draw_code(Insp *in, const IItem *it, float x, float y, Rectangle cli
         snprintf(no, sizeof no, "%d", d->line0 + i);
         sv_tx(F_MONO, no, b.x + 6 + gw - 10 - sv_tw(F_MONO, no, 12), sv_mid(ry + CODE_ROW / 2, 12), 12, C_FAINT);
         DrawRectangle((int)b.x, (int)ry, 6, (int)CODE_ROW,
-                      ui_fade(t < 0 ? C_UNKNOWN : sv_blame_col(st_blame_slot(n, t)), a));
+                      ui_fade(t < 0 ? C_UNKNOWN : sv_blame_col(d->m->turns[t].slot), a));
     }
     DrawRectangle((int)(b.x + 6 + gw), (int)b.y, 1, (int)b.height, C_LINE);
     if (in->nvim && iy1 - iy0 >= 3 * 18) sv_nvim_hint(b.x + b.width, 8, iy0, iy1, mp.y > (iy0 + iy1) / 2, 1); /* of what shows */
@@ -1374,7 +1373,7 @@ void si_draw(Insp *in, Rectangle r, Vector2 mp) {
             Color bc = C_LINE;
             if (in->card_line >= 0) {
                 int t = line_turn(d, in->card_line);
-                bc = t < 0 ? C_UNKNOWN : sv_blame_col(st_blame_slot(&d->m->nodes[d->code_node], t));
+                bc = t < 0 ? C_UNKNOWN : sv_blame_col(d->m->turns[t].slot);
             }
             DrawRectangle((int)x, (int)y, 3, (int)h, bc);
             for (int k = 0; k < in->card.n; k++) {

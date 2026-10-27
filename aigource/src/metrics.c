@@ -285,6 +285,7 @@ StMetrics *st_build(const AnSnapshot *s) {
     for (int t = 0; t < s->nturns; t++) tms[t] = llround(s->turns[t].ts * 1e6) / 1000, m->order[t] = t;
     ssort(m->order, (size_t)s->nturns, sizeof *m->order, cmp_turn_time, tms);
     for (int r = 0; r < s->nturns; r++) m->turns[m->order[r]].rank = r;
+    for (int t = 0; t < s->nturns; t++) m->turns[t].slot = st_blame_slot(&s->turns[t]);
     int maxactor = -1;
     for (int c = 0; c < s->nchanges; c++) {
         long long e = s->changes[c].epoch;
@@ -944,7 +945,7 @@ void st_json(FILE *f, const StMetrics *m) {
         jd(f, T->bar_h);
         fputs(",\"barW\":", f);
         jd(f, T->bar_w);
-        fputc('}', f);
+        fprintf(f, ",\"slot\":%d}", T->slot);
     }
     fputs("]}\n", f);
 }
@@ -976,10 +977,12 @@ int *st_line_origins(const StMetrics *m, int node, int *n) {
     return o;
 }
 
-int st_blame_slot(const StNode *d, int turn) {
-    for (int k = 0; turn >= 0 && k < d->nblame; k++)
-        if (d->blame[k].turn == turn) return k % ST_BLAME_COLORS;
-    return -1;
+int st_blame_slot(const AnTurn *t) {
+    char *key = an_turn_key(t->ts, t->title), *fixed = utf8_fix(key);
+    int slot = (int)(hash_str(fixed) % ST_BLAME_COLORS); /* hash_str: FNV-1a 32 */
+    free(key);
+    free(fixed);
+    return slot;
 }
 
 bool st_turn_touches(const StTurn *T, int node) {

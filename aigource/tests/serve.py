@@ -49,6 +49,14 @@ def slug(root):
     return "".join(c if c.isalnum() else "-" for c in root)
 
 
+def slot_of(key):
+    """A turn's colour: FNV-1a 32 over its key's UTF-8 bytes, modulo the 8 colours (docs/STRUCTURE.md, 1)."""
+    h = 2166136261
+    for b in key.encode():
+        h = (h ^ b) * 16777619 & 0xFFFFFFFF
+    return h % 8
+
+
 def sock_name(ns, root):
     return "\0" + ns + "/" + hashlib.sha1(root.encode()).hexdigest()[:16]
 
@@ -237,7 +245,7 @@ def run(tmp):
         check("blame %s: turn keys" % path, tk == exp and set(r["turns"]) == tk, (tk, exp))
         for k, t in r["turns"].items():
             check("blame %s: turn %s" % (path, k.split("\x1f")[1]), t["prompt"] == k.split("\x1f", 1)[1] and
-                  "slot" in t and abs(t["ts"] * 1e6 - int(k.split("\x1f")[0])) < 1000, t)
+                  t["slot"] == slot_of(k) and abs(t["ts"] * 1e6 - int(k.split("\x1f")[0])) < 1000, t)
     r = c.req("blame", file=os.path.join(repo, "src", "lib.c"))
     check("blame by absolute path", r["status"] == "ok" and r["runs"] == want["src/lib.c"], r)
     r = c.req("blame", file="./src/../src/lib.c")

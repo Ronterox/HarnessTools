@@ -85,7 +85,7 @@ typedef struct {
     StPoint *trend;    /* file/def: after each change, plus "now" when today differs */
     int ntrend;
     bool growing;
-    StBlame *blame;    /* file/def legend: newest turn first, unknown last; colour = index % ST_BLAME_COLORS */
+    StBlame *blame;    /* file/def legend: newest turn first, unknown last; colour: its turn's slot */
     int nblame;
     StNodeTurn *rows;  /* newest first: its turn set */
     int nrows;
@@ -109,6 +109,7 @@ typedef struct {       /* TINFO, inspectTurn and the turn strip */
     int led_pct, nagents;
     bool subagents;
     double bar_h, bar_w; /* turnBar: px height, flex-grow width */
+    int slot;          /* blame colour: st_blame_slot of the turn */
 } StTurn;
 
 typedef struct StMetrics {
@@ -138,9 +139,11 @@ int st_find(const StMetrics *m, const char *id_or_rel);
 /* Today's lines of a file or def, each the change that wrote it (-1 unknown):
  * *n of them, lines a..b for a def. Caller frees; NULL (*n 0) for a folder. */
 int *st_line_origins(const StMetrics *m, int node, int *n);
-/* The blame legend colour slot of a turn in this node's legend (index into
- * ST_BLAME_COLORS), -1 for the unknown row or a turn not in it. */
-int st_blame_slot(const StNode *d, int turn);
+/* A turn's blame colour (index into ST_BLAME_COLORS), the same in every build,
+ * view and process: FNV-1a 32 over the bytes of its key, "<prompt time in
+ * microseconds, decimal>\x1f<title>" with bytes that aren't UTF-8 as U+FFFD,
+ * modulo ST_BLAME_COLORS (docs/STRUCTURE.md, 1). */
+int st_blame_slot(const AnTurn *t);
 /* The turn touched this node or something inside it (T->nodes, bsearch). */
 bool st_turn_touches(const StTurn *T, int node);
 /* Colour slot of an agent (index into ST_ACTOR_COLORS), -1 for unknown/none. */

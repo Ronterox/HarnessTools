@@ -123,6 +123,11 @@ void an_snapshot_json(FILE *f, const AnSnapshot *s);
 void an_snapshot_stats(FILE *f, const AnSnapshot *s);
 void an_free(Analysis *a);
 
+/* A turn's key, the same in every build and session (a resumed session's copy
+ * of a prompt has its original's): "<the prompt's time in microseconds,
+ * decimal>\x1f<its first line>", the title's bytes as they are. Caller frees. */
+char *an_turn_key(double ts, const char *title);
+
 /* ---- the rules, shared with the stage's per-turn stats (turns.c) ---- */
 
 #define AN_IDLE_CAP 300.0 /* seconds: a longer gap between responses counts as this */

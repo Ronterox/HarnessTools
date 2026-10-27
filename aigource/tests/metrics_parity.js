@@ -13,8 +13,10 @@
  *
  * Fields the page has no counterpart for, so this can't check: StNode.an and
  * StMetrics.of_an (snapshot indices), StNodeTurn.tools as pointers (their
- * text is checked), st_find, st_line_origins, st_blame_slot and
- * st_turn_touches (tests/test_metrics.c covers those). */
+ * text is checked), st_find, st_line_origins and st_turn_touches
+ * (tests/test_metrics.c covers those). Each turn's blame colour is compared
+ * (the page's turnSlot on TURNS[t] against StTurn.slot); tests/slot_parity.js
+ * checks turnSlot on a fixed table and on build_data.py's titles. */
 "use strict";
 const fs = require("fs"), path = require("path"), vm = require("vm");
 
@@ -75,7 +77,7 @@ globalThis.__OUT = {
       add: ti.add, del: ti.del, kept: ti.kept, survival: st.survival, nodes: [...ti.ids].sort(), reads: rows8(st.reads), notes: st.notes,
       untested: st.untested, failing: st.failing, tested: st.tested, blind: st.blind, slow: st.slow, slowX: st.slowX,
       tok: st.tok, onChanges: st.onChanges, ledPct: st.ledPct, agents: st.agents.size, subagents: st.subagents,
-      barH: barH(t), barW: barW(t),
+      barH: barH(t), barW: barW(t), slot: turnSlot(T),
     };
   }),
 };`;
@@ -88,7 +90,7 @@ const stub = new Proxy(function () {}, {
 });
 const ctx = vm.createContext({
   document: stub, hljs: stub, CSS: { escape: s => s }, innerWidth: 1600, console,
-  addEventListener() {}, matchMedia: () => ({ matches: true }), ResizeObserver: class { observe() {} },
+  addEventListener() {}, matchMedia: () => ({ matches: true }), ResizeObserver: class { observe() {} }, TextEncoder,
   __RAW: JSON.parse(fs.readFileSync(dataPath, "utf8")),
 });
 vm.runInContext(fs.readFileSync(d3Path, "utf8"), ctx, { filename: "d3.js" });

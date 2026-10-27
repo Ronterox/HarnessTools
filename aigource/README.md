@@ -371,7 +371,9 @@ are absolute or below the root; in replies, below the root.
 
 | request | reply |
 |---|---|
-| `{"cmd":"blame","file":F}` | `{"status":"ok","text":…,"runs":[[n,cid],…],"changes":{cid:{"turn_key","tool","agent","ts"}},"turns":{turn_key:{"slot","prompt","ts"}}}`: `text` is the file as the build read it, the base the runs fit (n lines by change cid, -1 unknown: written before these transcripts, or by no agent); `changes` and `turns` hold those the runs name (`turn_key` null for a change outside any turn; `agent` the session's title or the subagent's `type · task`; `ts` epoch seconds; `slot` null for now). `{"status":"building"}` before the first build; `{"status":"none"}` for a file outside the tree (ignored, binary, over 8 MB, past the 5000-file cap, missing) |
+| `{"cmd":"blame","file":F}` | `{"status":"ok","text":…,"runs":[[n,cid],…],"changes":{cid:{"turn_key","tool","agent","ts"}},"turns":{turn_key:{"slot","prompt","ts"}}}`: `text` is the file as the build read it, the base the runs fit (n lines by change cid, -1 unknown: written before these transcripts, or by no agent); `changes` and `turns` hold those the runs name (`turn_key` null for a change outside any turn; `agent` the session's title or the subagent's `type · task`; `ts` epoch seconds; `slot` the turn's colour, 0–7, as the structure screen
+draws it: FNV-1a 32 of the turn key's UTF-8 bytes modulo 8, the same in every
+build; docs/STRUCTURE.md §1). `{"status":"building"}` before the first build; `{"status":"none"}` for a file outside the tree (ignored, binary, over 8 MB, past the 5000-file cap, missing) |
 | `{"cmd":"subscribe"}` | `{"status":"ok"}`; then after each build whose resolved blame (the turn key of each line) changed for some files, a push `{"event":"changed","files":[…],"rev":N}` naming them (every file after the first build; files gone from the tree too) |
 | `{"cmd":"saved","file":F}` | `{"status":"ok"}`; the file changed on disk (a save, a checkout): builds read today's files, so it counts as an event toward the next rebuild |
 | `{"cmd":"turn_lines","turn_key":K}` | `{"status":"ok","files":[{"file","runs"},…]}`: every file holding lines of that turn, its runs with other turns' lines as -1; `building` before the first build |
@@ -431,7 +433,15 @@ two parity checks: `tests/metrics_parity.js` (`--metrics` against the page's own
 JavaScript; part of `make test`, needs node and the d3 that
 `scripts/fetch-deps.sh` fetches, skipped without them, a failure with
 `REQUIRE_PARITY=1`) and `tests/structure_parity.py` (`--structure-dump` against
-`build_data.py` on this repo's transcripts; run by hand). The context engine
+`build_data.py` on this repo's transcripts; run by hand); and
+`tests/slot_parity.js` checks that the page's turn colour (`turnSlot`) is the
+app's (`st_blame_slot`) on `tests/test_metrics.c`'s table of turns (ASCII,
+UTF-8, U+FFFD, a byte that isn't UTF-8, an empty title, microseconds; part of
+`make test`, needs node); `tests/title_parity.py` runs a transcript of odd
+prompts (`tests/fixtures/titles`, from `tests/make_title_fixture.py`) through
+both the app and `build_data.py`: same turns and titles, the draft's colours on
+them the app's, and its snapshot joins the `metrics_parity.js` runs, which
+compare every turn's colour too. The context engine
 (`docs/CONTEXT.md`) has the same: expected JSON for a hand-built project
 (`tests/fixtures/context`, from `tests/make_context_fixture.py`), plain and
 leak-checked, that `draft/context/build_ctx.py` must agree on too, unit tests

@@ -368,8 +368,17 @@ skip_parity() {
     if [ "${REQUIRE_PARITY:-}" = 1 ]; then echo "FAIL metrics parity $1 (REQUIRE_PARITY=1): $2"; fail=1
     else echo "skip metrics parity $1: $2"; fi
 }
+# Titles through both data paths (tests/fixtures/titles: odd whitespace, CR, NUL,
+# bytes that aren't UTF-8, the 140-character cut): build_data.py's turns are the
+# app's, and the draft's turnSlot on them is the app's slot; the app's snapshot of
+# it joins the parity runs below (OUT/titles-*.json).
+rm -f "$OUT/titles-data.json" "$OUT/titles-metrics.json"
+if python3 tests/title_parity.py "$BIN" "$OUT" > "$OUT/title-parity.txt" 2>&1; then
+    echo "ok   titles ($(grep -c '^ok' "$OUT/title-parity.txt") checks; $(grep '^slot parity' "$OUT/title-parity.txt"))"
+elif [ $? = 2 ]; then skip_parity titles "no node"
+else cat "$OUT/title-parity.txt"; echo "FAIL titles"; fail=1; fi
 d3js=${D3_JS:-vendor/d3-7.9.0.min.js}
-for p in st metrics/A metrics/B metrics/C metrics/R1 metrics/R2 metrics/R3; do
+for p in st titles metrics/A metrics/B metrics/C metrics/R1 metrics/R2 metrics/R3; do
     if ! command -v node > /dev/null; then skip_parity "$p" "no node"
     elif [ ! -s "$d3js" ]; then skip_parity "$p" "no $d3js (scripts/fetch-deps.sh)"
     elif [ ! -s "$OUT/$p-data.json" ]; then skip_parity "$p" "no snapshot (see above)"
@@ -377,6 +386,14 @@ for p in st metrics/A metrics/B metrics/C metrics/R1 metrics/R2 metrics/R3; do
         echo "ok   metrics parity $p ($(tail -1 "$OUT/$p-parity.txt" | sed 's/^metrics parity: //'))"
     else cat "$OUT/$p-parity.txt"; echo "FAIL metrics parity $p"; fail=1; fi
 done
+
+# Turn colours: the draft's turnSlot against st_blame_slot on test_metrics'
+# table of turns (tests/slot_parity.js; node only, no d3).
+if ! command -v node > /dev/null; then skip_parity slots "no node"
+elif [ ! -s "$OUT/metrics/slots.json" ]; then skip_parity slots "no slots.json (see test_metrics above)"
+elif node tests/slot_parity.js "$OUT/metrics/slots.json" > "$OUT/slot-parity.txt"; then
+    echo "ok   $(tail -1 "$OUT/slot-parity.txt")"
+else cat "$OUT/slot-parity.txt"; echo "FAIL slot parity"; fail=1; fi
 
 # Guessing the files a failed command touched.
 cc -std=c11 -D_GNU_SOURCE -Isrc -o "$OUT/test_cmdguess" tests/test_cmdguess.c src/cmdguess.c src/util.c -lm -lpthread

@@ -3,7 +3,7 @@
 # as it was at that moment), with its turn (the prompt), the agent's comment before it, which lines of today's
 # code it wrote (AI blame), and flags: edited without reading it, untested or failing afterwards, the next
 # prompt reading like a correction, the turn interrupted. Plus complexity per def.
-import datetime, difflib, glob, json, os, re, shlex, subprocess, sys
+import codecs, datetime, difflib, glob, json, os, re, shlex, subprocess, sys
 from collections import Counter, defaultdict
 
 root = os.path.abspath(sys.argv[1])
@@ -157,11 +157,37 @@ def nlines(text):
     return len((text[:-1] if text.endswith("\n") else text).split("\n"))
 
 
+# Transcript bytes that aren't UTF-8 as the app shows them (utf8_fix, json_str): one U+FFFD per byte, where
+# Python's "replace" gives one per maximal bad run. Read with "surrogateescape", those bytes come back exact
+# ("aig_bytes"), for the prompts' first lines.
+codecs.register_error("aig_fix", lambda e: ("\ufffd" * (e.end - e.start), e.end))
+codecs.register_error("aig_bytes", lambda e: (b"".join(
+    bytes([ord(ch) - 0xDC00]) if 0xDC80 <= ord(ch) <= 0xDCFF else ch.encode("utf-8", "surrogatepass")
+    for ch in e.object[e.start:e.end]), e.end))
+
+
+def fix_surrogates(line):
+    """Lone surrogate escapes (\\ud800 with no pair) as \\uFFFD, as the app's reader does before parsing
+    (fix_surrogates in transcript.c); its JSON parser refuses them."""
+    if "\\ud" not in line and "\\uD" not in line:
+        return line
+    return re.sub(r"\\(u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}|u[dD][89a-fA-F][0-9a-fA-F]{2}|.)",
+                  lambda m: "\\uFFFD" if len(m.group(1)) == 5 else m.group(0), line)
+
+
 def first_line(t):
-    for l in t.strip().split("\n"):
-        if l.strip():
-            return l.strip()[:140]
-    return ""
+    """A prompt's title as the app makes it (first_line in util.c, prompt_line in transcript.c), on the
+    record's bytes: up to a NUL; leading spaces, tabs, CRs and LFs skipped; up to the next CR or LF;
+    trailing spaces and tabs dropped; 140 characters (a byte that isn't a continuation byte starts one);
+    then bytes that aren't UTF-8 as U+FFFD each."""
+    b = t.encode("utf-8", "aig_bytes").split(b"\0", 1)[0].lstrip(b" \t\r\n")
+    b = re.split(rb"[\r\n]", b, 1)[0].rstrip(b" \t")
+    i = n = 0
+    while i < len(b) and n < 140:
+        i, n = i + 1, n + 1
+        while i < len(b) and b[i] & 0xC0 == 0x80:
+            i += 1
+    return b[:i].decode("utf-8", "aig_fix")
 
 
 def prompt_of(r, c):
@@ -169,12 +195,12 @@ def prompt_of(r, c):
     Slash commands, Claude Code's own records (task notifications, command output) and meta records don't."""
     if not isinstance(c, str) or r.get("isMeta") or (r.get("origin") or {}).get("kind", "human") != "human":
         return None
-    c = c.lstrip()
+    c = c.split("\0", 1)[0].lstrip(" \n")  # the app's string ends at a NUL; it skips spaces and newlines here
     if c.startswith("<pasted_content"):
         c = c.split(">", 1)[-1]
     elif c.startswith(("<", "Caveat:")):
         return None
-    return c if c.strip() else None
+    return c if first_line(c) else None
 
 
 def rel_of(path, cwd=None):
@@ -746,7 +772,9 @@ for f in sorted(glob.glob(PROJ + "/**/*.jsonl", recursive=True)):
     session = f.split("/subagents/")[0].rsplit("/", 1)[1] if sub else os.path.basename(f)[:-6]
     ctx = f  # whose context: the main session, or one subagent
     pending, said, calls = [], "", {}
-    for line in open(f, errors="replace"):
+    for raw in open(f, errors="surrogateescape"):
+        raw = fix_surrogates(raw)
+        line = raw.encode("utf-8", "surrogateescape").decode("utf-8", "aig_fix")
         if '"ai-title"' in line:
             try:
                 r = json.loads(line)
@@ -787,7 +815,7 @@ for f in sorted(glob.glob(PROJ + "/**/*.jsonl", recursive=True)):
             continue
         results = [x for x in cont if isinstance(x, dict) and x.get("type") == "tool_result"] if isinstance(cont, list) else []
         if not results:
-            c = cont
+            c = cont if raw == line else ((json.loads(raw).get("message") or {}).get("content"))  # its own bytes
             if isinstance(c, list):
                 c = "\n".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
             if isinstance(c, str) and c.startswith("[Request interrupted"):

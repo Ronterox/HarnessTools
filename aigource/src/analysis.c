@@ -961,6 +961,7 @@ static int b_name(B *b, const char *s) {
 }
 
 static long long micros(double ts) { return llround(ts * 1e6); }
+char *an_turn_key(double ts, const char *title) { return xasprintf("%lld\x1f%s", micros(ts), title ? title : ""); }
 /* The epoch as Python's datetime.timestamp() gives it (exact microseconds / 1e6). */
 static double epoch(double ts) { return (double)micros(ts) / 1e6; }
 
@@ -1898,7 +1899,7 @@ static void setup_prompts(B *b) {
         qsort(n->pr, (size_t)n->npr, sizeof *n->pr, cmp_prompt);
         for (int k = 0; k < n->npr; k++) {
             Prompt *p = &n->pr[k];
-            char *key = xasprintf("%lld\x1f%s", micros(p->ts), p->title);
+            char *key = an_turn_key(p->ts, p->title);
             p->key = strmap_get(&b->keyix, key);
             if (p->key < 0) {
                 strmap_put(&b->keyix, key, p->key = b->nkeys);

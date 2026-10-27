@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "metrics.h"
+#include "util.h"
 
 static int fails, checks;
 
@@ -194,8 +195,10 @@ static void snapshot_a(const char *dir) {
     free(o);
     o = st_line_origins(m, AB, &no);
     CHECK(!o && !no, "no origins for a folder");
-    CHECK(st_blame_slot(nx, 0) == 0 && st_blame_slot(nx, 1) == 2 && st_blame_slot(nx, -1) == -1 && st_blame_slot(nx, 3) == -1,
-          "blame slots");
+    bool slots = true;
+    for (int t = 0; t < s.nturns; t++)
+        slots &= m->turns[t].slot == st_blame_slot(&s.turns[t]) && m->turns[t].slot >= 0 && m->turns[t].slot < ST_BLAME_COLORS;
+    CHECK(slots, "blame slots: each turn's, from its key");
     CHECK(nx->owner_slot == 0 && m->nodes[Z].owner_slot == -1, "owner slots");
     CHECK(nx->ncorr_turns == 1 && nx->corr_turns[0] == 2 && !m->nodes[W].ncorr_turns, "corrected turns");
     CHECK(st_turn_touches(&m->turns[1], K) && st_turn_touches(&m->turns[1], 0) && !st_turn_touches(&m->turns[1], W) &&
@@ -412,8 +415,40 @@ static void snapshot_r(const char *dir, unsigned seed, const char *name) {
     reset_owned();
 }
 
+/* Blame colours from turn keys alone, against FNV-1a 32 worked out apart
+ * (Python), and written to DIR/slots.json for tests/slot_parity.js, which runs
+ * the draft's turnSlot on the same turns (their titles as JSON carries them). */
+static void slot_table(const char *dir) {
+    static const struct { const char *iso, *title; int slot; } T[] = {
+        {"2026-10-14T11:00:10.000Z", "Add a greeting fallback", 5},
+        {"2026-10-14T11:00:10.123Z", "h\xC3\xA9llo w\xC3\xB6rld \xE2\x9C\x93", 4}, /* UTF-8 */
+        {"2026-10-14T11:00:10.5Z", "bad \xEF\xBF\xBD byte", 1},                  /* U+FFFD */
+        {"2026-10-14T11:00:10.5Z", "bad \xFF byte", 1},                            /* not UTF-8: as U+FFFD */
+        {"2026-01-01T00:00:00Z", "", 2},                                           /* empty title */
+        {"2026-10-14T11:00:10.123456Z", "\xC2\xB5s \xE6\x97\xA5\xE6\x9C\xAC", 1}, /* microseconds */
+    };
+    FILE *f = NULL;
+    if (dir) {
+        char p[4096];
+        snprintf(p, sizeof p, "%s/slots.json", dir);
+        f = fopen(p, "w");
+    }
+    if (f) fputc('[', f);
+    for (int i = 0; i < N(T); i++) {
+        AnTurn t = {.title = (char *)T[i].title, .ts = parse_iso8601(T[i].iso)};
+        int got = st_blame_slot(&t);
+        CHECK(got == T[i].slot, "blame slot of %s %s: %d, expected %d", T[i].iso, T[i].title, got, T[i].slot);
+        if (!f) continue;
+        fprintf(f, "%s{\"ts\":\"%s\",\"title\":", i ? "," : "", T[i].iso);
+        json_str(f, T[i].title);
+        fprintf(f, ",\"slot\":%d}", got);
+    }
+    if (f) fputs("]\n", f), fclose(f);
+}
+
 int main(int argc, char **argv) {
     const char *dir = argc > 1 ? argv[1] : NULL;
+    slot_table(dir);
     snapshot_a(dir);
     snapshot_b(dir);
     snapshot_c(dir);

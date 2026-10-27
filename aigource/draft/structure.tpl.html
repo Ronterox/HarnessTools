@@ -449,6 +449,21 @@ function fileData(f) {
   return fileCache.get(f);
 }
 const BLAME_COLORS = ["#f2a541", "#56d364", "#79c0ff", "#d2a8ff", "#ff7b72", "#39c5cf", "#e3b341", "#ffa198"];
+/* A turn's prompt time in microseconds as the app gets it (parse_iso8601, then llround(ts * 1e6)): the
+ * ISO time's whole minutes as UTC (any zone suffix ignored: transcripts are UTC) plus its seconds as a
+ * double, times 1e6, rounded. Exact for the millisecond times transcripts carry. */
+function turnMicros(iso) {
+  const m = /^(\d+)-(\d+)-(\d+)T(\d+):(\d+):([\d.]+)/.exec(iso || "");
+  if (!m) return 0; /* as parse_iso8601 gives 0 for a time it can't read */
+  return Math.round((Date.UTC(+m[1], m[2] - 1, +m[3], +m[4], +m[5], 0) / 1000 + parseFloat(m[6])) * 1e6);
+}
+/* A turn's blame color, the same in every build and in the app (st_blame_slot): FNV-1a 32 over the
+ * UTF-8 bytes of its key, "<micros>\x1f<title>", modulo the palette. */
+function turnSlot(t) {
+  let h = 2166136261;
+  for (const b of new TextEncoder().encode(turnMicros(t.ts) + "\x1f" + t.title)) h = Math.imul(h ^ b, 16777619) >>> 0;
+  return h % BLAME_COLORS.length;
+}
 /* Who wrote these lines: per turn (newest first) a color, line count and its changes. */
 function blameOf(origins) {
   const by = new Map();
@@ -459,7 +474,7 @@ function blameOf(origins) {
     if (c >= 0) by.get(t).cids.add(c);
   });
   const rows = [...by.values()].sort((a, b) => a.t < 0 ? 1 : b.t < 0 ? -1 : TURNS[b.t].ts.localeCompare(TURNS[a.t].ts));
-  rows.forEach((r, i) => r.color = r.t < 0 ? "#2a3442" : BLAME_COLORS[i % BLAME_COLORS.length]);
+  rows.forEach(r => r.color = r.t < 0 ? "#2a3442" : BLAME_COLORS[turnSlot(TURNS[r.t])]);
   return new Map(rows.map(r => [r.t, r]));
 }
 function legendHtml(rows, total) {

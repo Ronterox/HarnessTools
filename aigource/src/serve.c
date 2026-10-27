@@ -18,6 +18,7 @@
 
 #include "analysis.h"
 #include "engine.h"
+#include "metrics.h"
 #include "util.h"
 #include "yyjson.h"
 
@@ -79,7 +80,7 @@ typedef struct {
 /* A turn's identity across builds and sessions: what analysis.c keys prompts by,
  * its bytes that aren't UTF-8 as U+FFFD, as replies carry it (and clients send it back). */
 static char *turn_key(const AnTurn *t) {
-    char *k = xasprintf("%lld\x1f%s", llround(t->ts * 1e6), t->title), *fixed = utf8_fix(k);
+    char *k = an_turn_key(t->ts, t->title), *fixed = utf8_fix(k);
     free(k);
     return fixed;
 }
@@ -289,7 +290,8 @@ static void blame(const Srv *v, FILE *f, const char *file) {
         tseen[t] = true;
         if (nout++) fputc(',', f);
         json_str(f, x->key[t]);
-        fputs(":{\"slot\":null,\"prompt\":", f);
+        /* st_blame_slot's hash, over the very bytes sent as the key */
+        fprintf(f, ":{\"slot\":%d,\"prompt\":", (int)(hash_str(x->key[t]) % ST_BLAME_COLORS));
         json_str(f, s->turns[t].title);
         fprintf(f, ",\"ts\":%.3f}", s->turns[t].ts);
     }

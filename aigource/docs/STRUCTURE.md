@@ -393,9 +393,26 @@ of the same level (folders, files, functions/classes):
 
 ## 1. AI blame
 Each line of today's code → the change that wrote it → its turn, tool, agent,
-time and comment. The code view colors a strip per line by turn (newest turn
-first in the palette, 8 colors repeating); the legend counts lines per turn
-(`st_blame_slot`, `st_line_origins`). Unknown lines are grey.
+time and comment. The code view colors a strip per line by turn; the legend
+counts lines per turn, newest turn first (`st_line_origins`). Unknown lines are
+grey.
+
+**A turn's color** is stable: the same in every build, view, file and process
+(the structure screen, `--serve`'s `slot`, the draft's `turnSlot`), because it
+depends on the turn's key alone (`st_blame_slot`, `StTurn.slot`). The key's
+bytes: the prompt's time in microseconds as a decimal integer (`llround(ts *
+1e6)`, ts the record's ISO time parsed as UTC, `parse_iso8601`), the byte 0x1F,
+then the prompt's first line (`AnTurn.title`), every byte of the whole that
+isn't valid UTF-8 replaced by U+FFFD (EF BF BD; `utf8_fix`, as JSON output
+writes it). The slot is FNV-1a 32 over those bytes (offset basis 2166136261,
+prime 16777619: for each byte `h = (h ^ byte) * 16777619 mod 2^32`; `hash_str`)
+modulo `ST_BLAME_COLORS` (8), indexing the palette amber, green, blue, purple,
+coral, cyan, yellow, pink. Two turns may share a color. The draft computes the
+same (`turnMicros`, `turnSlot`; `build_data.py` cuts titles by the app's rules,
+`first_line`, from the transcript's bytes, each byte that isn't UTF-8 one U+FFFD
+and a lone surrogate escape one U+FFFD, as `fix_surrogates`). A time that can't
+be read counts as 0 on both sides; times before 1970 (half-microsecond rounding)
+and years 0–99 (JavaScript's `Date.UTC`) could differ, and no transcript has them.
 
 ## 2. Hotspots × complexity
 **Complexity**, on today's code (`measure` in `syntax.c`; `SynDef.cx` and
