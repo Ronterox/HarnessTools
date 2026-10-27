@@ -320,6 +320,21 @@ else
     echo "skip rebuild (asan): no build/asan (make asan)"
 fi
 
+# aigource --serve (serve.c over engine.c) end to end on the structure fixture:
+# the protocol, blame against --structure-dump, one server per root, building,
+# saved and the changed push, quit, idle exit (tests/serve.py, ~10 s). Under
+# ASan/UBSan too, leaks checked, when the asan build is there (make asan).
+python3 tests/serve.py "$BIN" > "$OUT/serve.txt" 2>&1 && echo "ok   serve ($(tail -1 "$OUT/serve.txt"))" ||
+    { cat "$OUT/serve.txt"; echo "FAIL serve"; fail=1; }
+if [ -x build/asan/aigource ]; then
+    if ASAN_OPTIONS=detect_leaks=1 UBSAN_OPTIONS=print_stacktrace=1 python3 tests/serve.py build/asan/aigource \
+       > "$OUT/serve-asan.txt" 2>&1
+    then echo "ok   serve (asan, leaks checked)"
+    else cat "$OUT/serve-asan.txt"; echo "FAIL serve (asan)"; fail=1; fi
+else
+    echo "skip serve (asan): no build/asan (make asan)"
+fi
+
 # The stage's per-turn stats (turns.c), by the analysis' rules.
 cc -std=c11 -D_GNU_SOURCE -Isrc -I$RAYLIB_INC -Ivendor/yyjson-0.10.0/src -I$TS_INC -o "$OUT/test_turns" tests/test_turns.c \
    src/turns.c src/analysis.c src/transcript.c src/cmdguess.c src/syntax.c src/util.c build/yyjson.o build/tree-sitter.o \

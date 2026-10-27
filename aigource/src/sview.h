@@ -8,11 +8,11 @@
 
 /* The structure screen (aigource/draft/structure.tpl.html, natively): the
  * repo as icicle, treemap or floating nodes coloured by a heat mode, an
- * inspector, the turn strip. It owns an Analysis fed every event the viz
- * drains once it exists; builds (an_build, then st_build) run on a worker
- * thread, one at a time, and the finished (snapshot, metrics) pair is swapped
- * in at the start of a frame, the old pair freed there, after the last frame
- * that drew it. While open, new events rebuild it (debounced); while closed
+ * inspector, the turn strip. It owns an Engine (engine.h) fed every event the
+ * viz drains once it exists; builds (an_build, then st_build) run on the
+ * engine's worker thread, one at a time, and the finished (snapshot, metrics)
+ * pair is swapped in at the start of a frame, the old pair freed there, after
+ * the last frame that drew it. While open, new events rebuild it (debounced); while closed
  * nothing builds, and opening rebuilds when events arrived. */
 typedef struct SView SView;
 

@@ -2,12 +2,12 @@
 
 #include <limits.h>
 #include <math.h>
-#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 
+#include "engine.h"
 #include "nvim.h"
 #include "slayout.h"
 #include "ssearch.h"
@@ -108,23 +108,17 @@ typedef struct {
     unsigned gen;       /* bumped on every rebuild of the above */
 } Lay;
 
+/* What a build derives for the screen on the engine's worker. */
+typedef struct {
+    StMetrics *m;
+    SsNames *ix; /* the search's once swapped in (NULL then) */
+} Built;
+
 struct SView {
     char *root;
-    Analysis *an;
-    pthread_t th;
-    bool running, restart;
-    pthread_mutex_t mu;
-    /* under mu: the worker's results */
-    AnSnapshot *new_s;
-    StMetrics *new_m;
-    SsNames *new_ix;
-    bool done;
-    char stats[256];
-    /* the render thread's */
+    Engine *eng;           /* the analysis, its builds; snap and m are its latest */
     AnSnapshot *snap;
     StMetrics *m;
-    long added, built;     /* events added; added when the last build started */
-    double last_add, first_pending;
     bool open;
     int view, mode;
     int focus;             /* the folder (or file) in view */
@@ -402,7 +396,7 @@ void sv_metric_word(const StMetrics *m, const StNode *d, int mode, char *b, size
     }
 }
 
-/* ---- builds: one at a time on a worker thread ------------------------------ */
+/* ---- builds: one at a time on the engine's worker thread ------------------ */
 
 /* Every node's path below the root (the root's ""), folded once for the search's names. */
 static SsNames *names_index(const StMetrics *m) {
@@ -413,58 +407,27 @@ static SsNames *names_index(const StMetrics *m) {
     return x;
 }
 
-static void *worker(void *arg) {
-    SView *s = arg;
-    AnSnapshot *snap = an_build(s->an);
-    StMetrics *m = NULL;
-    if (snap) {
-        char *buf = NULL;
-        size_t len = 0;
-        FILE *f = open_memstream(&buf, &len);
-        if (f) an_snapshot_stats(f, snap), fclose(f);
-        pthread_mutex_lock(&s->mu);
-        snprintf(s->stats, sizeof s->stats, "%s", buf ? buf : "");
-        char *nl = strchr(s->stats, '\n');
-        if (nl) *nl = 0;
-        pthread_mutex_unlock(&s->mu);
-        free(buf);
-        m = st_build(snap);
-    }
-    SsNames *ix = m ? names_index(m) : NULL;
-    pthread_mutex_lock(&s->mu);
-    s->new_s = snap;
-    s->new_m = m;
-    s->new_ix = ix;
-    s->done = true;
-    pthread_mutex_unlock(&s->mu);
-    return NULL;
+/* On the engine's worker: the metrics, and the names folded for the search. */
+static void *derive(const AnSnapshot *snap) {
+    StMetrics *m = st_build(snap);
+    if (!m) return NULL;
+    Built *b = xmalloc(sizeof *b);
+    b->m = m;
+    b->ix = names_index(m);
+    return b;
 }
 
-static void start_build(SView *s) {
-    if (s->running) return;
-    s->built = s->added;
-    s->done = false;
-    s->restart = false;
-    if (pthread_create(&s->th, NULL, worker, s)) {
-        perror("aigource: structure build");
-        return;
-    }
-    s->running = true;
-}
-
-/* Events arrived since the last build: build now, or after the running one
- * (cancelled when `now`: an explicit R). */
-static void request_build(SView *s, bool now) {
-    if (s->added == s->built && s->m) return;
-    if (!s->running) start_build(s);
-    else if (now) an_cancel(s->an, true), s->restart = true;
+static void drop(AnSnapshot *snap, void *x) {
+    Built *b = x;
+    if (b) ss_names_free(b->ix);
+    st_free_pair(b ? b->m : NULL, snap);
+    free(b);
 }
 
 SView *sv_new(const char *root) {
     SView *s = xcalloc(1, sizeof *s);
     s->root = xstrdup(root);
-    s->an = an_new(root);
-    pthread_mutex_init(&s->mu, NULL);
+    s->eng = eng_new(root, &(EngOpts){.quiet = DEBOUNCE, .cap = DEBOUNCE_MAX, .derive = derive, .drop = drop});
     s->view = 2;
     s->focus = s->shown = s->shown_turn = s->hov = s->turn = -1;
     s->insp.legend_turn = INT_MIN;
@@ -472,27 +435,20 @@ SView *sv_new(const char *root) {
     s->insp.doc.card = s->insp.card.card = -1;
     s->insp.mark.node = -1;
     s->press_node = s->drag_body = -1;
-    s->built = -1;
     return s;
 }
 
-void sv_add(SView *s, const Event *evs, size_t n) {
-    if (!n) return;
-    an_add(s->an, evs, n);
-    if (s->added == s->built) s->first_pending = GetTime();
-    s->added += (long)n;
-    s->last_add = GetTime();
-}
+void sv_add(SView *s, const Event *evs, size_t n) { eng_add(s->eng, evs, n); }
 
 static bool search_busy(const SView *s);
 
 bool sv_is_open(const SView *s) { return s && s->open; }
-bool sv_ready(const SView *s) { return s->open && s->m && !s->running && !s->hook_due && !search_busy(s); }
+bool sv_ready(const SView *s) { return s->open && s->m && !eng_running(s->eng) && !s->hook_due && !search_busy(s); }
 bool sv_typing(const SView *s) { return s && s->open && s->sr.open; }
 
 void sv_toggle(SView *s) {
     s->open = !s->open;
-    if (s->open) request_build(s, false);
+    if (s->open) eng_request(s->eng, false);
 }
 
 void sv_hooks(SView *s, const char *spec, int turn) {
@@ -550,18 +506,13 @@ static void drop_press(SView *s) {
 
 void sv_free(SView *s) {
     if (!s) return;
-    if (s->running) an_cancel(s->an, true), pthread_join(s->th, NULL);
-    search_free(s);
-    ss_names_free(s->new_ix);
-    st_free_pair(s->new_m, s->new_s);
-    st_free_pair(s->m, s->snap);
-    an_free(s->an);
+    search_free(s); /* first: its engine reads the snapshot's texts */
+    eng_free(s->eng);
     lay_free(&s->lay);
     si_free(&s->insp);
     arcs_free(s);
     free(s->bars.slot);
     free(s->fill);
-    pthread_mutex_destroy(&s->mu);
     free(s->root);
     free(s);
 }
@@ -886,23 +837,12 @@ void sv_search(SView *s, const char *query, int pick) {
 
 /* A finished build: the same folder, node and turns when they're still there. */
 static void swap_in(SView *s) {
-    pthread_mutex_lock(&s->mu);
-    bool done = s->done;
-    AnSnapshot *ns = s->new_s;
-    StMetrics *nm = s->new_m;
-    SsNames *nix = s->new_ix;
-    if (done) s->done = false, s->new_s = NULL, s->new_m = NULL, s->new_ix = NULL;
-    pthread_mutex_unlock(&s->mu);
-    if (!done) return;
-    pthread_join(s->th, NULL);
-    s->running = false;
-    an_cancel(s->an, false);
-    if (!nm) { /* cancelled */
-        st_free_pair(NULL, ns);
-        s->built = -1;
-        if (s->restart) start_build(s);
-        return;
-    }
+    AnSnapshot *os;
+    void *ox;
+    if (!eng_swap(s->eng, &os, &ox)) return;
+    Built *b;
+    AnSnapshot *ns = eng_snap(s->eng, (void **)&b);
+    StMetrics *nm = b->m;
     StMetrics *om = s->m;
     NodeRef f = ref_of(om, s->focus), sh = ref_of(om, s->shown), mk = ref_of(om, s->insp.mark.node);
     int turn = find_turn(nm, om, s->turn), sturn = find_turn(nm, om, s->shown_turn);
@@ -913,8 +853,9 @@ static void swap_in(SView *s) {
     s->fill_m = NULL;
     s->bars.m = NULL;
     s->insp.doc.m = NULL;
-    search_files(s, nm, nix); /* before the old texts go: the search may be reading them */
-    st_free_pair(om, s->snap);
+    search_files(s, nm, b->ix); /* before the old texts go: the search may be reading them */
+    b->ix = NULL;
+    eng_drop(s->eng, os, ox);
     s->snap = ns;
     s->m = nm;
     s->focus = find_ref(nm, f);
@@ -928,11 +869,10 @@ static void swap_in(SView *s) {
     free(f.id);
     free(sh.id);
     free(mk.id);
-    if (s->restart) start_build(s);
 }
 
 static void apply_hooks(SView *s) {
-    if (!s->hook_due || !s->m || s->running) return;
+    if (!s->hook_due || !s->m || eng_running(s->eng)) return;
     s->hook_due = false;
     const StMetrics *m = s->m;
     if (s->hook) {
@@ -1363,18 +1303,16 @@ static void draw_arcs(SView *s, Rectangle st, int from) {
 static void draw_building(SView *s, Rectangle st) {
     char line[320], st_line[256];
     float cx = st.x + st.width / 2, cy = st.y + st.height / 2;
-    if (s->m && !s->running) { /* built, and nothing in it */
+    if (s->m && !eng_running(s->eng)) { /* built, and nothing in it */
         sv_txc(F_SANS, "No files to show: these sessions changed nothing here.", cx, cy, 15, C_DIM);
         return;
     }
-    pthread_mutex_lock(&s->mu);
-    snprintf(st_line, sizeof st_line, "%s", s->stats);
-    pthread_mutex_unlock(&s->mu);
+    eng_stats(s->eng, st_line, sizeof st_line);
     int dots = (int)(GetTime() * 3) % 4;
     snprintf(line, sizeof line, "Building the structure view%.*s", dots, "...");
     sv_tx(F_SANS, line, cx - sv_tw(F_SANS, "Building the structure view...", 15) / 2, sv_mid(cy - 12, 15), 15, C_DIM);
     if (*st_line) snprintf(line, sizeof line, "%s", st_line);
-    else snprintf(line, sizeof line, "replaying %ld events on today's files", s->added);
+    else snprintf(line, sizeof line, "replaying %ld events on today's files", eng_added(s->eng));
     char fitb[320];
     sv_fit(F_MONO, fitb, sizeof fitb, line, 12, st.width - 40);
     sv_txc(F_MONO, fitb, cx, cy + 14, 12, C_FAINT);
@@ -1497,7 +1435,7 @@ static void draw_bar(SView *s, const Geo *g, Vector2 mp) {
         char k[2] = {(char)('1' + v), 0};
         sv_tx(F_MONO, k, r.x + 10 + tw + 6, sv_mid(r.y + 15, 11), 11, sel ? C_DIM : C_FAINT);
     }
-    if (s->running && s->m) { /* a live rebuild: the old one stays on screen */
+    if (eng_running(s->eng) && s->m) { /* a live rebuild: the old one stays on screen */
         float x = g->tab[2].x + g->tab[2].width + 14;
         if (x + sv_tw(F_SANS, "updating\xE2\x80\xA6", 12) < g->heat.x - 8 || g->heat.y > g->tab[2].y)
             sv_tx(F_SANS, "updating\xE2\x80\xA6", x, sv_mid(g->tab[2].y + 14, 12), 12, C_FAINT);
@@ -1892,7 +1830,7 @@ bool sv_keys(SView *s) {
     if (IsKeyPressed(KEY_ONE)) s->view = 0;
     if (IsKeyPressed(KEY_TWO)) s->view = 1;
     if (IsKeyPressed(KEY_THREE)) s->view = 2;
-    if (IsKeyPressed(KEY_R)) request_build(s, true);
+    if (IsKeyPressed(KEY_R)) eng_request(s->eng, true);
     bool esc = IsKeyPressed(KEY_ESCAPE);
     if (!s->m) {
         if (esc) s->open = false;
@@ -1955,18 +1893,11 @@ static bool handle_press(SView *s, const Geo *g, Vector2 mp) {
     return false;
 }
 
-/* Live: a rebuild once events stop for a moment (or have waited long enough). */
-static void live(SView *s) {
-    if (!s->m || s->running || s->added == s->built) return;
-    double now = GetTime();
-    if (now - s->last_add >= DEBOUNCE || now - s->first_pending >= DEBOUNCE_MAX) start_build(s);
-}
-
 void sv_frame(SView *s, Vector2 mp, float dt) {
     swap_in(s);
     apply_hooks(s);
     if (!s->open) return;
-    live(s);
+    eng_tick(s->eng); /* live: a rebuild once events stop for a moment (or have waited long enough) */
     search_update(s);
     Search *q = &s->sr;
     if (q->hold && q->hold_at.x < 0) q->hold_at = mp;

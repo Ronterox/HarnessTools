@@ -274,6 +274,8 @@ tests use it).
 -w, --watch        also show filesystem changes (yours, other tools), live
                    only; agent commands' changes go to that agent
 -W, --size WxH     window size (default 1600x900)
+--serve            no window: answer AI blame for the root's files over a unix
+                   socket (below, Serve); every session, no --watch
 --dump             print the normalized event stream as NDJSON and exit
 --follow SECS      with --dump: keep printing new events for SECS seconds
 --detail           with --dump: after each step, what the detail window shows
@@ -336,6 +338,52 @@ In the structure screen: `1` `2` `3` views, `[` `]` turns, `/` or `Ctrl+F` searc
 In the context screen: `←` `→` calls, `space` play, `L` follow the stage, `f` fit the open windows, `a` fit all, `/` or
 `Ctrl+F` filter the actions (`Enter` leaves the box; reopened with `/` or `Ctrl+F`, typing replaces the filter and `Backspace` clears it; `Backspace`, `Ctrl+W` a word), `Esc` clear
 (filter box, agent picker, selection, filter) then back, `X` back.
+
+## Serve
+
+`aigource --serve [-r ROOT]` runs headless: one warm analysis of the root
+(every session, as `--all`; no watcher, so your own saves never become "you"
+changes) answering, per file, which AI change and turn wrote each line. It is
+what Neovim talks to for AI blame; any number of clients share it.
+
+**Socket.** A unix stream socket in Linux's abstract namespace,
+`\0aigource/<the first 16 hex digits of sha1(ROOT)>`, ROOT as a real path
+(`AIG_SOCK_NS` replaces the `aigource` prefix; the tests use it). The kernel
+lets one process bind a name and leaves no file behind, so there is no stale
+socket and no race: the server binds before it reads any transcript, and a
+second one started for the same root says so on stderr and exits 0 at once.
+It then reads the history (answering `building` meanwhile), builds, and
+follows the transcripts: a rebuild 1 s after the last create, edit, delete or
+turn (other events don't trigger one), at most 3 s after the first one waiting.
+A root with no transcripts stays up and answers with every line unknown. With
+no client for 5 minutes, counted from launch and from each last disconnect, it
+exits 0 (`AIG_SERVE_IDLE` seconds instead). Builds run on their own thread and
+replies are queued per client: a slow client never holds a build up (one that
+leaves 256 MB unread is dropped).
+
+**Protocol.** NDJSON: one request per line, `{"id":…,"cmd":"…",…}`; the reply
+echoes `id` (`null` without one) and carries `rev`, the number of builds so far
+(0 before the first). A change id (`cid`) is only meaningful with its `rev`:
+change ids and turn indices renumber when a late transcript arrives, so requests
+name turns by their **turn key**, `"<prompt time in µs>\x1f<prompt's first
+line>"`, the same for a resumed session's copy of the prompt. Paths in requests
+are absolute or below the root; in replies, below the root.
+
+| request | reply |
+|---|---|
+| `{"cmd":"blame","file":F}` | `{"status":"ok","text":…,"runs":[[n,cid],…],"changes":{cid:{"turn_key","tool","agent","ts"}},"turns":{turn_key:{"slot","prompt","ts"}}}`: `text` is the file as the build read it, the base the runs fit (n lines by change cid, -1 unknown: written before these transcripts, or by no agent); `changes` and `turns` hold those the runs name (`turn_key` null for a change outside any turn; `agent` the session's title or the subagent's `type · task`; `ts` epoch seconds; `slot` null for now). `{"status":"building"}` before the first build; `{"status":"none"}` for a file outside the tree (ignored, binary, over 8 MB, past the 5000-file cap, missing) |
+| `{"cmd":"subscribe"}` | `{"status":"ok"}`; then after each build whose resolved blame (the turn key of each line) changed for some files, a push `{"event":"changed","files":[…],"rev":N}` naming them (every file after the first build; files gone from the tree too) |
+| `{"cmd":"saved","file":F}` | `{"status":"ok"}`; the file changed on disk (a save, a checkout): builds read today's files, so it counts as an event toward the next rebuild |
+| `{"cmd":"turn_lines","turn_key":K}` | `{"status":"ok","files":[{"file","runs"},…]}`: every file holding lines of that turn, its runs with other turns' lines as -1; `building` before the first build |
+| `{"cmd":"focus","turn_key":K,"file":F,"line":L}` | `{"status":"ok","host":"headless"}` (a GUI host will select it) |
+| `{"cmd":"quit"}` | no reply: `{"event":"handover","rev":N}` to every client, then it closes and exits 0 |
+
+Anything else gets `{"status":"error","error":…}`. A line over 1 MB drops its
+client. Bytes that aren't UTF-8 come back as U+FFFD (an `id`, a prompt, a turn
+key; a key is matched in that form, so one sent back as received works). A
+client may send its requests and shut its side (`shutdown(SHUT_WR)`): they are
+answered, then it is closed. On `quit` the socket is released before the
+handover goes out, so the next host can bind at once.
 
 ## Where the data comes from
 
@@ -401,6 +449,12 @@ on the fixture, a reload keeping the user's choices by item key (the fixture
 transcript appended), and the window layout (settled apart, pinned windows
 kept, newest nearest); with `AIG_TEST_DISPLAY`, a `--shot` of the fixture's main
 agent with an action selected (plain and asan).
+`tests/serve.py` (part of `make test`, plain and leak-checked) runs `--serve`
+end to end on the structure fixture: every request above, blame runs against
+`--structure-dump`'s and text against the file, two servers started at once
+(one serves), `building` before the first build, `saved` after an edit (the
+`changed` push, the new blame), quit's handover, a root with no transcripts,
+and the idle exit.
 `make test-watch` (~25s) runs the watcher end to end in a throwaway repo.
 `make asan` builds `build/asan/aigource` with AddressSanitizer and UBSan (its
 own objects, the normal build is untouched); run it with the same flags, e.g.

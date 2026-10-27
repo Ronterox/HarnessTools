@@ -170,6 +170,12 @@ double now_wall(void) {
     return ts.tv_sec + ts.tv_nsec / 1e9;
 }
 
+double now_mono(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1e9;
+}
+
 void fmt_clock(char *buf, size_t n, double ts, const char *fmt) {
     time_t t = (time_t)ts;
     struct tm tm;
@@ -216,13 +222,15 @@ static int utf8_len(const unsigned char *s) {
     return n;
 }
 
-void json_str(FILE *f, const char *s) {
+void json_str(FILE *f, const char *s) { json_strn(f, s, s ? strlen(s) : 0); }
+
+void json_strn(FILE *f, const char *s, size_t len) {
     fputc('"', f);
-    for (; s && *s; s++) {
+    for (const char *end = s ? s + len : s; s < end; s++) {
         unsigned char c = (unsigned char)*s;
         if (c >= 0x80) { /* pass valid UTF-8 through, replace the rest with U+FFFD */
             int n = utf8_len((const unsigned char *)s);
-            if (n) { fwrite(s, 1, (size_t)n, f); s += n - 1; }
+            if (n && n <= end - s) { fwrite(s, 1, (size_t)n, f); s += n - 1; }
             else fputs("\xEF\xBF\xBD", f);
             continue;
         }
@@ -233,6 +241,16 @@ void json_str(FILE *f, const char *s) {
         else fputc(c, f);
     }
     fputc('"', f);
+}
+
+char *utf8_fix(const char *s) {
+    Buf b = {0};
+    for (; *s; s++) {
+        int n = (unsigned char)*s >= 0x80 ? utf8_len((const unsigned char *)s) : 1;
+        if (n) buf_put(&b, s, (size_t)n), s += n - 1;
+        else buf_puts(&b, "\xEF\xBF\xBD");
+    }
+    return b.s ? b.s : xstrdup("");
 }
 
 uint32_t hash_str(const char *s) {

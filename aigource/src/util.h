@@ -68,6 +68,7 @@ void path_normalize(char *p);
 
 double parse_iso8601(const char *s); /* epoch seconds, 0 when unparseable */
 double now_wall(void);
+double now_mono(void); /* seconds on CLOCK_MONOTONIC: for waits and cadences */
 void fmt_clock(char *buf, size_t n, double ts, const char *fmt); /* strftime, local time */
 double jfix(double v, int digits); /* rounded as JavaScript's toFixed: half away from zero */
 
@@ -76,6 +77,10 @@ int count_lines(const char *s, size_t n);
 /* First non-empty line of s, at most max bytes (UTF-8 safe, "…" when cut). */
 char *first_line(const char *s, size_t max);
 void json_str(FILE *f, const char *s); /* writes a quoted, escaped JSON string */
+/* The same for the first n bytes of s, NULs included (s[n] must be readable: a NUL). */
+void json_strn(FILE *f, const char *s, size_t n);
+/* s with every byte that isn't valid UTF-8 replaced by U+FFFD, as json_str writes it. */
+char *utf8_fix(const char *s);
 
 uint32_t hash_str(const char *s);
 

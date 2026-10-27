@@ -10,6 +10,7 @@
 #include "ingest.h"
 #include "metrics.h"
 #include "render.h"
+#include "serve.h"
 #include "transcript.h"
 #include "util.h"
 
@@ -25,6 +26,9 @@ static void usage(void) {
           "  -w, --watch        also show filesystem changes (yours, other tools), live\n"
           "                     only; agent commands' changes go to that agent\n"
           "  -W, --size WxH     window size (default 1600x900)\n"
+          "  --serve            no window: answer AI blame for the root's files over a unix\n"
+          "                     socket (every session; README, Serve); exits 5 min after\n"
+          "                     its last client leaves\n"
           "  --dump             print the normalized event stream as NDJSON and exit\n"
           "  --follow SECS      with --dump: keep printing new events for SECS seconds\n"
           "  --detail           with --dump: after each step, what the detail window shows\n"
@@ -247,7 +251,7 @@ int main(int argc, char **argv) {
     char root[PATH_MAX];
     const char *root_arg = ".", *metrics = NULL, *context = NULL, *context_at = NULL, *context_view = NULL;
     double since_h = 2;
-    int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0, rebuild = 0;
+    int all = 0, want_dump = 0, watch = 0, details = 0, want_structure = 0, rebuild = 0, serve = 0;
     double follow = 0;
     VizOpts vo = {.speed = 60, .width = 1600, .height = 900, .frames = 600, .seek = -1,
                   .mouse_x = -1, .mouse_y = -1, .context_call = INT_MIN, .context_sel = -1};
@@ -285,6 +289,7 @@ int main(int argc, char **argv) {
         else if (!strcmp(a, "--dump")) want_dump = 1;
         else if (!strcmp(a, "--detail")) details = 1;
         else if (!strcmp(a, "--structure-dump")) want_structure = 1;
+        else if (!strcmp(a, "--serve")) serve = 1;
         else if (!strcmp(a, "-h") || !strcmp(a, "--help")) { usage(); return 0; }
         else if (*a == '-') { fprintf(stderr, "aigource: unknown option %s\n", a); usage(); return 2; }
         else files[nfiles++] = a;
@@ -343,6 +348,12 @@ int main(int argc, char **argv) {
     evq_init(&q);
     IngestOpts io = {.root = root, .since = all ? 0 : now_wall() - since_h * 3600,
                      .files = files, .nfiles = nfiles, .watch = watch};
+    if (serve) { /* before any transcript is read: the socket first */
+        int rc = serve_run(&io);
+        free(files);
+        free(context_path);
+        return rc;
+    }
     Ingest *in = ingest_new(&io, &q);
     if (want_dump) return dump(in, &q, follow, details);
     if (want_structure) {

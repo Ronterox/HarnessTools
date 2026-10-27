@@ -2221,11 +2221,11 @@ AnSnapshot *an_build(Analysis *an) {
     int np = 0;
     t[np] = mono();
     memset(&an->clk, 0, sizeof an->clk);
-    an->builds++; /* one build at a time: sview's worker, or the caller's thread */
+    an->builds++; /* one build at a time: the engine's worker, or the caller's thread */
     pthread_mutex_lock(&an->mu); /* a copy of what was added; its strings stay put */
     b->nev = (int)an->nev;
     b->ev = xmalloc((size_t)b->nev * sizeof *b->ev);
-    memcpy(b->ev, an->ev, (size_t)b->nev * sizeof *b->ev);
+    if (b->nev) memcpy(b->ev, an->ev, (size_t)b->nev * sizeof *b->ev); /* none yet: a repo with no sessions */
     for (int i = 0; i < an->nname; i++) b_name(b, an->name[i]);
     b->owned_from = b->nname;
     pthread_mutex_unlock(&an->mu);

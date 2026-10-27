@@ -313,7 +313,19 @@ function; `work_all`), each file's versions parsed incrementally.
 text, at file level only, and changed unread.
 
 ### Rebuilds and caching
-Live rebuilds (3 s after new events, at most every 15 s) run the whole build
+`engine.c` keeps one root's `Analysis` warm: it is fed the events, runs builds
+on a worker thread one at a time (`an_build`, then what its owner derives from
+the snapshot there: the structure screen's metrics and search names, the
+server's file index), keeps the latest snapshot and decides when to rebuild,
+on a monotonic clock. The structure screen (`sview.c`) rebuilds 3 s after new
+events of any kind, at most 15 s after the first one waiting, and only while it
+is open; `--serve` (`serve.c`) 1 s after the last create, edit, delete or turn,
+at most 3 s after the first (other events don't trigger one), and on `saved`.
+`R` cancels a running build and starts again; otherwise a request during a
+build waits for it. A finished build becomes the latest only when the owner
+swaps it in (the screen at the start of a frame), and the pair before it is
+freed by the owner once nothing reads it.
+Live rebuilds run the whole build
 again on everything added so far: the replay is not incremental, so nothing it
 derives can go stale. What a build reads and computes along the way goes into
 caches on the `Analysis`, kept in memory only, each entry under a key naming
