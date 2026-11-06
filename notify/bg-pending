@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# Print how many background tasks (agents, shells, monitors, backgrounded MCP
+# calls) a Claude Code session launched and has not yet seen finish.
+#
+#   bg-pending TRANSCRIPT.jsonl          -> prints the count
+#   bg-pending --list TRANSCRIPT.jsonl   -> prints one pending task id per line
+#
+# Exit status is non-zero (and nothing is printed) when the transcript is
+# missing/unreadable or cannot be parsed, so callers can fail open.
+#
+# Launches (from the harness's structured .toolUseResult, never model text):
+#   Bash run_in_background / auto-backgrounded   {backgroundTaskId}
+#   Agent run_in_background                      {status:"async_launched", agentId}
+#   SendMessage that resumed a finished agent    {resumedAgentId}
+#   Monitor (non-persistent)                     {taskId, timeoutMs, persistent:false}
+#   MCP call moved to the background             [{text:"MCP tool ... moved to the background as task ID ..."}]
+# Completions:
+#   any <task-notification> block that has a <status> (completed, failed,
+#   killed, stopped, ...), every <task-id> in it; found in queue-operation
+#   enqueue lines, plain-string user messages and queued_command attachments.
+#   Monitor *event* notifications carry no <status> and are not completions.
+#   TaskStop results {task_id, task_type} (no notification follows a TaskStop).
+# A task is pending when its latest launch comes after its latest completion.
+#
+# Staleness:
+#   - Launches older than BG_PENDING_MAX_AGE seconds (default 10800 = 3h) are
+#     ignored; stops in the UI leave no transcript marker, so this is the
+#     backstop against muting a session forever.
+#   - A Monitor is dead once its timeoutMs has passed (timeouts leave no marker).
+#   - Persistent monitors are never counted: they run until stopped, nobody is
+#     waiting for them to "finish".
+#   - Resume needs no special case: on --resume Claude Code appends a
+#     <status>stopped</status> notification ("didn't finish before the previous
+#     session ended") for every unfinished task, which counts as a completion.
+
+list=0
+[[ $1 == --list ]] && { list=1; shift; }
+transcript=$1
+[[ -n $transcript && -r $transcript ]] || exit 2
+
+# rg keeps only lines that can matter (a few % of a large transcript); the
+# second rg drops API request dumps (they quote notifications verbatim) and
+# queue removals (copies of an enqueue already seen).
+out=$(rg -N --no-config -e '"backgroundTaskId"|"async_launched"|"resumedAgentId"|"task_type"|"taskId"|moved to the background as task|<status>' -- "$transcript" |
+  rg -N --no-config -v '^\{"type":"(api-request|queue-operation","operation":"(remove|dequeue))' |
+  jq -nr --argjson cap "${BG_PENDING_MAX_AGE:-10800}" --argjson list "$list" '
+    def ts: .timestamp // "" | sub("\\.[0-9]+"; "") | try fromdateiso8601 catch null;
+    def done_ids:
+      [splits("<task-notification>")][1:][] | split("</task-notification>")[0]
+      | select(test("<status>")) | scan("<task-id>([^<]+)</task-id>")[0] | {d: .};
+    def events:
+      if .type == "queue-operation" then
+        select(.operation == "enqueue") | .content | strings | done_ids
+      elif .type == "attachment" then
+        .attachment | select(.type? == "queued_command") | .prompt | strings | done_ids
+      elif .type == "user" then
+        (.message.content | strings | done_ids),
+        (ts as $t | .toolUseResult |
+          if type == "object" then
+            if .backgroundTaskId then {l: .backgroundTaskId, t: $t}
+            elif .status == "async_launched" and .agentId then {l: .agentId, t: $t}
+            elif .resumedAgentId then {l: .resumedAgentId, t: $t}
+            elif .task_type and .task_id then {d: .task_id}
+            elif (.taskId | type) == "string" and has("timeoutMs") and has("persistent") then
+              select(.persistent != true)
+              | {l: .taskId, t: $t, x: (if $t and .timeoutMs then $t + .timeoutMs / 1000 else null end)}
+            else empty end
+          elif type == "array" then
+            .[] | objects | .text | strings
+            | capture("^MCP tool .* It was moved to the background as task (?<id>[A-Za-z0-9_-]+)")
+            | {l: .id, t: $t}
+          else empty end)
+      else empty end;
+    now as $now
+    | reduce (inputs | events) as $e ({};
+        if $e.l then .[$e.l] = $e else del(.[$e.d]) end)
+    | [.[] | select(.t != null and $now - .t < $cap and (.x == null or $now < .x))]
+    | if $list == 1 then .[].l else length end'
+  status=("${PIPESTATUS[@]}")
+  # rg exits 1 on "no match" (zero pending); anything else is an error.
+  (( status[0] <= 1 && status[2] == 0 ))) || exit 3
+[[ -z $out ]] || printf '%s\n' "$out"
