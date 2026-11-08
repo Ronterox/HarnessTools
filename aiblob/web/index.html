@@ -1,0 +1,1255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>aiblob</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0A0E13; --panel: #0F151C; --line: #1D2731; --ink: #D7DEE7; --mute: #7A8797; --faint: #3A4654;
+  --add: #34D27B; --rem: #FF4D5E; --mix: #FFB21E; --err: #FF7043; --data: #7FA9E0; --git: #8B96A5;
+  --sans: 'Barlow Semi Condensed', 'Arial Narrow', sans-serif; --mono: 'JetBrains Mono', ui-monospace, monospace;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root { --bg: #F2F4F6; --panel: #FFFFFF; --line: #D6DDE4; --ink: #17202A; --mute: #5B6878; --faint: #B4BEC9;
+          --add: #16A35A; --rem: #E5293C; --mix: #D98E00; --err: #E2531F; --data: #3E6FB0; --git: #6F7B8A; color-scheme: light; }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); font: 15px/1.35 var(--sans); }
+#map { position: fixed; inset: 0; display: block; }
+button, select { font: inherit; color: var(--ink); background: transparent; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+button:hover, select:hover { border-color: var(--mute); }
+button:focus-visible, select:focus-visible, #tl:focus-visible { outline: 2px solid var(--mix); outline-offset: 2px; }
+#top { position: fixed; top: 0; left: 0; right: 0; height: 46px; display: flex; align-items: center; gap: 14px; padding: 0 16px;
+       border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 82%, transparent); backdrop-filter: blur(6px); z-index: 3; }
+.mark { font-weight: 700; font-size: 20px; letter-spacing: .02em; display: flex; align-items: center; gap: 7px; }
+.mark i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.meta { color: var(--mute); font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+.badge { font: 11px var(--mono); padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--mute); }
+.badge.sample { color: var(--mix); border-color: color-mix(in srgb, var(--mix) 50%, transparent); }
+#top button { padding: 4px 12px; font-weight: 600; letter-spacing: .03em; }
+#bar { position: fixed; left: 0; right: 0; bottom: 0; height: 118px; background: var(--panel); border-top: 1px solid var(--line);
+       z-index: 3; display: grid; grid-template-rows: auto 1fr; padding: 8px 16px 10px; gap: 6px; }
+#status { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline; min-width: 0; }
+#status .l1 { display: flex; gap: 10px; align-items: baseline; font: 12px var(--mono); white-space: nowrap; }
+.tool { padding: 1px 7px; border-radius: 4px; background: var(--line); color: var(--ink); font-weight: 500; }
+.file { color: var(--ink); } .add { color: var(--add); } .rem { color: var(--rem); } .dim { color: var(--mute); }
+#said { font-size: 16px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#said.dim { color: var(--mute); font-weight: 400; }
+#said.git { color: var(--git); font-weight: 400; }
+.tool.git { background: color-mix(in srgb, var(--git) 22%, var(--line)); color: var(--git); }
+.who { display: inline-block; max-width: 40ch; overflow: hidden; text-overflow: ellipsis; color: var(--mute); }
+.who i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.warn { color: var(--mix); cursor: help; }
+#sess { display: none; align-items: center; gap: 2px; min-width: 0; overflow: hidden; white-space: nowrap; font: 11px var(--mono); color: var(--mute); }
+#sess .lab { margin-right: 6px; text-transform: uppercase; letter-spacing: .1em; }
+#sess button { width: auto; height: 20px; padding: 0 7px; border: 0; border-radius: 4px; font: inherit; color: var(--mute); display: inline-flex; align-items: center; gap: 6px; }
+#sess button:hover { color: var(--ink); background: var(--line); }
+#sess button.on { color: var(--ink); background: var(--line); }
+#sess button i { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+#sess button i.gt { width: 2px; height: 11px; border-radius: 0; background: var(--git); }
+#sess button b { font-weight: 500; opacity: .7; }
+body.multi #bar { height: 138px; grid-template-rows: auto auto 1fr; }
+body.multi #sess { display: flex; }
+body.multi #empty { inset: 46px 0 138px; }
+#controls { display: grid; grid-template-columns: auto auto auto auto 1fr; gap: 8px; align-items: center; min-width: 0; }
+#controls button { width: 34px; height: 30px; display: grid; place-items: center; padding: 0; }
+#controls select { height: 30px; padding: 0 6px; background: var(--panel); }
+#count { font: 12px var(--mono); color: var(--mute); min-width: 64px; text-align: right; }
+#tl { width: 100%; height: 48px; display: block; cursor: pointer; }
+#tip { position: fixed; z-index: 6; pointer-events: none; max-width: 340px; padding: 8px 10px; border-radius: 8px; display: none;
+       background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.35); font-size: 14px; }
+#tip b { font-weight: 700; } #tip .sum { margin: 3px 0; }
+.risk { font: 10px var(--mono); padding: 0 5px; margin-left: 6px; border-radius: 4px; border: 1px solid var(--mute); color: var(--mute); }
+.risk-high { color: var(--rem); border-color: var(--rem); } .risk-medium { color: var(--mix); border-color: var(--mix); } #tip .k { font: 11px var(--mono); color: var(--mute); }
+#tip .sym, #card .sym { display: inline-block; font: 11px var(--mono); padding: 0 5px; margin: 2px 3px 0 0; border-radius: 4px; border: 1px dotted var(--data); color: var(--data); }
+#card { position: fixed; z-index: 5; width: 340px; padding: 12px 14px; border-radius: 10px; display: none;
+        background: var(--panel); border: 1px solid var(--line); box-shadow: 0 14px 40px rgba(0,0,0,.4); }
+#card h3 { margin: 0 0 2px; font-size: 19px; } #card .loc { font: 12px var(--mono); color: var(--mute); }
+#card .fk { margin: 9px 0 2px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--mute); }
+#card .sum { margin: 3px 0 0; font-size: 14px; }
+#card pre { margin: 10px 0 8px; padding: 8px 10px; border-radius: 6px; background: var(--bg); border-left: 3px solid var(--mix);
+            font: 12px/1.55 var(--mono); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+#legend { position: fixed; top: 56px; right: 16px; z-index: 4; width: 300px; padding: 12px 14px; border-radius: 10px; display: none;
+          background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--line); font-size: 14px; }
+#legend.on { display: block; }
+#legend h4 { margin: 8px 0 4px; font: 11px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--mute); }
+#legend h4:first-child { margin-top: 0; }
+#legend .row { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+#legend .sw { width: 18px; height: 14px; border-radius: 7px; border: 2px solid; flex: none; }
+#legend .dot { width: 14px; height: 14px; border-radius: 50%; flex: none; }
+#legend .sw.pg { width: 13px; height: 16px; border-radius: 2px; border-width: 1.5px; margin: 0 2.5px; }
+#legend .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 8px; }
+#legend .keys { font: 11px var(--mono); color: var(--mute); margin-top: 8px; line-height: 1.6; }
+#empty { position: fixed; inset: 46px 0 118px; display: grid; place-items: center; color: var(--mute); font: 13px var(--mono); pointer-events: none; }
+</style>
+</head>
+<body>
+<canvas id="map" role="img" aria-label="Application map: blobs are entry points and shared hubs, lines are calls and shared data"></canvas>
+<header id="top">
+  <div class="mark"><span>aiblob</span><i style="background:var(--add)"></i><i style="background:var(--mix)"></i><i style="background:var(--rem)"></i></div>
+  <div class="meta" id="meta">loading…</div>
+  <span class="badge" id="src"></span>
+  <button id="legendBtn" aria-expanded="false" aria-controls="legend">Legend</button>
+</header>
+<aside id="legend" aria-label="Legend"></aside>
+<div id="empty">loading timeline…</div>
+<div id="tip" role="tooltip"></div>
+<div id="card" role="dialog" aria-label="Function detail"></div>
+<footer id="bar">
+  <div id="status" aria-live="polite"><div class="l1" id="l1"></div><div id="said"></div></div>
+  <div id="sess" aria-label="Sessions"></div>
+  <div id="controls">
+    <button id="prev" aria-label="Previous step"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 2v10M12 2 5 7l7 5z" fill="currentColor" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    <button id="play" aria-label="Play"></button>
+    <button id="next" aria-label="Next step"><svg width="14" height="14" viewBox="0 0 14 14"><path d="M11 2v10M2 2l7 5-7 5z" fill="currentColor" stroke="currentColor" stroke-width="1.6"/></svg></button>
+    <select id="speed" aria-label="Playback speed"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select>
+    <canvas id="tl" tabindex="0" role="slider" aria-label="Timeline step" aria-valuemin="0"></canvas>
+  </div>
+</footer>
+<script>
+'use strict';
+/* ───────────────────────── utilities ───────────────────────── */
+const $ = s => document.querySelector(s);
+const TAU = Math.PI * 2, RECENCY = 6, TOP = 46;
+let BOTTOM = 118;
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+function hash(s) { let h = 2166136261; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+function rng(seed) { return () => { seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const EMOJI_FONT = '"Noto Color Emoji","Apple Color Emoji","Segoe UI Emoji",sans-serif';
+const SANS = '"Barlow Semi Condensed","Arial Narrow",sans-serif', MONO = '"JetBrains Mono",ui-monospace,monospace';
+
+/* ───────────────────────── theme ───────────────────────── */
+const KIND_HUE = { route: 200, hub: 232, entry: 44, hook: 280, 'error-handler': 345, command: 168, tests: 80 };
+const KIND_LABEL = { route: 'route', hub: 'shared hub', entry: 'entry', hook: 'hook', 'error-handler': 'error handler', command: 'command', tests: 'tests', orphan: 'orphan (unreached)',
+                     file: 'referenced file', text: 'text file' };
+/* non-code files are pages, not blobs: `file` = code references it (pale, tinted by its region), `text` = nothing does (plain white) */
+const PAGE = k => k === 'file' || k === 'text', TEXT_REGION = 'text files';
+const lightQ = matchMedia('(prefers-color-scheme: light)');
+let T = {};
+function readTheme() {
+  const cs = getComputedStyle(document.documentElement), v = n => cs.getPropertyValue(n).trim(), light = lightQ.matches;
+  T = { light, bg: v('--bg'), ink: v('--ink'), mute: v('--mute'), line: v('--line'), faint: v('--faint'),
+        add: v('--add'), rem: v('--rem'), mix: v('--mix'), err: v('--err'), data: v('--data'), git: v('--git'),
+        main: light ? '40,55,72' : '196,212,230', flash: light ? '#0B1220' : '#FFFFFF' };
+  buildLegend(); buildSessions();
+}
+function kindColors(kind, region) {
+  if (kind === 'text') return T.light ? { fill: '#FFFFFF', stroke: 'hsl(210 12% 74%)', text: T.ink, fold: 'hsl(210 14% 91%)', rule: 'hsl(210 10% 82%)' }
+                                      : { fill: '#FFFFFF', stroke: 'hsl(210 8% 72%)', text: T.ink, fold: 'hsl(210 8% 85%)', rule: 'hsl(210 8% 80%)' };
+  if (kind === 'file') { const h = moduleHue(region || 'templates');
+    return T.light ? { fill: `hsl(${h} 46% 95%)`, stroke: `hsl(${h} 28% 60%)`, text: T.ink, fold: `hsl(${h} 34% 86%)`, rule: `hsl(${h} 25% 80%)` }
+                   : { fill: `hsl(${h} 26% 76%)`, stroke: `hsl(${h} 32% 56%)`, text: T.ink, fold: `hsl(${h} 22% 62%)`, rule: `hsl(${h} 18% 62%)` }; }
+  if (kind === 'orphan') return T.light ? { fill: 'hsl(210 8% 89%)', stroke: 'hsl(210 5% 62%)', text: T.mute } : { fill: 'hsl(210 5% 14%)', stroke: 'hsl(210 4% 36%)', text: T.mute };
+  const h = KIND_HUE[kind] ?? 210;
+  return T.light ? { fill: `hsl(${h} 62% 93%)`, stroke: `hsl(${h} 52% 42%)`, text: T.ink } : { fill: `hsl(${h} 32% 15%)`, stroke: `hsl(${h} 62% 61%)`, text: T.ink };
+}
+const moduleHue = m => (hash(m) * 137.5) % 360;
+const regionTint = (m, sl) => m === TEXT_REGION ? `hsl(210 6% ${sl.split(' ')[1]})` : `hsl(${moduleHue(m)} ${sl})`;
+
+/* ───────────────────────── data ───────────────────────── */
+let STEPS = [], cur = 0, SRC = '';
+const IDX = [];            // per step: { blobs: Map id→blob, funcs: Map qual→func, owner: Map qual→blob id }
+async function load() {
+  const qs = new URLSearchParams(location.search), tries = qs.get('src') ? [qs.get('src')] : ['timeline.json', 'sample-timeline.json'];
+  for (const url of tries) {
+    try { const r = await fetch(url, { cache: 'no-store' }); if (r.ok) { SRC = url; return await r.json(); } } catch (e) { /* try next */ }
+  }
+  throw new Error('no timeline.json or sample-timeline.json next to this page');
+}
+/* <expand> schema v3 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only what
+   changed. Rebuild every step's full state in order, as timeline.expand() does: a blob a step does not send is the
+   previous one with zeroed deltas (one copy, shared by the following steps until it changes), kept in its place;
+   new blobs append unless the step gives `order`; edges are re-sorted the way the analyzer writes them. A file
+   without `schema` >= 3 has every step full. perf.py --page runs this block in node. */
+const EDGE_RANK = { main: 0, error: 1, data: 2, ref: 3 };
+const zeroDelta = d => { const z = {}; for (const k in d) z[k] = k === 'state' ? 'same' : Array.isArray(d[k]) ? [] : 0; return z; };
+const restBlob = b => b.delta ? { ...b, delta: zeroDelta(b.delta), funcs: (b.funcs || []).map(f => f.delta ? { ...f, delta: zeroDelta(f.delta) } : f) } : b;
+const edgeId = e => e.a + '\n' + e.b + '\n' + e.kind;
+const cmpStr = (p, q) => p < q ? -1 : p > q ? 1 : 0;
+const edgeCmp = (p, q) => (EDGE_RANK[p.kind] ?? 4) - (EDGE_RANK[q.kind] ?? 4) || cmpStr(p.a, q.a) || cmpStr(p.b, q.b);
+function expandSteps(tl) {
+  const v3 = tl.schema >= 3;
+  let cur = new Map(), fresh = new Set(), edges = new Map();
+  return (tl.steps || []).map((st, i) => {
+    const sent = st.blobs || [];
+    let elist;
+    if (!v3 || st.full || i === 0 || st.edges) {          // a delta step never carries `edges`
+      cur = new Map(sent.map(b => [b.id, b])); fresh = new Set(cur.keys());
+      elist = st.edges || []; edges = new Map(elist.map(e => [edgeId(e), e]));
+    } else {
+      const gone = new Set(st.removed_blobs || []), byId = new Map(sent.map(b => [b.id, b])), next = new Map();
+      for (const [id, b] of cur) if (!gone.has(id)) next.set(id, byId.get(id) || (fresh.has(id) ? restBlob(b) : b));
+      for (const b of sent) next.set(b.id, b);          // a blob already there keeps its place, a new one appends
+      cur = st.order ? new Map(st.order.map(id => [id, next.get(id)])) : next; fresh = new Set(byId.keys());
+      for (const e of st.edges_remove || []) edges.delete(edgeId(e));
+      for (const e of st.edges_add || []) edges.set(edgeId(e), e);
+      elist = [...edges.values()].sort(edgeCmp);
+    }
+    const out = { ...st, blobs: [...cur.values()], edges: elist };
+    delete out.removed_blobs; delete out.edges_add; delete out.edges_remove; delete out.order; delete out.full;
+    return out;
+  });
+}
+/* </expand> */
+/* ───────────────────────── sessions & git steps ─────────────────────────
+   SCHEMA.md "Sessions": a step may carry session / agent / author ('git' = a commit that reconciles the snapshot, not AI
+   work) / applied / seeded / empty. A timeline without any of them (one session, every step ai/main) shows none of this. */
+const isGit = s => s.author === 'git';
+const SESS_HUES = [210, 28, 150, 285, 52, 335, 182, 95];       // at most 8 session colours, cycling
+const sessCol = (ci, a = 1) => `hsl(${SESS_HUES[ci % SESS_HUES.length]} ${T.light ? 55 : 50}% ${T.light ? 45 : 62}% / ${a})`;
+let SESS = new Map(), GITS = [], BOUNDS = [], MULTI = false, SESS_ON = false, SESS_META = new Map();
+function indexSessions() {
+  SESS = new Map(); GITS = []; BOUNDS = [];
+  let prev, last = -1, sub = false;
+  STEPS.forEach((s, i) => {
+    if (isGit(s)) { GITS.push(i); s.tint = last; return; }
+    if (s.agent && s.agent !== 'main') sub = true;
+    const id = s.session || '';
+    let o = SESS.get(id); if (!o) SESS.set(id, o = { id, ci: SESS.size, n: 0, first: i });
+    o.n++; s.sci = s.tint = last = o.ci;
+    if (id !== prev) BOUNDS.push(i);       // first step of a run of one session: git steps never start or end one
+    prev = id;
+  });
+  SESS_ON = SESS.size > 1 || GITS.length > 0; MULTI = SESS_ON || sub;
+  document.body.classList.toggle('multi', SESS_ON); BOTTOM = SESS_ON ? 138 : 118;
+}
+const whoText = s => `${s.session || ''}${s.agent ? ' · ' + s.agent : ''}`;
+const fmtT = t => t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '?';
+function buildSessions() {
+  const el = $('#sess'); if (!el) return;
+  if (!SESS_ON) { el.innerHTML = ''; return; }
+  el.innerHTML = '<span class="lab">sessions</span>' + [...SESS.values()].map(o => {
+    const m = SESS_META.get(o.id), tip = `session ${o.id} · ${o.n} steps` + (m ? `\n${fmtT(m.start)} → ${fmtT(m.end)}${m.prompt ? '\n' + m.prompt.split('\n')[0] : ''}` : '');
+    return `<button data-sci="${o.ci}" data-i="${o.first}" title="${esc(tip)}"><i style="background:${sessCol(o.ci)}"></i>${esc(o.id || '—')} <b>${o.n}</b></button>`;
+  }).join('') + (GITS.length ? `<button data-sci="git" data-i="${GITS[0]}" title="git commits that reconcile the snapshot with the repo: not AI work"><i class="gt"></i>git <b>${GITS.length}</b></button>` : '');
+  markSession();
+}
+function markSession() {
+  const s = STEPS[cur]; if (!s || !SESS_ON) return;
+  const key = isGit(s) ? 'git' : String(s.sci);
+  for (const b of $('#sess').querySelectorAll('button')) b.classList.toggle('on', b.dataset.sci === key);
+}
+function normalize(tl) {
+  SESS_META = new Map((Array.isArray(tl.sessions) ? tl.sessions : []).map(m => [m.id, m]));     // optional top-level `sessions`: legend tooltips
+  const zero = () => ({ added: 0, removed: 0, state: 'same' });
+  STEPS = expandSteps(tl).map((st, i) => {
+    st.idx ??= i; st.turn ??= 0; st.added ??= 0; st.removed ??= 0; st.blobs ||= []; st.edges ||= [];
+    const blobs = new Map(), funcs = new Map(), owner = new Map();
+    for (const b of st.blobs) {
+      b.funcs ||= []; b.data ||= []; b.delta ||= zero(); b.size = Math.max(1, b.size || 0); b.complexity ||= 0; b.errors ||= 0; b.module ||= b.id.split(/[:.]/)[0]; b.region = regionOf(b);
+      b.face = b.label?.emoji || b.emoji || (PAGE(b.kind) ? '' : '•'); b.title = b.label?.title || b.name;
+      if (PAGE(b.kind)) b.path ||= b.id.replace(/^file:/, '');
+      blobs.set(b.id, b);
+      for (const f of b.funcs) { f.delta ||= zero(); f.calls ||= []; f.refs ||= []; f.data ||= []; f.snippet ||= []; f.lines = Math.max(1, f.lines || 0); funcs.set(f.qual, f); owner.set(f.qual, b.id); }
+    }
+    st.edges = st.edges.filter(e => blobs.has(e.a) && blobs.has(e.b));
+    // a data symbol shared by more than 3 blobs is drawn as spokes from one small data node instead of an all-to-all mesh
+    const members = new Map();
+    for (const e of st.edges) if (e.kind === 'data') for (const v of e.via || []) { if (!members.has(v)) members.set(v, new Set()); members.get(v).add(e.a).add(e.b); }
+    const wide = new Set([...members].filter(([, m]) => m.size > 3).map(([v]) => v)), groups = new Map();
+    st.spokes = new Set(st.edges.filter(e => e.kind === 'data' && (e.via || []).length && e.via.every(v => wide.has(v))));   // per step: edges are shared between steps
+    for (const v of wide) {
+      const ids = [...members.get(v)].sort(), key = ids.join('\n');
+      if (!groups.has(key)) groups.set(key, { key, ids, syms: [] });
+      groups.get(key).syms.push(v);
+    }
+    st.dataNodes = [...groups.values()];
+    IDX[i] = { blobs, funcs, owner };
+    return st;
+  });
+  buildStains(); indexSessions();
+}
+/* recency of any change, additions included: only drives the pulse of edges between recently edited blobs */
+function spotsOf(get) {
+  const out = [];
+  for (let k = 0; k <= RECENCY && cur - k >= 0; k++) {
+    const o = get(cur - k); if (!o) continue;
+    const d = o.delta; if (d && d.added + d.removed > 0) out.push({ k });
+  }
+  return out;
+}
+const blobSpots = id => spotsOf(i => IDX[i].blobs.get(id));
+const heatOf = spots => spots.reduce((m, s) => Math.max(m, 1 - s.k / (RECENCY + 1)), 0);
+
+/* ───────────────────────── stains ─────────────────────────
+   A stain marks code that was rewritten or deleted, never code that only grew (a new function or a bigger
+   blob already shows that). Yellow = modification, red = mostly deletion (removed > 0 and added ≤ removed/4)
+   or a function removed outright, which stains the blob it left. A stain is full strength on its step,
+   settles to STAIN_FLOOR over STAIN_SETTLE steps and stays until a later rewrite or deletion of the same
+   function replaces it: it is evidence of the last such edit, and lines merely added do not erase it. */
+const STAIN_SETTLE = 6, STAIN_FLOOR = 0.35, MAX_MARKS = 4;
+const isDeletion = (a, r) => r > 0 && a <= r / 4;
+function buildStains() {
+  const live = new Map();     // 'f:'+qual (a function) · 'b:'+id (a blob without functions) · 'g:'+id+'|'+qual (removed function)
+  STEPS.forEach((st, i) => {
+    const { funcs } = IDX[i], prev = IDX[i - 1];
+    const stamp = (key, o, extra) => {
+      const d = o.delta; if (d.state !== 'changed' || !(d.removed > 0)) return;
+      live.set(key, { step: i, a: d.added, r: d.removed, del: isDeletion(d.added, d.removed), git: isGit(st), ...extra });
+    };
+    for (const [q, f] of funcs) stamp('f:' + q, f, { q, name: f.name });
+    for (const b of st.blobs) if (!b.funcs.length) stamp('b:' + b.id, b, { blob: b.id, name: b.name });
+    // removed functions: the analyzer's `delta.removed_funcs` when it lists them, else whatever vanished since the previous step
+    const gone = [], listed = st.blobs.some(b => Array.isArray(b.delta.removed_funcs));
+    if (listed) { for (const b of st.blobs) for (const q of b.delta.removed_funcs || []) gone.push([q, b.id, prev?.funcs.get(q)]); }
+    else if (prev) for (const [q, f] of prev.funcs) if (!funcs.has(q)) gone.push([q, prev.owner.get(q), f]);
+    for (const [q, bid, f] of gone) {
+      live.delete('f:' + q); const lines = f?.lines || 1, name = f?.name || q.slice(q.lastIndexOf('.') + 1);
+      live.set('g:' + bid + '|' + q, { step: i, a: 0, r: lines, del: true, gone: true, git: isGit(st), blob: bid, q, name, lines });
+    }
+    st.stains = new Map(live);
+  });
+}
+/* per blob, the live stains grouped by the step that made them, oldest first (drawn bottom to top);
+   beyond MAX_MARKS the oldest groups merge into one mark */
+function marksAt(i) {
+  const st = STEPS[i]; if (st.marks) return st.marks;
+  const { blobs, owner } = IDX[i], by = new Map();
+  for (const s of st.stains.values()) {
+    const bid = s.gone || !s.q ? s.blob : owner.get(s.q); if (!blobs.has(bid)) continue;
+    let g = by.get(bid); if (!g) by.set(bid, g = new Map());
+    let m = g.get(s.step); if (!m) g.set(s.step, m = { key: s.step, step: s.step, steps: [s.step], a: 0, r: 0, parts: [] });
+    m.a += s.a; m.r += s.r; m.parts.push(s);
+  }
+  const out = new Map();
+  for (const [bid, g] of by) {
+    let ms = [...g.values()].sort((p, q) => q.step - p.step);
+    if (ms.length > MAX_MARKS) {
+      const old = ms.slice(MAX_MARKS - 1), m = { key: 'older', step: old[0].step, steps: old.map(o => o.step), a: 0, r: 0, parts: [], merged: true };
+      for (const o of old) { m.a += o.a; m.r += o.r; m.parts.push(...o.parts); }
+      ms = [...ms.slice(0, MAX_MARKS - 1), m];
+    }
+    const size = blobs.get(bid).size;
+    for (const m of ms) { m.del = m.parts.some(p => p.gone) || isDeletion(m.a, m.r); m.git = m.parts.every(p => p.git); m.size = size; }
+    out.set(bid, ms.reverse());
+  }
+  return st.marks = out;
+}
+const funcMark = q => { const s = STEPS[cur].stains.get('f:' + q); return s && { ...s, key: s.step, steps: [s.step], parts: [s] }; };
+const stainAlpha = age => STAIN_FLOOR + (1 - STAIN_FLOOR) * Math.pow(1 - clamp(age / STAIN_SETTLE, 0, 1), 1.4);
+/* where a mark sits inside a shape of radius R: size by changed lines ÷ size, place seeded by owner + step */
+function stainSpot(owner, m, R, size) {
+  const frac = clamp((m.a + m.r) / Math.max(1, size), 0, 1), r = R * (0.2 + 0.55 * Math.sqrt(frac));
+  const g = rng(hash(owner + '@' + m.key)), ang = g() * TAU, off = (R - r) * (0.12 + 0.62 * g());
+  return { dx: Math.cos(ang) * off, dy: Math.sin(ang) * off, r, seed: hash(owner + '#' + m.key) };
+}
+/* pigment, not light: a blotchy wash with a darker dried rim, like a coffee ring */
+function drawStain(c, x, y, r, m, seed, now) {
+  const col = m.git ? T.git : m.del ? T.rem : T.mix, age = cur - m.step, a = stainAlpha(age);
+  const p = age === 0 ? clamp((now - stepAt) / 420, 0, 1) : 1, rr = r * (0.55 + 0.45 * (1 - Math.pow(1 - p, 3)));
+  c.save();
+  const g = c.createRadialGradient(x, y, 0, x, y, rr * 1.15);
+  g.addColorStop(0, col + '40'); g.addColorStop(0.62, col + '75'); g.addColorStop(1, col + 'C8');
+  c.globalAlpha = a; c.fillStyle = g; blobPath(c, x, y, rr, seed, 0, 2.4); c.fill();
+  c.globalAlpha = Math.min(1, a * 1.15); c.strokeStyle = col; c.lineWidth = clamp(rr * 0.07, 1, 2.4); c.stroke();
+  if (age === 0 && p < 1) { c.globalAlpha = 0.7 * (1 - p); c.lineWidth = 1.5; blobPath(c, x, y, rr * (1.1 + 0.5 * p), seed, 0, 2.4); c.stroke(); }
+  c.restore();
+}
+function stainTip(m, where) {
+  const age = cur - m.step, col = m.git ? 'var(--git)' : m.del ? 'var(--rem)' : 'var(--mix)';
+  const gone = m.parts.filter(p => p.gone).map(p => p.name), fn = m.parts.filter(p => !p.gone && p.q).map(p => p.name);
+  const steps = m.merged ? `steps ${m.steps.slice().reverse().map(s => s + 1).join(', ')}` : `step ${m.step + 1}`, said = m.merged ? '' : STEPS[m.step].said;
+  return `<b style="color:${col}">${m.merged ? 'older stains' : m.git ? 'git stain' : 'stain'}</b> <span class="k">· ${steps} · ${age ? `${age} step${age > 1 ? 's' : ''} ago` : 'this step'}</span>
+    <div><span class="add">+${m.a}</span> <span class="rem">−${m.r}</span> · ${m.git ? 'commit, not AI · ' : ''}${m.del ? 'mostly deletion' : 'modification'}${where ? ` <span class="k">in ${esc(where)}</span>` : ''}</div>
+    ${fn.length ? `<div class="k">edited: ${fn.map(esc).join(', ')}</div>` : ''}${gone.length ? `<div class="k">removed: ${gone.map(esc).join(', ')}</div>` : ''}
+    ${m.merged ? '' : `<div class="sum">${said ? `“${esc(said)}”` : '<span class="k">the agent said nothing before this edit</span>'}</div>`}`;
+}
+
+/* ───────────────────────── stable layout ─────────────────────────
+   Two-level force layout over the union of every blob that ever exists, seeded by id:
+   module regions are packed first, then blobs inside them. A blob keeps its place for
+   the whole session, so playing or scrubbing never reshuffles the map. */
+let U = new Map(), K = 6, MODS = [];
+const REGION_GAP = 84;      // world px between blobs of different regions: room for both regions' labels and tint
+const radius = size => Math.max(19, K * Math.sqrt(size));
+/* the region a blob lives in: a route's handler module (from its id), not the majority module of its funcs */
+function regionOf(b) {
+  if (b.kind === 'text') return TEXT_REGION;
+  if (b.kind === 'file') return b.module;
+  if (b.kind === 'hub' || b.kind === 'orphan') return b.id.slice(b.id.indexOf(':') + 1) || b.module;
+  if (b.kind === 'tests') return b.module.split('.')[0];
+  const i = b.id.lastIndexOf('.'); return i > 0 ? b.id.slice(0, i) : b.module;
+}
+function relax(nodes, iters, step) {
+  for (let it = 0; it < iters; it++) {
+    const cool = 1 - it / iters;
+    for (const n of nodes) n.dx = n.dy = 0;
+    step(cool);
+    for (const n of nodes) { n.x += n.dx * (0.25 + 0.75 * cool); n.y += n.dy * (0.25 + 0.75 * cool); }
+  }
+}
+/* push overlapping pairs apart; pad(a, b) ≤ PAD_MAX. Pairs run in the same i < j order as a plain double loop,
+   but only those a grid puts within reach (own R + biggest R + PAD_MAX): a pair further apart never moves
+   anything, so the result is the same to the bit, without the O(n²) pass on big maps */
+const PAD_MAX = REGION_GAP + 20, BIG_MAP = 200;
+function collide(nodes, pad) {
+  const n = nodes.length;
+  const push = (i, j) => {
+    const a = nodes[i], b = nodes[j]; let dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy);
+    if (d < 0.01) { dx = 0.01 * (j - i); dy = 0.013; d = Math.hypot(dx, dy); }
+    const min = a.R + b.R + pad(a, b);
+    if (d < min) { const p = (min - d) / d * 0.5; a.dx -= dx * p; a.dy -= dy * p; b.dx += dx * p; b.dy += dy * p; }
+  };
+  if (n < 48) { for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) push(i, j); return; }
+  let maxR = 0, sumR = 0; for (const a of nodes) { maxR = Math.max(maxR, a.R); sumR += a.R; }
+  const cell = 2 * sumR / n + PAD_MAX, grid = new Map(), cxs = new Float64Array(n), cys = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const cx = Math.floor(nodes[i].x / cell), cy = Math.floor(nodes[i].y / cell);
+    if (!Number.isFinite(cx) || !Number.isFinite(cy) || Math.abs(cx) > 1e6 || Math.abs(cy) > 1e6) {   // NaN / far off: plain loop
+      for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) push(i, j);
+      return;
+    }
+    cxs[i] = cx; cys[i] = cy; const k = cx * 4194304 + cy; let g = grid.get(k); if (!g) grid.set(k, g = []); g.push(i);
+  }
+  const js = [];
+  for (let i = 0; i < n; i++) {
+    const reach = Math.ceil((nodes[i].R + maxR + PAD_MAX) / cell), cx = cxs[i], cy = cys[i];
+    js.length = 0;
+    for (let gx = cx - reach; gx <= cx + reach; gx++) for (let gy = cy - reach; gy <= cy + reach; gy++) {
+      const g = grid.get(gx * 4194304 + gy); if (g) for (const j of g) if (j > i) js.push(j);
+    }
+    js.sort((p, q) => p - q);
+    for (const j of js) push(i, j);
+  }
+}
+function spring(a, b, want, k) {
+  const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - want) / d * k;
+  a.dx += dx * f; a.dy += dy * f; b.dx -= dx * f; b.dy -= dy * f;
+}
+function layout() {
+  const links = new Map();
+  STEPS.forEach((st, i) => {
+    for (const b of st.blobs) {
+      let u = U.get(b.id);
+      if (!u) { u = { id: b.id, max: 1, first: i }; U.set(b.id, u); }
+      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, b.size);    // last step wins: a text file that code
+    }                                                                            // later references lives with the files
+    for (const e of st.edges) if (e.kind !== 'data') { const k = [e.a, e.b].sort().join('\n'); links.set(k, Math.max(links.get(k) || 0, e.n || 1)); }
+  });
+  for (const st of STEPS) for (const b of st.blobs) b.region = U.get(b.id).module;
+  const us = [...U.values()].sort((a, b) => a.first - b.first || (a.id < b.id ? -1 : 1));
+  const total = us.reduce((s, u) => s + u.max, 0), big = Math.max(1, ...us.map(u => u.max));
+  K = Math.min(Math.sqrt(0.2 * 1000 * 620 / (Math.PI * Math.max(1, total))), 108 / Math.sqrt(big));
+  for (const u of us) u.R = radius(u.max);
+  const L = [...links].map(([k, n]) => { const [a, b] = k.split('\n'); return { a: U.get(a), b: U.get(b), n }; });
+  // 1. modules as circles big enough for their members, pulled together by the calls between them
+  const mods = new Map();
+  for (const u of us) {
+    let m = mods.get(u.module);
+    if (!m) { m = { name: u.module, members: [], area: 0 }; mods.set(u.module, m); }
+    m.members.push(u); m.area += Math.PI * (u.R + 10) ** 2;
+  }
+  MODS = [...mods.values()];
+  const textMod = mods.get(TEXT_REGION), CODE = MODS.filter(m => m !== textMod);
+  for (const m of MODS) m.R = Math.sqrt(m.area / Math.PI) * 1.12 + 8;
+  CODE.forEach((m, i) => {
+    const a = -Math.PI / 2 + i * TAU / CODE.length + (hash(m.name) % 100) / 300;
+    m.x = 500 + Math.cos(a) * 380; m.y = 310 + Math.sin(a) * 230;
+  });
+  const placeText = () => {   // text files have no edges: their region sits past the right edge of the code, level with its middle
+    if (!textMod) return;
+    const x1 = CODE.length ? Math.max(...CODE.map(m => m.x + m.R)) : 500, ys = CODE.map(m => m.y);
+    textMod.x = x1 + 70 + textMod.R; textMod.y = ys.length ? (Math.min(...ys) + Math.max(...ys)) / 2 : 310;
+  };
+  placeText();
+  const ML = new Map();
+  for (const { a, b, n } of L) if (a.module !== b.module && a.module !== TEXT_REGION && b.module !== TEXT_REGION) { const k = [a.module, b.module].sort().join('\n'); ML.set(k, (ML.get(k) || 0) + n); }
+  const MLL = [...ML].map(([k, n]) => { const [a, b] = k.split('\n'); return { a: mods.get(a), b: mods.get(b), n }; });
+  relax(CODE, 500, () => {
+    for (const m of CODE) { m.dx += (500 - m.x) * 0.003; m.dy += (310 - m.y) * 0.035; }
+    for (const { a, b, n } of MLL) spring(a, b, a.R + b.R + 30, 0.003 * Math.min(6, n));
+    collide(CODE, () => REGION_GAP + 20);
+  });
+  placeText();
+  // 2. members inside their module, leaning toward the modules they call
+  for (const u of us) { const r = rng(hash(u.id)), m = mods.get(u.module); u.x = m.x + (r() - 0.5) * m.R; u.y = m.y + (r() - 0.5) * m.R; }
+  // a map past BIG_MAP blobs relaxes in proportionally fewer passes (each pass costs ~n·neighbours): the 666-blob
+  // TechnicalAnalysis map takes ~2 s instead of ~7 s; maps up to BIG_MAP (the Flask demo, the sample) are unchanged
+  const passes = k => us.length <= BIG_MAP ? k : Math.round(k * BIG_MAP / us.length);
+  relax(us, passes(500), () => {
+    for (const u of us) { const m = mods.get(u.module); u.dx += (m.x - u.x) * 0.045; u.dy += (m.y - u.y) * 0.045; }
+    for (const { a, b, n } of L) {
+      if (a.module === b.module) spring(a, b, a.R + b.R + 24, 0.01 * Math.min(3, n));
+      else { const ma = mods.get(a.module), mb = mods.get(b.module), f = 0.0015 * Math.min(4, n);
+             a.dx += (mb.x - a.x) * f; a.dy += (mb.y - a.y) * f; b.dx += (ma.x - b.x) * f; b.dy += (ma.y - b.y) * f; }
+    }
+    collide(us, (a, b) => a.module === b.module ? 20 : REGION_GAP);
+  });
+  relax(us, passes(200), () => collide(us, (a, b) => a.module === b.module ? 20 : REGION_GAP));
+  // (3) never blank silently: a non-finite position means a bug above; report it and fall back to a grid by region
+  const bad = us.filter(u => !Number.isFinite(u.x) || !Number.isFinite(u.y));
+  if (bad.length) {
+    console.error('aiblob layout produced non-finite positions; using a grid layout', bad.map(u => u.id));
+    const cols = Math.ceil(Math.sqrt(us.length)), cell = 2 * Math.max(...us.map(u => u.R)) + 40;
+    [...us].sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : a.first - b.first)
+      .forEach((u, i) => { u.x = (i % cols) * cell; u.y = Math.floor(i / cols) * cell; });
+  }
+}
+
+/* ───────────────────────── view & canvas ───────────────────────── */
+const cv = $('#map'), ctx = cv.getContext('2d'), tl = $('#tl'), tctx = tl.getContext('2d');
+let VW = 0, VH = 0, DPR = 1, VIEW = { s: 1, ox: 0, oy: 0 };
+const region = document.createElement('canvas'), rctx = region.getContext('2d');
+function resize() {
+  DPR = Math.min(2, devicePixelRatio || 1); VW = innerWidth; VH = innerHeight;
+  cv.width = VW * DPR; cv.height = VH * DPR; cv.style.width = VW + 'px'; cv.style.height = VH + 'px';
+  region.width = Math.ceil(VW / 2); region.height = Math.ceil(VH / 2);
+  const tr = tl.getBoundingClientRect(); tl.width = tr.width * DPR; tl.height = tr.height * DPR;
+  fit();
+}
+/* the camera fits the blobs present at this step, never zooming past 1.6× the whole-session fit,
+   so early steps are readable while every blob keeps its place in world space */
+let VIEW0 = { s: 1 };
+function frameOf(nodes, maxS) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const u of nodes) { x0 = Math.min(x0, u.x - u.R); x1 = Math.max(x1, u.x + u.R); y0 = Math.min(y0, u.y - u.R - 22); y1 = Math.max(y1, u.y + u.R + 18); }
+  const mw = VW - 48, mh = VH - TOP - BOTTOM - 36, s = Math.min(mw / (x1 - x0), mh / (y1 - y0), maxS);
+  return { s, ox: VW / 2 - (x0 + x1) / 2 * s, oy: TOP + 18 + mh / 2 - (y0 + y1) / 2 * s + 6 };
+}
+function fit() { if (!U.size) return; VIEW0 = frameOf([...U.values()], 2.2); VIEW = camTarget(); }
+function camTarget() {
+  const here = [...U.values()].filter(u => IDX[cur]?.blobs.has(u.id));
+  return here.length ? frameOf(here, Math.max(VIEW0.s, Math.min(2.2, VIEW0.s * 1.6))) : VIEW0;
+}
+function moveCamera(dt) {
+  const T2 = camTarget(), k = 1 - Math.exp(-dt * 3);
+  VIEW = { s: VIEW.s + (T2.s - VIEW.s) * k, ox: VIEW.ox + (T2.ox - VIEW.ox) * k, oy: VIEW.oy + (T2.oy - VIEW.oy) * k };
+}
+const sx = x => x * VIEW.s + VIEW.ox, sy = y => y * VIEW.s + VIEW.oy;
+
+/* an organic closed outline: a circle whose radius breathes with a few seeded harmonics */
+function blobPath(c, x, y, R, seed, t, wob = 1) {
+  const r = rng(seed), p1 = r() * TAU, p2 = r() * TAU, p3 = r() * TAU, N = 30, pts = [];
+  for (let i = 0; i < N; i++) {
+    const a = i / N * TAU;
+    const k = 1 + wob * (0.045 * Math.sin(2 * a + p1 + t * 0.5) + 0.03 * Math.sin(3 * a + p2 - t * 0.37) + 0.018 * Math.sin(5 * a + p3));
+    pts.push([x + Math.cos(a) * R * k, y + Math.sin(a) * R * k]);
+  }
+  c.beginPath();
+  const mid = i => { const a = pts[i % N], b = pts[(i + 1) % N]; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
+  c.moveTo(...mid(N - 1));
+  for (let i = 0; i < N; i++) { const m = mid(i); c.quadraticCurveTo(pts[i][0], pts[i][1], m[0], m[1]); }
+  c.closePath();
+}
+/* a page: a rectangle with its top-right corner folded over; R is the radius of the circle it replaces */
+function pagePath(c, x, y, R) {
+  const w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42, k = Math.min(3, R * 0.08);
+  c.beginPath(); c.moveTo(x - w + k, y - h); c.lineTo(x + w - f, y - h); c.lineTo(x + w, y - h + f);
+  c.arcTo(x + w, y + h, x - w, y + h, k); c.arcTo(x - w, y + h, x - w, y - h, k); c.arcTo(x - w, y - h, x + w, y - h, k); c.closePath();
+}
+const shapePath = (c, kind, x, y, R, seed, t, wob) => PAGE(kind) ? pagePath(c, x, y, R) : blobPath(c, x, y, R, seed, t, wob);
+/* the folded corner and a few ruled lines, drawn over a filled page */
+function pageDetail(c, x, y, R, col) {
+  const w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42;
+  c.save(); c.fillStyle = col.fold; c.strokeStyle = col.stroke; c.lineWidth = 1; c.lineJoin = 'round';
+  c.beginPath(); c.moveTo(x + w - f, y - h); c.lineTo(x + w - f, y - h + f); c.lineTo(x + w, y - h + f); c.closePath(); c.fill(); c.stroke();
+  if (R > 13) {
+    c.strokeStyle = col.rule; c.lineWidth = Math.max(1, R * 0.05); c.lineCap = 'round';
+    const n = clamp(Math.floor(h * 1.6 / Math.max(5, R * 0.24)), 2, 6), gap = (h * 2 - f - R * 0.3) / n;
+    for (let i = 0; i < n; i++) { const yy = y - h + f + R * 0.15 + gap * (i + 0.5), x1 = i === n - 1 ? x : x + w - R * 0.2;
+      c.beginPath(); c.moveTo(x - w + R * 0.2, yy); c.lineTo(i ? x1 : x + w - f - R * 0.06, yy); c.stroke(); }
+  }
+  c.restore();
+}
+function shortName(n) {
+  n = String(n).replace(/<(?:\w+:)?(?:\w+_)?(\w+)>/g, ':$1');
+  return n.length > 22 ? n.slice(0, 21).trimEnd() + '…' : n;
+}
+const lineW = cx => 1.2 + Math.min(7.5, 1.05 * Math.sqrt(cx));
+
+/* edges: a gently bowed curve, trimmed at both blob outlines, sampled as a polyline */
+const BOW = { main: 0.07, error: 0.2, data: -0.15, ref: 0.1, deferred: 0.12 };
+function curve(A, B, rA, rB, kind, arrow) {
+  const off = BOW[kind] ?? 0, mx = (A.x + B.x) / 2 - (B.y - A.y) * off, my = (A.y + B.y) / 2 + (B.x - A.x) * off, pts = [];
+  for (let i = 0; i <= 32; i++) {
+    const t = i / 32, u = 1 - t, x = u * u * A.x + 2 * u * t * mx + t * t * B.x, y = u * u * A.y + 2 * u * t * my + t * t * B.y;
+    if (Math.hypot(x - A.x, y - A.y) > rA + 1 && Math.hypot(x - B.x, y - B.y) > rB + (arrow ? 3 : 1)) pts.push([x, y]);
+  }
+  return pts;
+}
+function strokeEdge(c, pts, kind, w, alpha, arrow) {
+  if (pts.length < 2) return;
+  const col = kind === 'error' ? T.err : kind === 'data' ? T.data : kind === 'ref' ? T.mute : `rgb(${T.main})`;
+  c.save(); c.globalAlpha = alpha; c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round';
+  c.setLineDash(kind === 'error' ? [7, 5] : kind === 'data' ? [0.5, 4] : kind === 'deferred' ? [9, 4, 0.5, 4] : []);
+  c.beginPath(); c.moveTo(...pts[0]); for (const p of pts) c.lineTo(...p); c.stroke();
+  if (arrow) {     // a deferred call (callee passed as a value) gets a hollow head: it runs later, somewhere else
+    const [x, y] = pts[pts.length - 1], [px, py] = pts[Math.max(0, pts.length - 3)], a = Math.atan2(y - py, x - px);
+    const s = kind === 'ref' ? 3 + w : kind === 'deferred' ? 6 + w * 1.4 : 4 + w * 1.4, hollow = kind === 'deferred';
+    c.setLineDash([]); c.fillStyle = hollow ? T.bg : col; c.lineJoin = 'round'; c.lineWidth = Math.max(1.2, w * 0.8); c.beginPath(); c.moveTo(x, y);
+    c.lineTo(x - Math.cos(a - 0.45) * s, y - Math.sin(a - 0.45) * s); c.lineTo(x - Math.cos(a + 0.45) * s, y - Math.sin(a + 0.45) * s); c.closePath(); c.fill();
+    if (hollow) c.stroke();
+  }
+  c.restore();
+}
+/* code that only changed blob (moved, not edited) gets a faint travelling dash on the outline, never a spot */
+function shimmer(c, x, y, R, seed, t, alpha) {
+  c.save(); c.globalAlpha = alpha * 0.55; c.strokeStyle = T.mute; c.lineWidth = 1.2; c.setLineDash([3, 6]); c.lineDashOffset = -t * 14;
+  blobPath(c, x, y, R, seed, t); c.stroke(); c.restore();
+}
+const edgeWidth = (kind, n) => kind === 'data' ? 1.5 + 0.4 * Math.sqrt(n) : kind === 'ref' ? 0.8 + 0.25 * Math.sqrt(n) : 0.9 + 1.25 * Math.sqrt(n);
+const trimR = (kind, r) => r * (PAGE(kind) ? 0.94 : 1.05);
+const distToPoly = (pts, x, y) => {
+  let best = Infinity;
+  for (let i = 1; i < pts.length; i++) {
+    const [ax, ay] = pts[i - 1], [bx, by] = pts[i], dx = bx - ax, dy = by - ay, l = dx * dx + dy * dy || 1;
+    const t = clamp(((x - ax) * dx + (y - ay) * dy) / l, 0, 1); best = Math.min(best, Math.hypot(ax + dx * t - x, ay + dy * t - y));
+  }
+  return best;
+};
+
+/* ───────────────────────── main map ───────────────────────── */
+const VIS = new Map();     // id → { r, a, blob }  (animated radius/alpha; blob = last seen data)
+let hover = null, hoverEdge = null, hoverNode = null, dnGeo = [], edgeGeo = [], stainGeo = [], stepAt = 0, mouse = { x: -1, y: -1 };
+function updateVis(dt) {
+  const k = 1 - Math.exp(-dt * 7);
+  for (const u of U.values()) {
+    const b = IDX[cur]?.blobs.get(u.id);
+    let v = VIS.get(u.id);
+    if (!v) { if (!b) continue; v = { r: 0, a: 0, blob: b }; VIS.set(u.id, v); }
+    if (b) v.blob = b;
+    v.r += ((b ? radius(b.size) : 0) - v.r) * k; v.a += ((b ? 1 : 0) - v.a) * k;
+    if (!b && v.a < 0.01) VIS.delete(u.id);
+  }
+}
+function drawRegions() {
+  const s = 0.5;
+  rctx.setTransform(1, 0, 0, 1, 0, 0); rctx.clearRect(0, 0, region.width, region.height);
+  rctx.filter = `blur(${Math.round(16 * VIEW.s * s)}px)`;
+  const boxes = new Map();
+  for (const [id, v] of VIS) {
+    const u = U.get(id), x = sx(u.x), y = sy(u.y), R = v.r * VIEW.s;
+    rctx.globalAlpha = v.a; rctx.fillStyle = regionTint(u.module, `45% ${T.light ? 55 : 52}%`);
+    rctx.beginPath(); rctx.arc(x * s, y * s, (R + 30 * VIEW.s) * s, 0, TAU); rctx.fill();
+    if (v.a > 0.3) { const b = boxes.get(u.module) || { x0: 1e9, x1: -1e9, y0: 1e9 }; b.x0 = Math.min(b.x0, x - R); b.x1 = Math.max(b.x1, x + R); b.y0 = Math.min(b.y0, y - R); boxes.set(u.module, b); }
+  }
+  rctx.filter = 'none';
+  ctx.save(); ctx.globalAlpha = T.light ? 0.2 : 0.13; ctx.drawImage(region, 0, 0, VW, VH); ctx.restore();
+  return [...boxes].map(([m, b]) => ({ text: m.toUpperCase(), x: (b.x0 + b.x1) / 2, y: b.y0 - 14 * Math.max(0.8, VIEW.s), fs: 12, region: m,
+    col: regionTint(m, T.light ? '40% 38%' : '45% 68%'), alpha: hover ? 0.35 : 0.85 }));
+}
+/* labels that sit outside their blob are placed greedily; one that would overlap a placed label tries
+   above its blob, else it is dropped (hover still names the blob) */
+function placeLabels(labels) {
+  const placed = [], hit = r => placed.some(p => r.x0 < p.x1 && r.x1 > p.x0 && r.y0 < p.y1 && r.y1 > p.y0);
+  for (const l of labels) {
+    ctx.font = l.region ? `600 ${l.fs}px ${SANS}` : `600 ${l.fs}px ${SANS}`;
+    const w = ctx.measureText(l.text).width * (l.region ? 1.35 : 1) + 4, h = l.fs + 2;
+    const cands = l.alt == null ? [l.y] : [l.y, l.alt];
+    const y = l.force ? l.y : cands.find(y => !hit({ x0: l.x - w / 2, x1: l.x + w / 2, y0: y - h / 2, y1: y + h / 2 }));
+    if (y == null) continue;
+    placed.push({ x0: l.x - w / 2, x1: l.x + w / 2, y0: y - h / 2, y1: y + h / 2 });
+    if (l.force) continue;
+    ctx.save(); ctx.globalAlpha = l.alpha; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = l.col;
+    if (l.region) ctx.letterSpacing = '0.18em';
+    ctx.lineWidth = 3; ctx.strokeStyle = T.bg; ctx.lineJoin = 'round'; ctx.strokeText(l.text, l.x, y); ctx.fillText(l.text, l.x, y);
+    ctx.restore();
+  }
+}
+/* world position of a data node: the centroid of the blobs sharing it, pushed clear of every blob */
+const dnPos = new Map();
+function dataNodePos(g) {
+  let p = dnPos.get(g.key); if (p) return p;
+  let x = 0, y = 0; for (const id of g.ids) { x += U.get(id).x / g.ids.length; y += U.get(id).y / g.ids.length; }
+  for (let it = 0; it < 80; it++) for (const u of U.values()) {
+    const dx = x - u.x, dy = y - u.y, d = Math.hypot(dx, dy) || 0.01, min = u.R + 16;
+    if (d < min) { x = u.x + dx / d * min; y = u.y + dy / d * min; }
+  }
+  p = { x, y }; dnPos.set(g.key, p); return p;
+}
+function drawDataNodes() {
+  dnGeo = [];
+  for (const g of STEPS[cur].dataNodes) {
+    const p = dataNodePos(g), x = sx(p.x), y = sy(p.y), lit = hoverNode === g || (hover && g.ids.includes(hover));
+    for (const id of g.ids) {
+      const v = VIS.get(id); if (!v) continue; const u = U.get(id);
+      const a = (lit ? 0.95 : hover || hoverNode ? 0.08 : 0.42) * v.a;
+      strokeEdge(ctx, curve({ x, y }, { x: sx(u.x), y: sy(u.y) }, 5, v.r * VIEW.s * 1.05, 'data', false), 'data', 1.6 * Math.max(0.8, VIEW.s), a, false);
+    }
+    ctx.save(); ctx.globalAlpha = lit ? 1 : hover || hoverNode ? 0.25 : 0.85;
+    ctx.fillStyle = T.data; ctx.strokeStyle = T.bg; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, lit ? 5.5 : 4.5, 0, TAU); ctx.fill(); ctx.stroke(); ctx.restore();
+    dnGeo.push({ g, x, y });
+  }
+}
+function drawMap(now, t) {
+  const st = STEPS[cur], heat = new Map(), marks = marksAt(cur);
+  for (const id of VIS.keys()) heat.set(id, heatOf(blobSpots(id)));
+  stainGeo = [];
+  const near = new Set(hover ? [hover] : []);
+  if (hover) for (const e of st.edges) { if (st.spokes.has(e)) continue; if (e.a === hover) near.add(e.b); if (e.b === hover) near.add(e.a); }
+  if (hoverNode) for (const id of hoverNode.ids) near.add(id);
+  const labels = drawRegions();
+  drawDataNodes();
+  // edges
+  edgeGeo = [];
+  const order = { data: 0, ref: 1, main: 2, error: 3 };
+  for (const e of [...st.edges].sort((p, q) => order[p.kind] - order[q.kind])) {
+    if (st.spokes.has(e)) continue;
+    const va = VIS.get(e.a), vb = VIS.get(e.b); if (!va || !vb) continue;
+    const ua = U.get(e.a), ub = U.get(e.b), A = { x: sx(ua.x), y: sy(ua.y) }, B = { x: sx(ub.x), y: sy(ub.y) };
+    const arrow = e.kind !== 'data', pts = curve(A, B, trimR(ua.kind, va.r * VIEW.s), trimR(ub.kind, vb.r * VIEW.s), e.kind, arrow);
+    edgeGeo.push({ e, pts });
+    const touches = hover && (e.a === hover || e.b === hover), isHot = heat.get(e.a) > 0 && heat.get(e.b) > 0;
+    let w = edgeWidth(e.kind, e.n || 1) * Math.max(0.8, VIEW.s), alpha = (e.kind === 'data' ? 0.5 : e.kind === 'main' ? 0.5 : e.kind === 'ref' ? 0.6 : 0.85) * Math.min(va.a, vb.a);
+    if (isHot && e.kind !== 'ref') { const p = Math.min(heat.get(e.a), heat.get(e.b)); w *= 1 + 0.35 * p * (0.5 + 0.5 * Math.sin(t * 4.5)); alpha = Math.min(1, alpha + 0.25 * p); }
+    if (hover) alpha = touches ? Math.min(1, alpha * 1.9 + 0.15) : alpha * 0.1;
+    if (hoverEdge === e) { alpha = 1; w += 1.5; }
+    strokeEdge(ctx, pts, e.kind, w, alpha, arrow);
+    if ((e.kind === 'data' || e.kind === 'ref') && hoverEdge === e && e.via && pts.length > 2) {
+      const [x, y] = pts[pts.length >> 1];
+      ctx.save(); ctx.font = `10px ${MONO}`; ctx.textAlign = 'center'; const txt = e.via.slice(0, 2).join(' ') + (e.via.length > 2 ? ` +${e.via.length - 2}` : '');
+      const tw = ctx.measureText(txt).width + 8; ctx.fillStyle = T.bg; ctx.globalAlpha = 0.85; ctx.fillRect(x - tw / 2, y - 8, tw, 15);
+      ctx.globalAlpha = 1; ctx.fillStyle = e.kind === 'ref' ? T.ink : T.data; ctx.fillText(txt, x, y + 3); ctx.restore();
+    }
+  }
+  // blobs, big first so small ones stay visible on top
+  const ids = [...VIS.keys()].sort((a, b) => VIS.get(b).r - VIS.get(a).r);
+  for (const id of ids) {
+    const v = VIS.get(id), b = v.blob, u = U.get(id), x = sx(u.x), y = sy(u.y), R = v.r * VIEW.s;
+    if (R < 1) continue;
+    const page = PAGE(b.kind), col = kindColors(b.kind, b.region), seed = hash(id), present = IDX[cur].blobs.has(id);
+    const shape = (r, tt = t) => shapePath(ctx, b.kind, x, y, r, seed, tt), ms = present ? marks.get(id) || [] : [];
+    let alpha = v.a * (b.kind === 'orphan' ? 0.75 : 1);
+    if ((hover || hoverNode) && !near.has(id)) alpha *= 0.22;
+    ctx.save(); ctx.globalAlpha = alpha;
+    shape(R); ctx.fillStyle = col.fill; ctx.fill();
+    if (page) pageDetail(ctx, x, y, R, col);
+    if (ms.length) {
+      ctx.save(); shape(R); ctx.clip();
+      for (const m of ms) { const p = stainSpot(id, m, R, m.size); drawStain(ctx, x + p.dx, y + p.dy, p.r, m, p.seed, now); stainGeo.push({ id, m, x: x + p.dx, y: y + p.dy, r: p.r }); }
+      ctx.restore();
+    }
+    ctx.lineWidth = page ? 1.3 * Math.max(0.75, VIEW.s) : lineW(b.complexity) * Math.max(0.75, VIEW.s); ctx.strokeStyle = col.stroke; ctx.lineJoin = 'round';
+    if (b.kind === 'orphan') ctx.setLineDash([5, 4]);
+    shape(R); ctx.stroke(); ctx.setLineDash([]);
+    if (present && b.delta.state === 'new') {          // new blob: its whole outline flashes, then stays lit while this step is current
+      const f = clamp((now - stepAt) / 900, 0, 1), blink = 0.55 + 0.45 * Math.cos(f * Math.PI * 3);
+      ctx.strokeStyle = T.flash; ctx.lineWidth = 2 + 3 * (1 - f); ctx.globalAlpha = alpha * (f < 1 ? blink : 0.7);
+      shape(R + 4 + 10 * (1 - f)); ctx.stroke();
+    }
+    if (present && b.delta.moved > 0 && b.delta.state !== 'new') shimmer(ctx, x, y, R + 3, seed, t, alpha);
+    if (hover === id) { ctx.strokeStyle = T.flash; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9; shape(R + 5); ctx.stroke(); }
+    ctx.globalAlpha = alpha;
+    // emoji + name (a page carries no emoji and is always named below itself)
+    const label = shortName(b.title), fs = clamp(R * 0.3, 11, 15);
+    ctx.font = `600 ${fs}px ${SANS}`; const tw = ctx.measureText(label).width, inside = !page && tw < R * 1.75 && R > 24;
+    const es = clamp(R * (inside ? 0.5 : 0.75), 12, 30);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    if (!page) { ctx.font = `${es}px ${EMOJI_FONT}`; ctx.fillText(b.face, x, inside ? y - fs * 0.55 : y + 1); }
+    ctx.font = `600 ${fs}px ${SANS}`; ctx.fillStyle = col.text;
+    if (inside && ms.length) {     // a stain under the name: give it a backplate and full-contrast ink
+      ctx.save(); ctx.globalAlpha = alpha * 0.78; ctx.fillStyle = T.bg; ctx.beginPath();
+      ctx.roundRect(x - tw / 2 - 5, y + es * 0.55 + 2 - fs * 0.62, tw + 10, fs * 1.24, 4); ctx.fill(); ctx.restore(); ctx.fillStyle = T.ink;
+    }
+    const below = page ? R * 0.92 : R;
+    if (inside) { ctx.fillText(label, x, y + es * 0.55 + 2); labels.push({ force: true, text: label, x, y: y + es * 0.55 + 2, fs }); }
+    else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, col: col.text, alpha: hover && !near.has(id) ? 0.2 : alpha, big: R });
+    ctx.restore();
+  }
+  // region names first, then inside labels (as obstacles), then outside labels, hovered blob always wins
+  const order2 = l => l.region ? 0 : l.force ? 1 : 2;
+  labels.sort((a, b) => order2(a) - order2(b) || (b.big || 0) - (a.big || 0));
+  if (hover) { const v = VIS.get(hover), u = U.get(hover), hy = sy(u.y) + v.r * VIEW.s; const i = labels.findIndex(l => !l.region && !l.force && Math.abs(l.y - hy) < 20 && Math.abs(l.x - sx(u.x)) < 1); if (i > 0) labels.unshift(...labels.splice(i, 1)); }
+  placeLabels(labels);
+}
+
+/* ───────────────────────── drill-down ───────────────────────── */
+let drill = null, cardFor = null;
+const drillMem = new Map();          // blob id → Map(qual → {x,y}) so a revisit keeps its arrangement
+function openDrill(id) {
+  const b = IDX[cur].blobs.get(id); if (b && PAGE(b.kind)) { showFileCard(id); return; }      // a page has no functions to open
+  hideCard(); drill = { id, pos: drillMem.get(id) || new Map(), sel: null, hov: null, t0: performance.now(), chips: [] }; drillMem.set(id, drill.pos); hover = null; hideTip(); }
+function closeDrill() { drill = null; hideCard(); }
+function drillGeo() {
+  const C = { x: VW / 2, y: TOP + (VH - TOP - BOTTOM) / 2 + 4 }, RR = Math.min(VW * 0.42, VH - TOP - BOTTOM - 130) * 0.5;
+  return { C, RR };
+}
+function drillStep(b, RR) {
+  const fs = b.funcs, total = fs.reduce((s, f) => s + f.lines, 0) || 1, big = Math.max(1, ...fs.map(f => f.lines));
+  const kf = Math.min(Math.sqrt(0.3 * RR * RR / total), 0.34 * RR / Math.sqrt(big));
+  const nodes = fs.map(f => {
+    let p = drill.pos.get(f.qual);
+    if (!p) { const r = rng(hash(f.qual)), a = r() * TAU, d = r() * RR * 0.45; p = { x: Math.cos(a) * d, y: Math.sin(a) * d }; drill.pos.set(f.qual, p); }
+    p.r = Math.max(15, kf * Math.sqrt(f.lines)); p.f = f; return p;
+  });
+  const byQ = new Map(nodes.map(n => [n.f.qual, n]));
+  for (let pass = 0; pass < 3; pass++) {
+    for (const n of nodes) { n.dx = -n.x * 0.01; n.dy = -n.y * 0.01; }
+    for (const n of nodes) for (const c of n.f.calls) {
+      const m = byQ.get(c.to); if (!m || m === n) continue;
+      const dx = m.x - n.x, dy = m.y - n.y, d = Math.hypot(dx, dy) || 1, f = (d - (n.r + m.r + 40)) / d * 0.02;
+      n.dx += dx * f; n.dy += dy * f; m.dx -= dx * f; m.dy -= dy * f;
+    }
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], c = nodes[j], dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = a.r + c.r + 26;
+      if (d < min) { const p = (min - d) / d * 0.5; a.dx -= dx * p; a.dy -= dy * p; c.dx += dx * p; c.dy += dy * p; }
+    }
+    for (const n of nodes) {
+      n.x += n.dx * 0.6; n.y += n.dy * 0.6;
+      const d = Math.hypot(n.x, n.y), lim = Math.max(0, RR - n.r - 12);
+      if (d > lim) { n.x *= lim / d; n.y *= lim / d; }
+    }
+  }
+  return { nodes, byQ, kf };
+}
+function drawDrill(now, t) {
+  const b = IDX[cur].blobs.get(drill.id) || VIS.get(drill.id)?.blob, { C, RR } = drillGeo();
+  const open = clamp((now - drill.t0) / 260, 0, 1), ease = 1 - Math.pow(1 - open, 3);
+  ctx.save(); ctx.globalAlpha = 0.9 * ease; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH); ctx.restore();
+  if (!b) return;
+  const present = IDX[cur].blobs.has(drill.id), col = kindColors(b.kind), R = RR * (0.85 + 0.15 * ease);
+  ctx.save(); ctx.globalAlpha = ease;
+  blobPath(ctx, C.x, C.y, R, hash(drill.id), t, 0.35); ctx.fillStyle = col.fill; ctx.fill();
+  ctx.lineWidth = lineW(b.complexity) * 1.4; ctx.strokeStyle = col.stroke; blobPath(ctx, C.x, C.y, R, hash(drill.id), t, 0.35); ctx.stroke();
+  // header above the circle
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = T.ink;
+  ctx.font = `700 24px ${SANS}`; ctx.fillText(`${b.face} ${b.title}`, 24, TOP + 38);
+  ctx.font = `11px ${MONO}`; ctx.fillStyle = T.mute;
+  [`${KIND_LABEL[b.kind] || b.kind} · ${b.region} · ${b.id}`, `${b.size} lines · complexity ${b.complexity} · ${b.errors} error exits · ${b.funcs.length} funcs`,
+   present ? 'click a function for its snippet · chips open neighbours' : 'not present at this step', 'esc / click outside → app map']
+    .forEach((l, i) => ctx.fillText(l, 24, TOP + 60 + i * 16));
+  if (!present) { ctx.restore(); return; }
+  const { nodes, byQ, kf } = drillStep(b, R);
+  const P = n => ({ x: C.x + n.x, y: C.y + n.y });
+  drill.stains = []; drill.edges = [];
+  // functions removed from this blob leave a red ghost the size they had, on the free floor of the circle
+  const ghosts = [...STEPS[cur].stains.values()].filter(s => s.gone && s.blob === drill.id);
+  for (const s of ghosts) {
+    const r = Math.max(13, kf * Math.sqrt(s.lines)), g = rng(hash('ghost:' + s.q)), lim = Math.max(0, R - r - 14);
+    let best = null, bd = -Infinity;
+    for (let k = 0; k < 40; k++) {
+      const a = g() * TAU, d = Math.sqrt(g()) * lim, x = Math.cos(a) * d, y = Math.sin(a) * d;
+      const free = Math.min(...nodes.map(n => Math.hypot(n.x - x, n.y - y) - n.r - r), ...drill.stains.map(o => Math.hypot(o.x - C.x - x, o.y - C.y - y) - o.r - r), 1e9);
+      if (free > bd) { bd = free; best = { x, y }; }
+    }
+    const m = { ...s, key: s.step, steps: [s.step], parts: [s] }, x = C.x + best.x, y = C.y + best.y;
+    drawStain(ctx, x, y, r, m, hash('ghost#' + s.q), now);
+    const a0 = ctx.globalAlpha; ctx.globalAlpha = a0 * stainAlpha(cur - s.step);
+    ctx.font = `600 12px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const tw = ctx.measureText(s.name).width; ctx.fillText(s.name, x, y); ctx.fillStyle = m.git ? T.git : T.rem; ctx.fillRect(x - tw / 2 - 2, y - 0.5, tw + 4, 1.6);
+    ctx.globalAlpha = a0;
+    drill.stains.push({ m, x, y, r, where: '' });
+  }
+  // edges between functions: calls (main / error) and shared data
+  const sel = drill.hov || drill.sel;
+  const fade = (q1, q2) => !sel || sel === q1 || sel === q2 ? 1 : 0.15;
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const a = nodes[i], c = nodes[j], via = a.f.data.filter(d => c.f.data.includes(d) && !/^ctx:(request|os)/.test(d));
+    if (via.length) strokeEdge(ctx, curve(P(a), P(c), a.r, c.r, 'data', false), 'data', 0.9 + 0.35 * Math.sqrt(via.length), 0.5 * fade(a.f.qual, c.f.qual), false);
+  }
+  for (const n of nodes) for (const c of n.f.calls) {
+    const m = byQ.get(c.to); if (!m || m === n) continue;
+    const k = c.deferred ? 'deferred' : c.error ? 'error' : 'main', pts = curve(P(n), P(m), n.r, m.r, k, true);
+    strokeEdge(ctx, pts, k, 1.6, (c.error ? 0.95 : c.deferred ? 0.85 : 0.7) * fade(n.f.qual, m.f.qual), true);
+    drill.edges.push({ pts, from: n.f, to: m.f, k });
+  }
+  // calls leaving / entering the blob end at chips on the rim, placed toward the other blob on the app map
+  // every edge of this blob in this step becomes a chip; its lines end at the functions involved, or at the rim
+  const owner = IDX[cur].owner, ext = new Map(), me = U.get(drill.id);
+  const chipOf = bid => {
+    let x = ext.get(bid);
+    if (!x) { const u = U.get(bid); x = { bid, ang: Math.atan2(u.y - me.y, u.x - me.x), links: [], kinds: new Set(), via: new Set() }; ext.set(bid, x); }
+    return x;
+  };
+  for (const e of STEPS[cur].edges) {
+    if (e.a !== drill.id && e.b !== drill.id) continue;
+    const out = e.a === drill.id, ch = chipOf(out ? e.b : e.a); ch.kinds.add(e.kind);
+    if (e.kind === 'ref') {          // v2 `refs` on functions: the line starts at the function naming the file; else at the rim
+      const ob = IDX[cur].blobs.get(e.b), path = ob?.path || e.b.replace(/^file:/, '');
+      const fs = nodes.filter(n => (n.f.refs || []).includes(path));
+      for (const v of e.via || []) ch.via.add(v);
+      for (const n of fs) ch.links.push({ n, kind: 'ref', out: true });
+      if (!fs.length) ch.links.push({ n: null, kind: 'ref', out: true });
+    } else if (e.kind === 'data') {
+      for (const v of e.via || []) ch.via.add(v);
+      const fs = nodes.filter(n => (e.via || []).some(v => n.f.data.includes(v)));
+      for (const n of fs) if (!ch.links.some(l => l.n === n && l.kind === 'data')) ch.links.push({ n, kind: 'data', out });
+      if (!fs.length) ch.links.push({ n: null, kind: 'data', out });
+    } else {
+      const err = e.kind === 'error', other = out ? e.b : e.a; let found = false;
+      for (const n of nodes) for (const c of n.f.calls) if (out && !!c.error === err && owner.get(c.to) === other) { ch.links.push({ n, kind: e.kind, out, def: c.deferred }); found = true; }
+      if (!out) for (const f of IDX[cur].blobs.get(other).funcs) for (const c of f.calls) { const n = byQ.get(c.to); if (n && !!c.error === err) { ch.links.push({ n, kind: e.kind, out, def: c.deferred }); found = true; } }
+      if (!found) ch.links.push({ n: null, kind: e.kind, out });   // edge known at blob level only (e.g. abort → error handler)
+    }
+  }
+  const chips = [...ext.values()].sort((a, b) => a.ang - b.ang);
+  const gapA = Math.min(0.3, TAU / Math.max(1, chips.length));
+  for (let pass = 0; pass < 6; pass++) for (let i = 1; i < chips.length; i++) if (chips[i].ang - chips[i - 1].ang < gapA) { const m = (chips[i].ang + chips[i - 1].ang) / 2; chips[i - 1].ang = m - gapA / 2; chips[i].ang = m + gapA / 2; }
+  drill.chips = [];
+  ctx.font = `600 13px ${SANS}`;
+  for (const ch of chips) {
+    const ob = IDX[cur].blobs.get(ch.bid), x = C.x + Math.cos(ch.ang) * (R + 34), y = C.y + Math.sin(ch.ang) * (R + 30);
+    for (const l of ch.links) {
+      const k = l.def ? 'deferred' : l.kind, arrow = k !== 'data', a = Math.atan2(y - C.y, x - C.x);
+      const p = l.n ? P(l.n) : { x: C.x + Math.cos(a) * (R - 18), y: C.y + Math.sin(a) * (R - 18) }, pr = l.n ? l.n.r : 0;
+      const pts = l.out ? curve(p, { x, y }, pr, 12, k, arrow) : curve({ x, y }, p, 12, pr, k, arrow);
+      strokeEdge(ctx, pts, k, k === 'data' ? 1.6 : 1.3, (k === 'error' ? 0.9 : k === 'data' ? 0.6 : k === 'ref' ? 0.7 : 0.55) * fade(l.n ? l.n.f.qual : null, null), arrow);
+      if (l.n && k !== 'data') drill.edges.push({ pts, from: l.out ? l.n.f : null, to: l.out ? null : l.n.f, other: ob, k });
+    }
+    const txt = `${ob.face ? ob.face + ' ' : ''}${shortName(ob.title)}`, w = ctx.measureText(txt).width + 16, cc = kindColors(ob.kind, ob.region);
+    const err = ch.kinds.has('error'), dataOnly = ch.kinds.size === 1 && ch.kinds.has('data');
+    ctx.fillStyle = cc.fill; ctx.strokeStyle = err ? T.err : dataOnly ? T.data : cc.stroke; ctx.lineWidth = err || dataOnly ? 2 : 1.5;
+    ctx.setLineDash(err ? [6, 4] : dataOnly ? [1, 3.5] : []); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.roundRect(x - w / 2, y - 11, w, 22, PAGE(ob.kind) ? 3 : 11); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = PAGE(ob.kind) ? '#17202A' : cc.text; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x, y + 1);
+    drill.chips.push({ id: ch.bid, kinds: [...ch.kinds], via: [...ch.via], x0: x - w / 2, x1: x + w / 2, y0: y - 11, y1: y + 11 });
+  }
+  // function blobs
+  const outside = [];
+  for (const n of nodes) {
+    const p = P(n), f = n.f, seed = hash(f.qual), isSel = drill.sel === f.qual;
+    ctx.globalAlpha = ease * (sel && sel !== f.qual && !f.calls.some(c => c.to === sel) && !byQ.get(sel)?.f.calls.some(c => c.to === f.qual) ? 0.4 : 1);
+    blobPath(ctx, p.x, p.y, n.r, seed, t * 1.3); ctx.fillStyle = col.fill; ctx.fill();
+    const fm = funcMark(f.qual);
+    if (fm) { const s = stainSpot(f.qual, fm, n.r, f.lines); ctx.save(); ctx.clip(); drawStain(ctx, p.x + s.dx, p.y + s.dy, s.r, fm, s.seed, now); ctx.restore();
+              drill.stains.push({ m: fm, x: p.x + s.dx, y: p.y + s.dy, r: s.r, where: f.name }); }
+    ctx.lineWidth = lineW(f.branches); ctx.strokeStyle = col.stroke; blobPath(ctx, p.x, p.y, n.r, seed, t * 1.3); ctx.stroke();
+    if (f.delta.state === 'moved') shimmer(ctx, p.x, p.y, n.r + 3, seed, t * 1.3, ctx.globalAlpha);
+    if (f.delta.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; blobPath(ctx, p.x, p.y, n.r + 4, seed, t * 1.3); ctx.stroke(); }
+    if (isSel || drill.hov === f.qual) { ctx.strokeStyle = T.mix; ctx.lineWidth = 2; blobPath(ctx, p.x, p.y, n.r + 6, seed, t * 1.3); ctx.stroke(); }
+    const fs = clamp(n.r * 0.36, 11, 15); ctx.font = `600 ${fs}px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const name = f.name.length > 22 ? f.name.slice(0, 21) + '…' : f.name, tw = ctx.measureText(name).width, inside = tw < n.r * 1.7;
+    if (inside && fm) {
+      ctx.save(); ctx.globalAlpha *= 0.8; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.roundRect(p.x - tw / 2 - 5, p.y - 4 - fs * 0.62, tw + 10, fs * 1.24, 4); ctx.fill(); ctx.restore(); ctx.fillStyle = T.ink;
+    }
+    if (inside) { ctx.fillText(name, p.x, p.y - 4); ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.fillText(`${f.lines}L`, p.x, p.y + fs * 0.7); }
+    else outside.push({ n, p, name, fs, w: tw + 10, h: fs + 6, alpha: ctx.globalAlpha });
+  }
+  placeAround(outside, nodes.map(n => ({ ...P(n), r: n.r, n })));
+  drill.nodes = nodes.map(n => ({ q: n.f.qual, f: n.f, ...P(n), r: n.r }));
+  ctx.restore();
+  if (drill.sel && cardFor !== drill.sel + '@' + cur) showCard(drill.nodes.find(n => n.q === drill.sel));
+}
+/* labels of small function blobs: try below, above, right, left; keep clear of other nodes and placed labels;
+   if nothing is free, the least-overlapping spot wins and the backplate keeps it readable */
+function placeAround(items, circles) {
+  const placed = [];
+  const overlap = (r, own) => {
+    let o = 0;
+    for (const p of placed) o += Math.max(0, Math.min(r.x1, p.x1) - Math.max(r.x0, p.x0)) * Math.max(0, Math.min(r.y1, p.y1) - Math.max(r.y0, p.y0));
+    for (const c of circles) if (c.n !== own) { const dx = clamp(c.x, r.x0, r.x1) - c.x, dy = clamp(c.y, r.y0, r.y1) - c.y; if (dx * dx + dy * dy < c.r * c.r) o += c.r * 4; }
+    return o;
+  };
+  for (const it of items.sort((a, b) => b.n.r - a.n.r)) {
+    const { p, w, h } = it, r = it.n.r + 3;
+    const cands = [[p.x, p.y + r + h / 2], [p.x, p.y - r - h / 2], [p.x + r + w / 2, p.y], [p.x - r - w / 2, p.y]].map(([x, y]) => ({ x0: x - w / 2, x1: x + w / 2, y0: y - h / 2, y1: y + h / 2, x, y }));
+    let best = cands[0], bo = Infinity;
+    for (const c of cands) { const o = overlap(c, it.n); if (o < bo) { bo = o; best = c; } if (!o) break; }
+    placed.push(best);
+    ctx.save(); ctx.globalAlpha = it.alpha; ctx.fillStyle = T.bg; ctx.globalAlpha = it.alpha * 0.82;
+    ctx.beginPath(); ctx.roundRect(best.x0, best.y0, w, h, 4); ctx.fill();
+    ctx.globalAlpha = it.alpha; ctx.fillStyle = T.ink; ctx.font = `600 ${it.fs}px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(it.name, best.x, best.y + 0.5); ctx.restore();
+  }
+}
+function showCard(n) {
+  const card = $('#card');
+  if (!n) { hideCard(); return; }
+  const f = n.f, d = f.delta;
+  cardFor = n.q + '@' + cur; fileCard = null; card.setAttribute('aria-label', 'Function detail');
+  card.innerHTML = `<h3>${esc(f.name)}</h3><div class="loc">${esc(f.file)}:${f.start}-${f.end}</div>
+    <div class="loc">${f.lines} lines · ${f.branches} branches · ${f.errors ?? 0} error exits ${d.added || d.removed ? `· <span class="add">+${d.added}</span> <span class="rem">−${d.removed}</span> this step` : ''}${d.state === 'new' ? ' · new' : d.state === 'moved' ? ' · moved here this step' : ''}</div>
+    ${f.snippet.length ? `<pre>${f.snippet.slice(0, 3).map(esc).join('\n')}</pre>` : '<div class="loc" style="margin:8px 0">no snippet</div>'}
+    <div>${f.data.map(s => `<span class="sym">${esc(s)}</span>`).join('') || '<span class="loc">no data symbols</span>'}</div>`;
+  card.style.display = 'block'; hideTip();      // the tooltip would sit on the card until the mouse moved
+  const w = card.offsetWidth, h = card.offsetHeight, { C, RR } = drillGeo();
+  const right = C.x + RR + 40, left = C.x - RR - 40 - w;     // beside the drill circle, on the side nearer the function
+  let x = (n.x >= C.x ? right + w < VW - 8 : left < 8) ? right : left;
+  if (x + w > VW - 8 || x < 8) x = n.x > C.x ? n.x - n.r - w - 18 : n.x + n.r + 18;
+  x = clamp(x, 8, VW - w - 8);
+  card.style.left = x + 'px'; card.style.top = clamp(n.y - h / 2, TOP + 8, VH - BOTTOM - h - 8) + 'px';
+}
+function hideCard() { $('#card').style.display = 'none'; cardFor = null; fileCard = null; }
+/* a page has no functions: clicking it shows where it lives, how big it is and when it last changed */
+let fileCard = null, fileAt = null;
+function showFileCard(id, at = null) {
+  const b = IDX[cur].blobs.get(id), card = $('#card');
+  if (!b) { hideCard(); return; }
+  let last = -1, first = cur;
+  for (let j = cur; j >= 0; j--) { const bj = IDX[j].blobs.get(id); if (!bj) break; first = j; const d = bj.delta; if (last < 0 && (d.state === 'new' || d.added + d.removed > 0)) last = j; }
+  const L = last >= 0 ? IDX[last].blobs.get(id).delta : null, age = cur - last, said = last >= 0 ? STEPS[last].said : '';
+  const refs = STEPS[cur].edges.filter(e => e.kind === 'ref' && e.b === id);
+  card.innerHTML = `<h3>${esc(b.name)}</h3><div class="loc">${esc(b.path)}</div>
+    <div class="loc">${b.size} lines · ${esc(KIND_LABEL[b.kind])} · ${esc(b.region)}</div>
+    <div class="fk">last change</div>
+    <div>${L ? `step ${last + 1} <span class="loc">· ${age ? `${age} step${age > 1 ? 's' : ''} ago` : 'this step'}</span> · ${L.state === 'new' ? 'created' : `<span class="add">+${L.added}</span> <span class="rem">−${L.removed}</span>`}` : '<span class="loc">none recorded</span>'}</div>
+    ${said ? `<div class="sum">“${esc(said)}”</div>` : ''}${first !== last && first > 0 ? `<div class="loc">present since step ${first + 1}</div>` : ''}
+    <div class="fk">${b.kind === 'file' ? 'referenced by' : 'references'}</div>
+    <div>${b.kind === 'file' ? refs.map(e => `<span class="sym">${esc(IDX[cur].blobs.get(e.a)?.title)} · ${esc((e.via || []).join(' '))}</span>`).join('') || '<span class="loc">nothing at this step</span>' : '<span class="loc">nothing references a text file</span>'}</div>`;
+  card.setAttribute('aria-label', 'File detail'); card.style.display = 'block'; hideTip();
+  fileCard = id; fileAt = at; cardFor = null; placeFileCard();
+}
+function placeFileCard() {
+  const card = $('#card'), w = card.offsetWidth, h = card.offsetHeight;
+  let x, y;
+  if (fileAt) { x = fileAt.x - w / 2; y = fileAt.y + 10; }
+  else { const u = U.get(fileCard), v = VIS.get(fileCard), r = (v ? v.r : u.R) * VIEW.s, px = sx(u.x), py = sy(u.y);
+         x = px + r * 0.74 + 16; if (x + w > VW - 8) x = px - r * 0.74 - 16 - w; y = py - h / 2; }
+  card.style.left = clamp(x, 8, VW - w - 8) + 'px'; card.style.top = clamp(y, TOP + 8, VH - BOTTOM - h - 8) + 'px';
+}
+
+/* ───────────────────────── timeline ───────────────────────── */
+let ticks = [];
+function drawTimeline() {
+  const w = tl.width / DPR, h = tl.height / DPR, n = STEPS.length; if (!n) return;
+  tctx.setTransform(DPR, 0, 0, DPR, 0, 0); tctx.clearRect(0, 0, w, h);
+  const turns = []; let last = null;
+  STEPS.forEach((s, i) => { if (s.turn !== last) { turns.push({ turn: s.turn, from: i, to: i }); last = s.turn; } else turns[turns.length - 1].to = i; });
+  const gap = Math.min(8, w * 0.25 / Math.max(1, turns.length - 1));      // many turns: the gaps never eat more than a quarter of the track
+  const slot = (w - (turns.length - 1) * gap) / n, maxC = Math.max(1, ...STEPS.filter(s => !isGit(s)).map(s => s.added + s.removed)), base = h - 6;
+  ticks = [];
+  turns.forEach((g, ti) => {
+    const x0 = g.from * slot + ti * gap, x1 = (g.to + 1) * slot + ti * gap;
+    tctx.fillStyle = T.line; tctx.globalAlpha = ti % 2 ? 0.35 : 0.6; tctx.fillRect(x0, 0, x1 - x0, h); tctx.globalAlpha = 1;
+    tctx.fillStyle = T.mute; tctx.font = `10px ${MONO}`; tctx.textBaseline = 'top'; tctx.textAlign = 'left';
+    if (x1 - x0 > 30) tctx.fillText(`T${g.turn}`, x0 + 4, 3);
+    if (SESS_ON) {          // one subtle tint per session along the track (runs merged so no seams), a solid sliver at the foot
+      for (let i = g.from, r0 = i; i <= g.to + 1; i++) {
+        if (i <= g.to && STEPS[i].tint === STEPS[r0].tint) continue;
+        const ci = STEPS[r0].tint;
+        if (ci >= 0) { const xa = r0 * slot + ti * gap, xb = i * slot + ti * gap; tctx.fillStyle = sessCol(ci, 0.2); tctx.fillRect(xa, 0, xb - xa, h); tctx.fillStyle = sessCol(ci, 0.85); tctx.fillRect(xa, h - 3, xb - xa, 3); }
+        r0 = i;
+      }
+    }
+    for (let i = g.from; i <= g.to; i++) {
+      const s = STEPS[i], x = i * slot + ti * gap, c = s.added + s.removed, tw = Math.max(1.5, Math.min(slot - 2, 14)), cx = x + slot / 2;
+      ticks.push({ i, x0: x, x1: x + slot });
+      if (isGit(s)) { tctx.fillStyle = T.git; tctx.globalAlpha = i <= cur ? 1 : 0.6; tctx.fillRect(cx - 0.8, 14, 1.6, h - 17); tctx.globalAlpha = 1; continue; }
+      if (!c) { tctx.fillStyle = T.faint; tctx.fillRect(cx - tw / 2, base - 2, tw, 2); continue; }
+      const H = 3 + (h - 22) * Math.log1p(c) / Math.log1p(maxC), ha = H * s.added / c;
+      tctx.globalAlpha = i <= cur ? 1 : 0.45;
+      tctx.fillStyle = T.add; tctx.fillRect(cx - tw / 2, base - ha, tw, ha);
+      tctx.fillStyle = T.rem; tctx.fillRect(cx - tw / 2, base - H, tw, H - ha);
+      tctx.globalAlpha = 1;
+    }
+  });
+  const tk = ticks[cur]; if (!tk) return;
+  const cx = (tk.x0 + tk.x1) / 2;
+  tctx.fillStyle = T.ink; tctx.globalAlpha = 0.12; tctx.fillRect(tk.x0, 0, tk.x1 - tk.x0, h); tctx.globalAlpha = 1;
+  tctx.fillRect(cx - 1, 0, 2, h); tctx.beginPath(); tctx.moveTo(cx - 5, 0); tctx.lineTo(cx + 5, 0); tctx.lineTo(cx, 6); tctx.fill();
+}
+const tickAt = x => { for (const t of ticks) if (x < t.x1) return t.i; return STEPS.length - 1; };
+
+/* ───────────────────────── step, status, playback ───────────────────────── */
+let playing = false, speed = 1, acc = 0;
+function setStep(i) {
+  i = clamp(i, 0, STEPS.length - 1); if (i === cur && stepAt) return;
+  cur = i; stepAt = performance.now();
+  const s = STEPS[i], time = s.ts ? new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' }) : '';
+  const S = s.stats, res = S && S.calls > 0   // v2: how many calls the analyzer could place
+    ? ` · <span title="${S.calls - S.unresolved} of ${S.calls} calls resolved">resolved ${Math.round(100 * (1 - S.unresolved / S.calls))}%</span>` : '';
+  const git = isGit(s), who = MULTI && !git ? `<span class="who" title="${esc(whoText(s) + (s.seeded ? '\nbase seeded from outside the replayed edits' : ''))}"><i style="background:${sessCol(s.sci)}"></i>${esc(whoText(s))}</span>` : '',
+    warn = s.applied === false ? '<span class="warn" role="img" aria-label="edit could not be applied to the snapshot" title="edit could not be applied to the snapshot">⚠</span>' : '',
+    tag = s.empty ? '<span class="dim">no change</span>' : '';
+  $('#l1').innerHTML = `<span class="tool${git ? ' git' : ''}">${esc(s.tool)}</span><span class="file">${esc(s.file || '—')}</span>${warn}${who}` +
+    `<span class="add">+${s.added}</span><span class="rem">−${s.removed}</span><span class="dim">turn ${s.turn} · step ${i + 1}/${STEPS.length} · ${time}${res}</span>${tag}`;
+  let said = s.said, j = i;               // an edit with no text before it: show what the same agent last said, marked as earlier
+  while (!said && j > 0 && !git) { const p = STEPS[--j]; if (!isGit(p) && p.session === s.session && p.agent === s.agent) said = p.said; }
+  $('#said').textContent = git ? `git · ${s.said || '(no subject)'}` : said ? (s.said ? said : `(earlier, step ${j + 1}) ${said}`) : '(the agent said nothing before this edit)';
+  $('#said').classList.toggle('dim', !s.said && !git); $('#said').classList.toggle('git', git); $('#said').title = (git ? s.said : said) || '';
+  markSession();
+  tl.setAttribute('aria-valuenow', i); tl.setAttribute('aria-valuetext', `step ${i + 1} of ${STEPS.length}: ${s.tool} ${s.file}${MULTI ? ' (' + (git ? 'git' : whoText(s)) + ')' : ''}${s.applied === false ? ', edit could not be applied' : ''}`);
+  if (cardFor) cardFor = null;
+  if (fileCard) showFileCard(fileCard, fileAt);
+  if (drill && drill.sel && !IDX[i].funcs.has(drill.sel)) { drill.sel = null; hideCard(); }
+}
+function setPlaying(p) {
+  playing = p; acc = 0;
+  $('#play').innerHTML = p ? '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 2h3v10H3zM8 2h3v10H8z" fill="currentColor"/></svg>'
+                           : '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 1.5l9 5.5-9 5.5z" fill="currentColor"/></svg>';
+  $('#play').setAttribute('aria-label', p ? 'Pause' : 'Play');
+}
+function togglePlay() { if (!playing && cur >= STEPS.length - 1) setStep(0); setPlaying(!playing); }
+
+/* ───────────────────────── tooltip & interaction ───────────────────────── */
+const tip = $('#tip');
+function showTip(html, x, y) { if ($('#card').style.display === 'block') { hideTip(); return; } tip.innerHTML = html; tip.style.display = 'block'; const w = tip.offsetWidth, h = tip.offsetHeight; tip.style.left = clamp(x + 16, 8, VW - w - 8) + 'px'; tip.style.top = clamp(y + 14, 8, VH - h - 8) + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+function blobAt(x, y) {
+  let best = null, bd = Infinity;
+  for (const [id, v] of VIS) {
+    if (!IDX[cur].blobs.has(id)) continue;
+    const u = U.get(id), dx = sx(u.x) - x, dy = sy(u.y) - y, d = Math.hypot(dx, dy), R = v.r * VIEW.s;
+    const inside = PAGE(u.kind) ? Math.abs(dx) < R * 0.74 + 3 && Math.abs(dy) < R * 0.92 + 3 : d < R + 3;
+    if (inside && d < bd) { best = id; bd = d; }
+  }
+  return best;
+}
+function fileTip(b) {
+  const d = b.delta, refs = STEPS[cur].edges.filter(e => e.kind === 'ref' && e.b === b.id);
+  return `<b>${esc(b.name)}</b><div class="k">${esc(KIND_LABEL[b.kind])} · ${esc(b.path)}</div><div>${b.size} lines</div>
+    <div>${d.added || d.removed ? `<span class="add">+${d.added}</span> <span class="rem">−${d.removed}</span> this step` : '<span class="k">no lines edited this step</span>'}${d.state === 'new' ? ' · <b>new</b>' : ''}</div>
+    <div class="k">${b.kind === 'text' ? 'nothing references it' : refs.length ? 'referenced by ' + refs.map(e => esc(IDX[cur].blobs.get(e.a)?.title)).join(', ') : 'no references at this step'}</div>
+    <div class="k" style="margin-top:4px">click for details</div>`;
+}
+const EDGE_SAYS = { main: 'call on the main path', error: 'call from an error branch', data: 'shared data', ref: 'references the file', deferred: 'passed as callback: handed over as a value, called later' };
+function blobTip(b) {
+  if (PAGE(b.kind)) return fileTip(b);
+  const d = b.delta, kinds = {}; for (const e of STEPS[cur].edges) if (e.a === b.id || e.b === b.id) kinds[e.kind] = (kinds[e.kind] || 0) + 1;
+  const L = b.label || {}, [lvl, ...why] = String(L.risk || '').split(':'), lv = lvl.trim().toLowerCase();
+  const risk = L.risk ? ` <span class="risk risk-${esc(lv)}">${esc(lv)} risk</span>${why.length ? `<div class="k">${esc(why.join(':').trim())}</div>` : ''}` : '';
+  return `<b>${esc(b.face)} ${esc(b.title)}</b>${risk}${b.title !== b.name ? `<div class="k">${esc(b.name)}</div>` : ''}
+    ${L.summary ? `<div class="sum">${esc(L.summary)}</div>` : ''}<div class="k">${esc(KIND_LABEL[b.kind] || b.kind)} · ${esc(b.region)} · ${esc(b.id)}</div>
+    <div>${b.size} lines · complexity ${b.complexity} · ${b.errors} error exits · ${b.funcs.length} funcs</div>
+    <div>${d.added || d.removed ? `<span class="add">+${d.added}</span> <span class="rem">−${d.removed}</span> this step` : '<span class="k">no lines edited this step</span>'}${d.moved ? ` · <span class="k">${d.moved} lines moved between blobs</span>` : ''}${d.state === 'new' ? ' · <b>new</b>' : ''}</div>
+    <div class="k">${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(' · ') || 'no edges'}</div>
+    <div>${b.data.slice(0, 8).map(s => `<span class="sym">${esc(s)}</span>`).join('')}</div><div class="k" style="margin-top:4px">click to open</div>`;
+}
+function onMove(ev) {
+  mouse = { x: ev.clientX, y: ev.clientY };
+  if (drill) {
+    const ch = drill.chips.find(c => mouse.x > c.x0 && mouse.x < c.x1 && mouse.y > c.y0 && mouse.y < c.y1);
+    const st = ch ? null : (drill.stains || []).slice().reverse().find(s => Math.hypot(s.x - mouse.x, s.y - mouse.y) < s.r);
+    const n = (drill.nodes || []).find(n => Math.hypot(n.x - mouse.x, n.y - mouse.y) < n.r);
+    let eh = null, bd = 6;
+    if (!ch && !st && !n) for (const g of drill.edges || []) { const d = distToPoly(g.pts, mouse.x, mouse.y); if (d < bd) { bd = d; eh = g; } }
+    drill.hov = n ? n.q : null; cv.style.cursor = n || ch ? 'pointer' : 'default';
+    if (ch) { const ob = IDX[cur].blobs.get(ch.id);
+      showTip(`<b>${esc(ob?.title)}</b><div class="k">${ch.kinds.map(k => k === 'main' ? 'main-path call' : k === 'error' ? 'error-branch call' : k === 'ref' ? 'references the file' : 'shared data').join(' · ')} · ${ob && PAGE(ob.kind) ? 'click for details' : 'click to open'}</div>
+      ${ch.via.map(s => `<span class="sym">${esc(s)}</span>`).join('')}`, mouse.x, mouse.y); }
+    else if (st) showTip(stainTip(st.m, st.where), mouse.x, mouse.y);
+    else if (eh) showTip(`<b>${esc(eh.from ? eh.from.name : eh.other.title)}</b> → <b>${esc(eh.to ? eh.to.name : eh.other.title)}</b><div class="k">${EDGE_SAYS[eh.k]}</div>`, mouse.x, mouse.y);
+    else hideTip();
+    return;
+  }
+  hover = blobAt(mouse.x, mouse.y); hoverEdge = null; hoverNode = null;
+  if (!hover) { const dn = dnGeo.find(d => Math.hypot(d.x - mouse.x, d.y - mouse.y) < 9); if (dn) hoverNode = dn.g; }
+  if (hoverNode) {
+    showTip(`<b>shared data</b> <span class="k">· ${hoverNode.ids.length} blobs</span><div>${hoverNode.syms.map(s => `<span class="sym">${esc(s)}</span>`).join('')}</div>
+      <div class="k">${hoverNode.ids.map(id => esc(IDX[cur].blobs.get(id)?.title)).join(' · ')}</div>`, mouse.x, mouse.y); cv.style.cursor = 'default'; return;
+  }
+  if (hover) {
+    const b = IDX[cur].blobs.get(hover), st = stainGeo.slice().reverse().find(s => s.id === hover && Math.hypot(s.x - mouse.x, s.y - mouse.y) < s.r);
+    cv.style.cursor = 'pointer';
+    if (hover === fileCard && !st) { hideTip(); return; }      // its card is already open beside it
+    showTip(st ? stainTip(st.m, b.title) : blobTip(b), mouse.x, mouse.y); cv.style.cursor = 'pointer'; return;
+  }
+  let bd = 6;
+  for (const g of edgeGeo) { const d = distToPoly(g.pts, mouse.x, mouse.y); if (d < bd) { bd = d; hoverEdge = g.e; } }
+  cv.style.cursor = 'default';
+  if (hoverEdge) {
+    const e = hoverEdge, A = IDX[cur].blobs.get(e.a), B = IDX[cur].blobs.get(e.b);
+    showTip(`<b>${esc(A.title)}</b> ${e.kind === 'data' ? '⟷' : '→'} <b>${esc(B.title)}</b><div class="k">${EDGE_SAYS[e.kind] || e.kind} · n=${e.n}</div>
+      ${(e.via || []).map(s => `<span class="sym">${esc(s)}</span>`).join('')}`, mouse.x, mouse.y);
+  } else hideTip();
+}
+function onClick(ev) {
+  const x = ev.clientX, y = ev.clientY;
+  if (drill) {
+    const ch = drill.chips.find(c => x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1);
+    if (ch) {
+      const ob = IDX[cur].blobs.get(ch.id);
+      if (ob && PAGE(ob.kind)) { drill.sel = null; showFileCard(ch.id, { x: (ch.x0 + ch.x1) / 2, y: ch.y1 }); } else openDrill(ch.id);
+      return;
+    }
+    const n = (drill.nodes || []).find(n => Math.hypot(n.x - x, n.y - y) < n.r);
+    if (n) { drill.sel = drill.sel === n.q ? null : n.q; drill.sel ? showCard(n) : hideCard(); return; }
+    if (fileCard) { hideCard(); return; }
+    const { C, RR } = drillGeo();
+    if (Math.hypot(x - C.x, y - C.y) > RR * 1.05) closeDrill(); else { drill.sel = null; hideCard(); }
+    return;
+  }
+  const id = blobAt(x, y); if (id) openDrill(id); else hideCard();
+}
+cv.addEventListener('mousemove', onMove);
+cv.addEventListener('mouseleave', () => { hover = null; hoverEdge = null; hoverNode = null; hideTip(); });
+cv.addEventListener('click', onClick);
+let scrubbing = false;
+tl.addEventListener('pointerdown', e => { scrubbing = true; tl.setPointerCapture(e.pointerId); setPlaying(false); setStep(tickAt(e.offsetX)); });
+tl.addEventListener('pointermove', e => {
+  if (scrubbing) setStep(tickAt(e.offsetX));
+  const s = STEPS[tickAt(e.offsetX)]; if (!s) return;
+  const g = isGit(s), who = MULTI ? `<div class="k" style="${g ? 'color:var(--git)' : ''}">${g ? 'git commit, not AI work' : esc(whoText(s))}${s.applied === false ? ' · <span class="warn">⚠ not applied</span>' : ''}</div>` : '';
+  showTip(`<span class="k">step ${s.idx + 1} · turn ${s.turn}</span><div><b>${esc(s.tool)}</b> ${esc(s.file)} <span class="add">+${s.added}</span> <span class="rem">−${s.removed}</span></div>${who}<div class="k">${esc((s.said || '').slice(0, 120))}</div>`, e.clientX, e.clientY - (MULTI ? 106 : 90));
+});
+tl.addEventListener('pointerup', () => { scrubbing = false; });
+tl.addEventListener('pointerleave', hideTip);
+$('#play').onclick = togglePlay;
+$('#prev').onclick = () => { setPlaying(false); setStep(cur - 1); };
+$('#next').onclick = () => { setPlaying(false); setStep(cur + 1); };
+$('#speed').onchange = e => { speed = +e.target.value; };
+$('#legendBtn').onclick = () => { const on = $('#legend').classList.toggle('on'); $('#legendBtn').setAttribute('aria-expanded', on); };
+addEventListener('keydown', e => {
+  if (e.target.tagName === 'SELECT') return;
+  if (e.key === 'Escape') { if (drill) closeDrill(); else if (fileCard) hideCard(); else $('#legend').classList.remove('on'); }
+  else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
+  else if (e.key === 'ArrowLeft') { setPlaying(false); setStep(cur - 1); }
+  else if (e.key === 'ArrowRight') { setPlaying(false); setStep(cur + 1); }
+  else if (e.key === 'Home') setStep(0);
+  else if (e.key === 'End') setStep(STEPS.length - 1);
+  else if (e.key === 'l' || e.key === 'L') $('#legendBtn').click();
+  else if (!e.ctrlKey && !e.metaKey && !e.altKey && SESS_ON && 'gGsS'.includes(e.key) && e.key.length === 1) {
+    const list = e.key === 'g' || e.key === 'G' ? GITS : BOUNDS, to = e.key === e.key.toLowerCase() ? list.find(i => i > cur) : [...list].reverse().find(i => i < cur);
+    if (to != null) { setPlaying(false); setStep(to); }
+  }
+});
+$('#sess').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { setPlaying(false); setStep(+b.dataset.i); } });
+addEventListener('resize', resize);
+lightQ.addEventListener('change', readTheme);
+
+function buildLegend() {
+  const sw = k => { const c = kindColors(k, 'templates');
+    return `<span class="sw${PAGE(k) ? ' pg' : ''}" style="background:${c.fill};border-color:${c.stroke}${k === 'orphan' ? ';border-style:dashed' : ''}"></span>`; };
+  const kinds = Object.keys(KIND_LABEL).map(k => `<div class="row">${sw(k)}${KIND_LABEL[k]}</div>`).join('');
+  const line = (dash, col, w) => `<svg width="34" height="10"><line x1="1" y1="5" x2="33" y2="5" stroke="${col}" stroke-width="${w}" stroke-linecap="round" stroke-dasharray="${dash}"/></svg>`;
+  const stain = c => `<span class="dot" style="background:radial-gradient(circle, ${c}2E 0 30%, ${c}A6 66%, transparent 70%);box-shadow:inset 0 0 0 1.5px ${c}"></span>`;
+  $('#legend').innerHTML = `<h4>blobs · area = lines, border = complexity</h4><div class="grid">${kinds}</div>
+    <h4>lines · width = count</h4>
+    <div class="row">${line('', `rgb(${T.main})`, 2)} call on the main path</div>
+    <div class="row">${line('7 5', T.err, 2)} call from an error branch</div>
+    <div class="row">${line('0.5 4', T.data, 1.6)} shared data (hover: symbols)</div>
+    <div class="row"><span class="dot" style="background:${T.data};width:9px;height:9px;margin:0 12px 0 13px"></span>data shared by &gt;3 blobs (spokes)</div>
+    <div class="row">${line('', T.mute, 1.1)} code names a file (hover: literal)</div>
+    <div class="row">${line('9 4 0.5 4', `rgb(${T.main})`, 1.6)} passed as callback (drill-down)</div>
+    <h4>stains · size = change ÷ size, settle over ${STAIN_SETTLE} steps</h4>
+    <div class="grid"><div class="row">${stain(T.mix)} modified</div><div class="row">${stain(T.rem)} mostly deleted</div>
+    <div class="row"><span class="dot" style="border:2px solid ${T.flash}"></span> new blob</div>
+    <div class="row"><span class="dot" style="border:1.5px dashed ${T.mute}"></span> code moved in</div>
+    ${SESS_ON ? `<div class="row">${stain(T.git)} changed by a git commit</div>` : ''}</div>
+    <div class="keys">pure additions leave no stain: the blob grows instead<br>click blob → functions · click page → file card<br>space play · ← → step · esc back · L legend${SESS_ON ? '<br>g / G next / previous git step · s / S next / previous session' : ''}</div>`;
+}
+
+/* ───────────────────────── loop & boot ───────────────────────── */
+let lastT = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
+  if (playing) { acc += dt * 1000 * speed; if (acc > 1100) { acc = 0; if (cur >= STEPS.length - 1) setPlaying(false); else setStep(cur + 1); } }
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH);
+  if (STEPS.length) {
+    updateVis(dt); if (!drill) moveCamera(dt); const t = now / 1000;
+    drawMap(now, t);
+    if (drill) drawDrill(now, t);
+    else if (fileCard && !fileAt) placeFileCard();
+    drawTimeline();
+  }
+  requestAnimationFrame(frame);
+}
+(async () => {
+  readTheme(); setPlaying(false); resize(); requestAnimationFrame(frame);
+  try {
+    const data = await load();
+    normalize(data);
+    if (!STEPS.length) throw new Error(`${SRC} has no steps`);
+    buildLegend(); buildSessions(); layout(); resize();
+    const qs = new URLSearchParams(location.search);
+    $('#src').textContent = SRC; $('#src').classList.toggle('sample', SRC.startsWith('sample'));
+    $('#meta').textContent = `${data.session || ''} · ${data.root || ''} · ${STEPS.length} steps · ${U.size} blobs over the session`;
+    tl.setAttribute('aria-valuemax', STEPS.length - 1);
+    $('#empty').remove();
+    setStep(qs.has('step') ? +qs.get('step') : STEPS.length - 1); VIEW = camTarget();
+    if (qs.has('drill')) openDrill(qs.get('drill'));
+  } catch (e) {
+    $('#empty').textContent = String(e.message || e); $('#meta').textContent = 'no data';
+    console.error(e);
+  }
+})();
+</script>
+</body>
+</html>

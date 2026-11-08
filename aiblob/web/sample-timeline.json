@@ -1,0 +1,4878 @@
+{
+ "root": "/sample/app",
+ "session": "sample-0000",
+ "schema": 3,
+ "steps": [
+  {
+   "idx": 0,
+   "ts": "2026-11-05T00:01:10.000Z",
+   "tool": "Write",
+   "file": "db.py",
+   "said": "I will start with the database layer: connection, schema and query helpers.",
+   "turn": 0,
+   "added": 38,
+   "removed": 0,
+   "full": true,
+   "blobs": [
+    {
+     "id": "orphan:db",
+     "name": "db",
+     "emoji": "🗄️",
+     "kind": "orphan",
+     "module": "db",
+     "size": 38,
+     "complexity": 4,
+     "errors": 0,
+     "data": [
+      "ctx:current_app.config",
+      "ctx:g.db",
+      "table:notes",
+      "table:users"
+     ],
+     "delta": {
+      "added": 38,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "db.connect",
+       "name": "connect",
+       "file": "db.py",
+       "start": 8,
+       "end": 13,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:current_app.config"
+       ],
+       "snippet": [
+        "conn = sqlite3.connect(path)",
+        "return conn"
+       ],
+       "calls": [],
+       "hash": "0394f1feda",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.get_db",
+       "name": "get_db",
+       "file": "db.py",
+       "start": 15,
+       "end": 20,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "if 'db' not in g:",
+        "g.db = connect()",
+        "return g.db"
+       ],
+       "calls": [
+        {
+         "to": "db.connect",
+         "error": false
+        }
+       ],
+       "hash": "2f6a176729",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.init_db",
+       "name": "init_db",
+       "file": "db.py",
+       "start": 22,
+       "end": 33,
+       "lines": 12,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes",
+        "table:users"
+       ],
+       "snippet": [
+        "db.executescript(SCHEMA)"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "c90e9be772",
+       "delta": {
+        "added": 12,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.query",
+       "name": "query",
+       "file": "db.py",
+       "start": 35,
+       "end": 39,
+       "lines": 5,
+       "branches": 1,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return rows[0] if one else rows"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "6661df31cc",
+       "delta": {
+        "added": 5,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.execute",
+       "name": "execute",
+       "file": "db.py",
+       "start": 41,
+       "end": 45,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return cur.lastrowid"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "9ed68a6d1b",
+       "delta": {
+        "added": 5,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.close_db",
+       "name": "close_db",
+       "file": "db.py",
+       "start": 47,
+       "end": 50,
+       "lines": 4,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "db = g.pop('db', None)",
+        "if db: db.close()"
+       ],
+       "calls": [],
+       "hash": "c5f82b78c4",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "edges": [],
+   "stats": {
+    "calls": 4,
+    "unresolved": 1,
+    "parse_ms": 3.5,
+    "analyze_ms": 2.7
+   }
+  },
+  {
+   "idx": 1,
+   "ts": "2026-11-05T00:03:10.000Z",
+   "tool": "Write",
+   "file": "models.py",
+   "said": "Next the models: User and Note dataclasses with load/save helpers.",
+   "turn": 0,
+   "added": 29,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "orphan:models",
+     "name": "models",
+     "emoji": "👤",
+     "kind": "orphan",
+     "module": "models",
+     "size": 29,
+     "complexity": 2,
+     "errors": 2,
+     "data": [
+      "table:notes",
+      "table:users"
+     ],
+     "delta": {
+      "added": 29,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "models.get_user",
+       "name": "get_user",
+       "file": "models.py",
+       "start": 20,
+       "end": 23,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM users WHERE id=?', (uid,), one=True)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "5e8b3ee93e",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.get_user_by_username",
+       "name": "get_user_by_username",
+       "file": "models.py",
+       "start": 25,
+       "end": 28,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM users WHERE username=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "fc27a3730b",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.create_user",
+       "name": "create_user",
+       "file": "models.py",
+       "start": 30,
+       "end": 36,
+       "lines": 7,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "if get_user_by_username(name): raise ValueError",
+        "return execute('INSERT INTO users ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        },
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        }
+       ],
+       "hash": "81031c91d5",
+       "delta": {
+        "added": 7,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.list_notes",
+       "name": "list_notes",
+       "file": "models.py",
+       "start": 38,
+       "end": 41,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE owner=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "61f16e06cf",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.create_note",
+       "name": "create_note",
+       "file": "models.py",
+       "start": 43,
+       "end": 48,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "if not title: raise ValueError('title')",
+        "return execute('INSERT INTO notes ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "9e60a7bf69",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.get_note",
+       "name": "get_note",
+       "file": "models.py",
+       "start": 50,
+       "end": 53,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE id=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "298f12d59b",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "orphan:models",
+     "b": "orphan:db",
+     "kind": "main",
+     "n": 6
+    },
+    {
+     "a": "orphan:db",
+     "b": "orphan:models",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "table:notes",
+      "table:users"
+     ]
+    }
+   ],
+   "edges_remove": [],
+   "stats": {
+    "calls": 11,
+    "unresolved": 1,
+    "parse_ms": 3.9,
+    "analyze_ms": 4.5
+   }
+  },
+  {
+   "idx": 2,
+   "ts": "2026-11-05T00:05:10.000Z",
+   "tool": "Write",
+   "file": "app.py",
+   "said": "Now the entry point that wires the app factory together.",
+   "turn": 0,
+   "added": 20,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "app.<module>",
+     "name": "app",
+     "emoji": "⚙️",
+     "kind": "entry",
+     "module": "app",
+     "size": 48,
+     "complexity": 4,
+     "errors": 0,
+     "data": [
+      "ctx:app.config",
+      "ctx:current_app.config",
+      "ctx:g.db",
+      "table:notes",
+      "table:users"
+     ],
+     "delta": {
+      "added": 20,
+      "removed": 0,
+      "moved": 28,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "app.<module>",
+       "name": "<module>",
+       "file": "app.py",
+       "start": 1,
+       "end": 6,
+       "lines": 6,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "app = create_app()",
+        "if __name__ == '__main__': app.run()"
+       ],
+       "calls": [
+        {
+         "to": "app.create_app",
+         "error": false
+        }
+       ],
+       "hash": "4e5dff3025",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "app.create_app",
+       "name": "create_app",
+       "file": "app.py",
+       "start": 8,
+       "end": 21,
+       "lines": 14,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:app.config"
+       ],
+       "snippet": [
+        "app.config.from_mapping(SECRET_KEY=...)",
+        "app.teardown_appcontext(close_db)",
+        "return app"
+       ],
+       "calls": [
+        {
+         "to": "db.init_db",
+         "error": false
+        },
+        {
+         "to": "db.close_db",
+         "error": false,
+         "deferred": true
+        }
+       ],
+       "hash": "573b5ceec7",
+       "delta": {
+        "added": 14,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.init_db",
+       "name": "init_db",
+       "file": "db.py",
+       "start": 22,
+       "end": 33,
+       "lines": 12,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes",
+        "table:users"
+       ],
+       "snippet": [
+        "db.executescript(SCHEMA)"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "c90e9be772",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.get_db",
+       "name": "get_db",
+       "file": "db.py",
+       "start": 15,
+       "end": 20,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "if 'db' not in g:",
+        "g.db = connect()",
+        "return g.db"
+       ],
+       "calls": [
+        {
+         "to": "db.connect",
+         "error": false
+        }
+       ],
+       "hash": "2f6a176729",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.connect",
+       "name": "connect",
+       "file": "db.py",
+       "start": 8,
+       "end": 13,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:current_app.config"
+       ],
+       "snippet": [
+        "conn = sqlite3.connect(path)",
+        "return conn"
+       ],
+       "calls": [],
+       "hash": "0394f1feda",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.close_db",
+       "name": "close_db",
+       "file": "db.py",
+       "start": 47,
+       "end": 50,
+       "lines": 4,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "db = g.pop('db', None)",
+        "if db: db.close()"
+       ],
+       "calls": [],
+       "hash": "c5f82b78c4",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "orphan:db",
+     "name": "db",
+     "emoji": "🗄️",
+     "kind": "orphan",
+     "module": "db",
+     "size": 10,
+     "complexity": 1,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 28,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "db.query",
+       "name": "query",
+       "file": "db.py",
+       "start": 35,
+       "end": 39,
+       "lines": 5,
+       "branches": 1,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return rows[0] if one else rows"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "6661df31cc",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.execute",
+       "name": "execute",
+       "file": "db.py",
+       "start": 41,
+       "end": 45,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return cur.lastrowid"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "9ed68a6d1b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "orphan:db",
+     "b": "app.<module>",
+     "kind": "main",
+     "n": 2
+    },
+    {
+     "a": "app.<module>",
+     "b": "orphan:models",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "table:notes",
+      "table:users"
+     ]
+    }
+   ],
+   "edges_remove": [
+    {
+     "a": "orphan:db",
+     "b": "orphan:models",
+     "kind": "data"
+    }
+   ],
+   "order": [
+    "app.<module>",
+    "orphan:db",
+    "orphan:models"
+   ],
+   "stats": {
+    "calls": 14,
+    "unresolved": 1,
+    "parse_ms": 4.3,
+    "analyze_ms": 5.2
+   }
+  },
+  {
+   "idx": 3,
+   "ts": "2026-11-05T00:07:10.000Z",
+   "tool": "Write",
+   "file": "requirements.txt",
+   "said": "Pin Flask and the one extra dependency.",
+   "turn": 0,
+   "added": 3,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "file:requirements.txt",
+     "name": "requirements.txt",
+     "kind": "text",
+     "module": ".",
+     "path": "requirements.txt",
+     "size": 3,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 3,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 14,
+    "unresolved": 2,
+    "parse_ms": 4.7,
+    "analyze_ms": 5.2
+   }
+  },
+  {
+   "idx": 4,
+   "ts": "2026-11-05T00:09:10.000Z",
+   "tool": "Write",
+   "file": "auth.py",
+   "said": "Auth blueprint next: register, login, logout with salted hashing.",
+   "turn": 1,
+   "added": 60,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "app.<module>",
+     "name": "app",
+     "emoji": "⚙️",
+     "kind": "entry",
+     "module": "app",
+     "size": 36,
+     "complexity": 2,
+     "errors": 0,
+     "data": [
+      "ctx:app.config",
+      "ctx:g.db",
+      "table:notes",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 12,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "app.<module>",
+       "name": "<module>",
+       "file": "app.py",
+       "start": 1,
+       "end": 6,
+       "lines": 6,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "app = create_app()",
+        "if __name__ == '__main__': app.run()"
+       ],
+       "calls": [
+        {
+         "to": "app.create_app",
+         "error": false
+        }
+       ],
+       "hash": "4e5dff3025",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "app.create_app",
+       "name": "create_app",
+       "file": "app.py",
+       "start": 8,
+       "end": 21,
+       "lines": 14,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:app.config"
+       ],
+       "snippet": [
+        "app.config.from_mapping(SECRET_KEY=...)",
+        "app.teardown_appcontext(close_db)",
+        "return app"
+       ],
+       "calls": [
+        {
+         "to": "db.init_db",
+         "error": false
+        },
+        {
+         "to": "db.close_db",
+         "error": false,
+         "deferred": true
+        }
+       ],
+       "hash": "573b5ceec7",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.init_db",
+       "name": "init_db",
+       "file": "db.py",
+       "start": 22,
+       "end": 33,
+       "lines": 12,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes",
+        "table:users"
+       ],
+       "snippet": [
+        "db.executescript(SCHEMA)"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "c90e9be772",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.close_db",
+       "name": "close_db",
+       "file": "db.py",
+       "start": 47,
+       "end": 50,
+       "lines": 4,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "db = g.pop('db', None)",
+        "if db: db.close()"
+       ],
+       "calls": [],
+       "hash": "c5f82b78c4",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 27,
+     "complexity": 4,
+     "errors": 2,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 27,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 61,
+       "lines": 22,
+       "branches": 4,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if not user or not verify_password(...): abort(401)",
+        "session['uid'] = user.id",
+        "return render_template('login.html')"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        }
+       ],
+       "hash": "a972719317",
+       "delta": {
+        "added": 22,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 21,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "9ae6704bfe",
+       "delta": {
+        "added": 5,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "auth.register",
+     "name": "POST /register",
+     "emoji": "🪪",
+     "kind": "route",
+     "module": "auth",
+     "size": 25,
+     "complexity": 4,
+     "errors": 3,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 18,
+      "removed": 0,
+      "moved": 7,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "auth.register",
+       "name": "register",
+       "file": "auth.py",
+       "start": 63,
+       "end": 80,
+       "lines": 18,
+       "branches": 3,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if len(password) < 8: abort(400)",
+        "uid = create_user(name, hash_password(password))",
+        "return render_template('login.html', register=True)"
+       ],
+       "calls": [
+        {
+         "to": "models.create_user",
+         "error": false
+        },
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "b60d6cf0e3",
+       "delta": {
+        "added": 18,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.create_user",
+       "name": "create_user",
+       "file": "models.py",
+       "start": 30,
+       "end": 36,
+       "lines": 7,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "if get_user_by_username(name): raise ValueError",
+        "return execute('INSERT INTO users ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        },
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        }
+       ],
+       "hash": "81031c91d5",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "auth.logout",
+     "name": "POST /logout",
+     "emoji": "🚪",
+     "kind": "route",
+     "module": "auth",
+     "size": 4,
+     "complexity": 0,
+     "errors": 0,
+     "data": [
+      "ctx:session.clear"
+     ],
+     "delta": {
+      "added": 4,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "auth.logout",
+       "name": "logout",
+       "file": "auth.py",
+       "start": 82,
+       "end": 85,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "ctx:session.clear"
+       ],
+       "snippet": [
+        "session.clear()",
+        "return redirect(url_for('auth.login'))"
+       ],
+       "calls": [],
+       "hash": "ecc326a28d",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "auth.load_logged_in_user",
+     "name": "before request",
+     "emoji": "🪝",
+     "kind": "hook",
+     "module": "auth",
+     "size": 9,
+     "complexity": 1,
+     "errors": 0,
+     "data": [
+      "ctx:g.user",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 5,
+      "removed": 0,
+      "moved": 4,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "auth.load_logged_in_user",
+       "name": "load_logged_in_user",
+       "file": "auth.py",
+       "start": 87,
+       "end": 91,
+       "lines": 5,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.user",
+        "ctx:session.uid"
+       ],
+       "snippet": [
+        "uid = session.get('uid')",
+        "g.user = get_user(uid) if uid else None"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user",
+         "error": false
+        }
+       ],
+       "hash": "3a6b74f1e0",
+       "delta": {
+        "added": 5,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.get_user",
+       "name": "get_user",
+       "file": "models.py",
+       "start": 20,
+       "end": 23,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM users WHERE id=?', (uid,), one=True)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "5e8b3ee93e",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "hub:auth",
+     "name": "auth",
+     "emoji": "🔐",
+     "kind": "hub",
+     "module": "auth",
+     "size": 6,
+     "complexity": 1,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 6,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "auth.hash_password",
+       "name": "hash_password",
+       "file": "auth.py",
+       "start": 10,
+       "end": 15,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt = salt or os.urandom(16)",
+        "return salt.hex() + '$' + digest"
+       ],
+       "calls": [],
+       "hash": "cf3ea43bb5",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "hub:models",
+     "name": "models",
+     "emoji": "👤",
+     "kind": "hub",
+     "module": "models",
+     "size": 4,
+     "complexity": 0,
+     "errors": 0,
+     "data": [
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 4,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "models.get_user_by_username",
+       "name": "get_user_by_username",
+       "file": "models.py",
+       "start": 25,
+       "end": 28,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM users WHERE username=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "fc27a3730b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "hub:db",
+     "name": "db",
+     "emoji": "🗄️",
+     "kind": "hub",
+     "module": "db",
+     "size": 22,
+     "complexity": 3,
+     "errors": 0,
+     "data": [
+      "ctx:current_app.config",
+      "ctx:g.db"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 22,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "db.get_db",
+       "name": "get_db",
+       "file": "db.py",
+       "start": 15,
+       "end": 20,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.db"
+       ],
+       "snippet": [
+        "if 'db' not in g:",
+        "g.db = connect()",
+        "return g.db"
+       ],
+       "calls": [
+        {
+         "to": "db.connect",
+         "error": false
+        }
+       ],
+       "hash": "2f6a176729",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.connect",
+       "name": "connect",
+       "file": "db.py",
+       "start": 8,
+       "end": 13,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:current_app.config"
+       ],
+       "snippet": [
+        "conn = sqlite3.connect(path)",
+        "return conn"
+       ],
+       "calls": [],
+       "hash": "0394f1feda",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.query",
+       "name": "query",
+       "file": "db.py",
+       "start": 35,
+       "end": 39,
+       "lines": 5,
+       "branches": 1,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return rows[0] if one else rows"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "6661df31cc",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      },
+      {
+       "qual": "db.execute",
+       "name": "execute",
+       "file": "db.py",
+       "start": 41,
+       "end": 45,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "cur = get_db().execute(sql, args)",
+        "return cur.lastrowid"
+       ],
+       "calls": [
+        {
+         "to": "db.get_db",
+         "error": false
+        }
+       ],
+       "hash": "9ed68a6d1b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "orphan:models",
+     "name": "models",
+     "emoji": "👤",
+     "kind": "orphan",
+     "module": "models",
+     "size": 14,
+     "complexity": 1,
+     "errors": 1,
+     "data": [
+      "table:notes"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 15,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "models.list_notes",
+       "name": "list_notes",
+       "file": "models.py",
+       "start": 38,
+       "end": 41,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE owner=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "61f16e06cf",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.create_note",
+       "name": "create_note",
+       "file": "models.py",
+       "start": 43,
+       "end": 48,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "if not title: raise ValueError('title')",
+        "return execute('INSERT INTO notes ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "9e60a7bf69",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.get_note",
+       "name": "get_note",
+       "file": "models.py",
+       "start": 50,
+       "end": 53,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE id=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "298f12d59b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [
+    "orphan:db"
+   ],
+   "edges_add": [
+    {
+     "a": "app.<module>",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.login",
+     "b": "hub:auth",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.login",
+     "b": "hub:models",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.register",
+     "b": "hub:auth",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.register",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.register",
+     "b": "hub:models",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "hub:models",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "orphan:models",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 3
+    },
+    {
+     "a": "app.<module>",
+     "b": "auth.load_logged_in_user",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "auth.login",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "auth.register",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "hub:db",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.db"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "hub:models",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "orphan:models",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "auth.login",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:session.uid",
+      "table:users"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "auth.register",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:session.uid",
+      "table:users"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "hub:models",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "auth.login",
+     "b": "auth.register",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:session.uid",
+      "table:users"
+     ]
+    },
+    {
+     "a": "auth.login",
+     "b": "hub:models",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    },
+    {
+     "a": "auth.register",
+     "b": "hub:models",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:users"
+     ]
+    }
+   ],
+   "edges_remove": [
+    {
+     "a": "orphan:db",
+     "b": "app.<module>",
+     "kind": "main"
+    },
+    {
+     "a": "orphan:models",
+     "b": "orphan:db",
+     "kind": "main"
+    }
+   ],
+   "order": [
+    "app.<module>",
+    "auth.login",
+    "auth.register",
+    "auth.logout",
+    "auth.load_logged_in_user",
+    "hub:auth",
+    "hub:models",
+    "hub:db",
+    "orphan:models",
+    "file:requirements.txt"
+   ],
+   "stats": {
+    "calls": 20,
+    "unresolved": 2,
+    "parse_ms": 7.1,
+    "analyze_ms": 6.7
+   }
+  },
+  {
+   "idx": 5,
+   "ts": "2026-11-05T00:11:10.000Z",
+   "tool": "Write",
+   "file": "templates/base.html",
+   "said": "A base layout every page extends.",
+   "turn": 1,
+   "added": 24,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "file:templates/base.html",
+     "name": "base.html",
+     "kind": "file",
+     "module": "templates",
+     "path": "templates/base.html",
+     "size": 24,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 24,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 20,
+    "unresolved": 2,
+    "parse_ms": 7.5,
+    "analyze_ms": 6.7
+   }
+  },
+  {
+   "idx": 6,
+   "ts": "2026-11-05T00:13:10.000Z",
+   "tool": "Write",
+   "file": "templates/login.html",
+   "said": "The login/register form, extending the base layout.",
+   "turn": 1,
+   "added": 31,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 27,
+     "complexity": 4,
+     "errors": 2,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 0,
+      "state": "same"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 61,
+       "lines": 22,
+       "branches": 4,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if not user or not verify_password(...): abort(401)",
+        "session['uid'] = user.id",
+        "return render_template('login.html')"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        }
+       ],
+       "hash": "a972719317",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 21,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "9ae6704bfe",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "auth.register",
+     "name": "POST /register",
+     "emoji": "🪪",
+     "kind": "route",
+     "module": "auth",
+     "size": 25,
+     "complexity": 4,
+     "errors": 3,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 0,
+      "state": "same"
+     },
+     "funcs": [
+      {
+       "qual": "auth.register",
+       "name": "register",
+       "file": "auth.py",
+       "start": 63,
+       "end": 80,
+       "lines": 18,
+       "branches": 3,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if len(password) < 8: abort(400)",
+        "uid = create_user(name, hash_password(password))",
+        "return render_template('login.html', register=True)"
+       ],
+       "calls": [
+        {
+         "to": "models.create_user",
+         "error": false
+        },
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "b60d6cf0e3",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "models.create_user",
+       "name": "create_user",
+       "file": "models.py",
+       "start": 30,
+       "end": 36,
+       "lines": 7,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "if get_user_by_username(name): raise ValueError",
+        "return execute('INSERT INTO users ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        },
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        }
+       ],
+       "hash": "81031c91d5",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "file:templates/login.html",
+     "name": "login.html",
+     "kind": "file",
+     "module": "templates",
+     "path": "templates/login.html",
+     "size": 31,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 31,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "auth.login",
+     "b": "file:templates/login.html",
+     "kind": "ref",
+     "n": 1,
+     "via": [
+      "login.html"
+     ]
+    },
+    {
+     "a": "auth.register",
+     "b": "file:templates/login.html",
+     "kind": "ref",
+     "n": 1,
+     "via": [
+      "login.html"
+     ]
+    }
+   ],
+   "edges_remove": [],
+   "stats": {
+    "calls": 20,
+    "unresolved": 2,
+    "parse_ms": 7.9,
+    "analyze_ms": 6.7
+   }
+  },
+  {
+   "idx": 7,
+   "ts": "2026-11-05T00:15:10.000Z",
+   "tool": "Write",
+   "file": "static/app.css",
+   "said": "Some minimal styling so the forms are usable.",
+   "turn": 1,
+   "added": 58,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 27,
+     "complexity": 4,
+     "errors": 2,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 0,
+      "state": "same"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 61,
+       "lines": 22,
+       "branches": 4,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if not user or not verify_password(...): abort(401)",
+        "session['uid'] = user.id",
+        "return render_template('login.html')"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        }
+       ],
+       "hash": "a972719317",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 21,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "9ae6704bfe",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "file:static/app.css",
+     "name": "app.css",
+     "kind": "file",
+     "module": "static",
+     "path": "static/app.css",
+     "size": 58,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 58,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "auth.login",
+     "b": "file:static/app.css",
+     "kind": "ref",
+     "n": 1,
+     "via": [
+      "app.css"
+     ]
+    }
+   ],
+   "edges_remove": [],
+   "stats": {
+    "calls": 20,
+    "unresolved": 2,
+    "parse_ms": 8.3,
+    "analyze_ms": 6.7
+   }
+  },
+  {
+   "idx": 8,
+   "ts": "2026-11-05T00:17:10.000Z",
+   "tool": "Edit",
+   "file": "errors.py",
+   "said": "Error handlers that answer JSON or HTML depending on Accept.",
+   "turn": 1,
+   "added": 19,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 29,
+     "complexity": 5,
+     "errors": 2,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:users"
+     ],
+     "delta": {
+      "added": 5,
+      "removed": 3,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 63,
+       "lines": 24,
+       "branches": 5,
+       "errors": 2,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:users"
+       ],
+       "snippet": [
+        "if not user: return render_error(401, ...)",
+        "session['uid'] = user.id",
+        "return redirect(next_url)"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "02a010f43f",
+       "delta": {
+        "added": 5,
+        "removed": 3,
+        "state": "changed"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 21,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "9ae6704bfe",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "hub:errors",
+     "name": "errors",
+     "emoji": "💥",
+     "kind": "hub",
+     "module": "errors",
+     "size": 13,
+     "complexity": 3,
+     "errors": 0,
+     "data": [
+      "ctx:request.accept_mimetypes"
+     ],
+     "delta": {
+      "added": 13,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "errors.render_error",
+       "name": "render_error",
+       "file": "errors.py",
+       "start": 11,
+       "end": 19,
+       "lines": 9,
+       "branches": 2,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "if wants_json(): return jsonify(error=msg), code",
+        "return render_template('error.html', ...), code"
+       ],
+       "calls": [
+        {
+         "to": "errors.wants_json",
+         "error": false
+        }
+       ],
+       "hash": "35109c30fc",
+       "delta": {
+        "added": 9,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "errors.wants_json",
+       "name": "wants_json",
+       "file": "errors.py",
+       "start": 6,
+       "end": 9,
+       "lines": 4,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:request.accept_mimetypes"
+       ],
+       "snippet": [
+        "return request.accept_mimetypes.best == 'application/json'"
+       ],
+       "calls": [],
+       "hash": "a26163c974",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "errors.not_found",
+     "name": "error 404",
+     "emoji": "💥",
+     "kind": "error-handler",
+     "module": "errors",
+     "size": 3,
+     "complexity": 0,
+     "errors": 1,
+     "data": [],
+     "delta": {
+      "added": 3,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "errors.not_found",
+       "name": "not_found",
+       "file": "errors.py",
+       "start": 22,
+       "end": 24,
+       "lines": 3,
+       "branches": 0,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "return render_error(404, 'not found')"
+       ],
+       "calls": [
+        {
+         "to": "errors.render_error",
+         "error": false
+        }
+       ],
+       "hash": "0e1b99e0f8",
+       "delta": {
+        "added": 3,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "errors.forbidden",
+     "name": "error 403",
+     "emoji": "💥",
+     "kind": "error-handler",
+     "module": "errors",
+     "size": 3,
+     "complexity": 0,
+     "errors": 1,
+     "data": [],
+     "delta": {
+      "added": 3,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "errors.forbidden",
+       "name": "forbidden",
+       "file": "errors.py",
+       "start": 26,
+       "end": 28,
+       "lines": 3,
+       "branches": 0,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "return render_error(403, 'forbidden')"
+       ],
+       "calls": [
+        {
+         "to": "errors.render_error",
+         "error": false
+        }
+       ],
+       "hash": "23a4807464",
+       "delta": {
+        "added": 3,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "errors.forbidden",
+     "b": "hub:errors",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "errors.not_found",
+     "b": "hub:errors",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.login",
+     "b": "hub:errors",
+     "kind": "error",
+     "n": 1
+    }
+   ],
+   "edges_remove": [],
+   "order": [
+    "app.<module>",
+    "auth.login",
+    "auth.register",
+    "auth.logout",
+    "auth.load_logged_in_user",
+    "hub:auth",
+    "hub:models",
+    "hub:db",
+    "orphan:models",
+    "hub:errors",
+    "errors.not_found",
+    "errors.forbidden",
+    "file:requirements.txt",
+    "file:templates/base.html",
+    "file:templates/login.html",
+    "file:static/app.css"
+   ],
+   "stats": {
+    "calls": 24,
+    "unresolved": 2,
+    "parse_ms": 9.5,
+    "analyze_ms": 7.7
+   }
+  },
+  {
+   "idx": 9,
+   "ts": "2026-11-05T00:19:10.000Z",
+   "tool": "Write",
+   "file": "notes.py",
+   "said": "Notes CRUD blueprint, scoped to the logged-in user.",
+   "turn": 2,
+   "added": 32,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "hub:models",
+     "name": "models",
+     "emoji": "👤",
+     "kind": "hub",
+     "module": "models",
+     "size": 8,
+     "complexity": 0,
+     "errors": 0,
+     "data": [
+      "table:notes",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 4,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "models.get_user_by_username",
+       "name": "get_user_by_username",
+       "file": "models.py",
+       "start": 25,
+       "end": 28,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:users"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM users WHERE username=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "fc27a3730b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.get_note",
+       "name": "get_note",
+       "file": "models.py",
+       "start": 50,
+       "end": 53,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE id=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "298f12d59b",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "notes.index",
+     "name": "/",
+     "emoji": "🏠",
+     "kind": "route",
+     "module": "notes",
+     "size": 9,
+     "complexity": 0,
+     "errors": 0,
+     "data": [
+      "ctx:g.user",
+      "table:notes"
+     ],
+     "delta": {
+      "added": 5,
+      "removed": 0,
+      "moved": 4,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "notes.index",
+       "name": "index",
+       "file": "notes.py",
+       "start": 20,
+       "end": 24,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "ctx:g.user",
+        "table:notes"
+       ],
+       "snippet": [
+        "return render_template('base.html', notes=list_notes(g.user.id))"
+       ],
+       "calls": [
+        {
+         "to": "models.list_notes",
+         "error": false
+        }
+       ],
+       "hash": "835d8e8177",
+       "delta": {
+        "added": 5,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": [
+        "templates/base.html"
+       ]
+      },
+      {
+       "qual": "models.list_notes",
+       "name": "list_notes",
+       "file": "models.py",
+       "start": 38,
+       "end": 41,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "return query('SELECT * FROM notes WHERE owner=?', ...)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "61f16e06cf",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "notes.create",
+     "name": "POST /notes/new",
+     "emoji": "📝",
+     "kind": "route",
+     "module": "notes",
+     "size": 18,
+     "complexity": 3,
+     "errors": 2,
+     "data": [
+      "ctx:g.user",
+      "ctx:request.form",
+      "table:notes"
+     ],
+     "delta": {
+      "added": 12,
+      "removed": 0,
+      "moved": 6,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "notes.create",
+       "name": "create",
+       "file": "notes.py",
+       "start": 26,
+       "end": 37,
+       "lines": 12,
+       "branches": 2,
+       "errors": 1,
+       "data": [
+        "ctx:g.user",
+        "ctx:request.form",
+        "table:notes"
+       ],
+       "snippet": [
+        "title = request.form['title'].strip()",
+        "if not title: flash('title required')",
+        "create_note(g.user.id, title, body)"
+       ],
+       "calls": [
+        {
+         "to": "models.create_note",
+         "error": false
+        }
+       ],
+       "hash": "e8e80a60b5",
+       "delta": {
+        "added": 12,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "models.create_note",
+       "name": "create_note",
+       "file": "models.py",
+       "start": 43,
+       "end": 48,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "table:notes"
+       ],
+       "snippet": [
+        "if not title: raise ValueError('title')",
+        "return execute('INSERT INTO notes ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "9e60a7bf69",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "notes.view",
+     "name": "/notes/<id>",
+     "emoji": "📝",
+     "kind": "route",
+     "module": "notes",
+     "size": 15,
+     "complexity": 3,
+     "errors": 2,
+     "data": [
+      "ctx:g.user",
+      "table:notes"
+     ],
+     "delta": {
+      "added": 15,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "notes.view",
+       "name": "view",
+       "file": "notes.py",
+       "start": 39,
+       "end": 46,
+       "lines": 8,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.user"
+       ],
+       "snippet": [
+        "note = get_owned_note(nid)",
+        "return render_template('base.html', note=note)"
+       ],
+       "calls": [
+        {
+         "to": "notes.get_owned_note",
+         "error": false
+        }
+       ],
+       "hash": "1004078878",
+       "delta": {
+        "added": 8,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": [
+        "templates/base.html"
+       ]
+      },
+      {
+       "qual": "notes.get_owned_note",
+       "name": "get_owned_note",
+       "file": "notes.py",
+       "start": 12,
+       "end": 18,
+       "lines": 7,
+       "branches": 2,
+       "errors": 2,
+       "data": [
+        "ctx:g.user",
+        "table:notes"
+       ],
+       "snippet": [
+        "note = get_note(nid)",
+        "if note is None: abort(404)",
+        "if note.owner != g.user.id: abort(403)"
+       ],
+       "calls": [
+        {
+         "to": "models.get_note",
+         "error": false
+        },
+        {
+         "to": "errors.not_found",
+         "error": true
+        },
+        {
+         "to": "errors.forbidden",
+         "error": true
+        }
+       ],
+       "hash": "347f975ed2",
+       "delta": {
+        "added": 7,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [
+    "orphan:models"
+   ],
+   "edges_add": [
+    {
+     "a": "hub:models",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 2
+    },
+    {
+     "a": "notes.create",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.index",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.view",
+     "b": "hub:models",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.view",
+     "b": "errors.forbidden",
+     "kind": "error",
+     "n": 1
+    },
+    {
+     "a": "notes.view",
+     "b": "errors.not_found",
+     "kind": "error",
+     "n": 1
+    },
+    {
+     "a": "app.<module>",
+     "b": "hub:models",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "table:notes",
+      "table:users"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "notes.create",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "notes.index",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "notes.create",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "notes.index",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "hub:models",
+     "b": "notes.create",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:models",
+     "b": "notes.index",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:models",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.create",
+     "b": "notes.index",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.create",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.index",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.index",
+     "b": "file:templates/base.html",
+     "kind": "ref",
+     "n": 1,
+     "via": [
+      "base.html"
+     ]
+    },
+    {
+     "a": "notes.view",
+     "b": "file:templates/base.html",
+     "kind": "ref",
+     "n": 1,
+     "via": [
+      "base.html"
+     ]
+    }
+   ],
+   "edges_remove": [
+    {
+     "a": "orphan:models",
+     "b": "hub:db",
+     "kind": "main"
+    },
+    {
+     "a": "app.<module>",
+     "b": "orphan:models",
+     "kind": "data"
+    }
+   ],
+   "order": [
+    "app.<module>",
+    "auth.login",
+    "auth.register",
+    "auth.logout",
+    "auth.load_logged_in_user",
+    "hub:auth",
+    "hub:models",
+    "hub:db",
+    "hub:errors",
+    "errors.not_found",
+    "errors.forbidden",
+    "notes.index",
+    "notes.create",
+    "notes.view",
+    "file:requirements.txt",
+    "file:templates/base.html",
+    "file:templates/login.html",
+    "file:static/app.css"
+   ],
+   "stats": {
+    "calls": 30,
+    "unresolved": 2,
+    "parse_ms": 10.3,
+    "analyze_ms": 9.2
+   }
+  },
+  {
+   "idx": 10,
+   "ts": "2026-11-05T00:21:10.000Z",
+   "tool": "Edit",
+   "file": "auth.py",
+   "said": "Login needs rate limiting: 5 failures per username in 10 minutes gives 429.",
+   "turn": 2,
+   "added": 24,
+   "removed": 4,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 49,
+     "complexity": 9,
+     "errors": 3,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:login_failures",
+      "table:users"
+     ],
+     "delta": {
+      "added": 24,
+      "removed": 4,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 73,
+       "lines": 34,
+       "branches": 8,
+       "errors": 3,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:login_failures",
+        "table:users"
+       ],
+       "snippet": [
+        "if recent_failures(name) >= 5: return render_error(429, ...)",
+        "record_failure(name)",
+        "session['uid'] = user.id"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "auth.recent_failures",
+         "error": false
+        },
+        {
+         "to": "auth.record_failure",
+         "error": true
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "a5a7e1a91e",
+       "delta": {
+        "added": 14,
+        "removed": 4,
+        "state": "changed"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 21,
+       "lines": 5,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "9ae6704bfe",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.recent_failures",
+       "name": "recent_failures",
+       "file": "auth.py",
+       "start": 25,
+       "end": 30,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "rows = query('SELECT ts FROM login_failures ...')",
+        "return len(rows)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "f501d2cea6",
+       "delta": {
+        "added": 6,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.record_failure",
+       "name": "record_failure",
+       "file": "auth.py",
+       "start": 32,
+       "end": 35,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "execute('INSERT INTO login_failures ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "7b559efa6c",
+       "delta": {
+        "added": 4,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ],
+     "label": {
+      "emoji": "🔐",
+      "title": "Login + rate limit",
+      "risk": "high",
+      "summary": "Checks the password, counts failures per username and answers 429 after five in ten minutes."
+     }
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "auth.login",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 2
+    }
+   ],
+   "edges_remove": [],
+   "stats": {
+    "calls": 34,
+    "unresolved": 3,
+    "parse_ms": 10.3,
+    "analyze_ms": 10.2
+   }
+  },
+  {
+   "idx": 11,
+   "ts": "2026-11-05T00:23:10.000Z",
+   "tool": "Edit",
+   "file": "templates/login.html",
+   "said": "Show the rate-limit message on the login form.",
+   "turn": 2,
+   "added": 4,
+   "removed": 3,
+   "blobs": [
+    {
+     "id": "file:templates/login.html",
+     "name": "login.html",
+     "kind": "file",
+     "module": "templates",
+     "path": "templates/login.html",
+     "size": 32,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 4,
+      "removed": 3,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 34,
+    "unresolved": 3,
+    "parse_ms": 10.3,
+    "analyze_ms": 10.2
+   }
+  },
+  {
+   "idx": 12,
+   "ts": "2026-11-05T00:25:10.000Z",
+   "tool": "Write",
+   "file": "tests/test_app.py",
+   "said": "Tests covering register, login, notes CRUD and the rate limit.",
+   "turn": 3,
+   "added": 60,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "tests.test_app",
+     "name": "test_app",
+     "emoji": "🧪",
+     "kind": "tests",
+     "module": "tests",
+     "size": 60,
+     "complexity": 1,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 60,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "tests.test_app.client",
+       "name": "test_app.client",
+       "file": "tests/test_app.py",
+       "start": 8,
+       "end": 15,
+       "lines": 8,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "app = create_app({\"TESTING\": True})",
+        "return app.test_client()"
+       ],
+       "calls": [
+        {
+         "to": "app.create_app",
+         "error": false
+        }
+       ],
+       "hash": "b2ebddea24",
+       "delta": {
+        "added": 8,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "tests.test_app.test_login_logout",
+       "name": "test_app.test_login_logout",
+       "file": "tests/test_app.py",
+       "start": 20,
+       "end": 33,
+       "lines": 14,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "r = client.post('/login', data=...)",
+        "assert r.status_code == 302"
+       ],
+       "calls": [],
+       "hash": "d52dc6bfbd",
+       "delta": {
+        "added": 14,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "tests.test_app.test_rate_limit",
+       "name": "test_app.test_rate_limit",
+       "file": "tests/test_app.py",
+       "start": 35,
+       "end": 50,
+       "lines": 16,
+       "branches": 1,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "for _ in range(5): client.post(...)",
+        "assert r.status_code == 429"
+       ],
+       "calls": [],
+       "hash": "d8d1b45dfa",
+       "delta": {
+        "added": 16,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      },
+      {
+       "qual": "tests.test_app.test_notes_crud",
+       "name": "test_app.test_notes_crud",
+       "file": "tests/test_app.py",
+       "start": 52,
+       "end": 73,
+       "lines": 22,
+       "branches": 0,
+       "errors": 0,
+       "data": [],
+       "snippet": [
+        "client.post('/notes/new', data=...)",
+        "assert b'hello' in r.data"
+       ],
+       "calls": [],
+       "hash": "df42e047e6",
+       "delta": {
+        "added": 22,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "tests.test_app",
+     "b": "app.<module>",
+     "kind": "main",
+     "n": 1
+    }
+   ],
+   "edges_remove": [],
+   "order": [
+    "app.<module>",
+    "auth.login",
+    "auth.register",
+    "auth.logout",
+    "auth.load_logged_in_user",
+    "hub:auth",
+    "hub:models",
+    "hub:db",
+    "hub:errors",
+    "errors.not_found",
+    "errors.forbidden",
+    "notes.index",
+    "notes.create",
+    "notes.view",
+    "tests.test_app",
+    "file:requirements.txt",
+    "file:templates/base.html",
+    "file:templates/login.html",
+    "file:static/app.css"
+   ],
+   "stats": {
+    "calls": 35,
+    "unresolved": 2,
+    "parse_ms": 10.7,
+    "analyze_ms": 10.4
+   }
+  },
+  {
+   "idx": 13,
+   "ts": "2026-11-05T00:27:10.000Z",
+   "tool": "Edit",
+   "file": "auth.py",
+   "said": "verify_password should reject malformed stored hashes instead of crashing.",
+   "turn": 3,
+   "added": 2,
+   "removed": 1,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 50,
+     "complexity": 10,
+     "errors": 4,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:login_failures",
+      "table:users"
+     ],
+     "delta": {
+      "added": 2,
+      "removed": 1,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 73,
+       "lines": 34,
+       "branches": 8,
+       "errors": 3,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:login_failures",
+        "table:users"
+       ],
+       "snippet": [
+        "if recent_failures(name) >= 5: return render_error(429, ...)",
+        "record_failure(name)",
+        "session['uid'] = user.id"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "auth.recent_failures",
+         "error": false
+        },
+        {
+         "to": "auth.record_failure",
+         "error": true
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "a5a7e1a91e",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 22,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "if '$' not in stored: return False",
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "5e696e55cc",
+       "delta": {
+        "added": 2,
+        "removed": 1,
+        "state": "changed"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.recent_failures",
+       "name": "recent_failures",
+       "file": "auth.py",
+       "start": 25,
+       "end": 30,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "rows = query('SELECT ts FROM login_failures ...')",
+        "return len(rows)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "f501d2cea6",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.record_failure",
+       "name": "record_failure",
+       "file": "auth.py",
+       "start": 32,
+       "end": 35,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "execute('INSERT INTO login_failures ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "7b559efa6c",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ],
+     "label": {
+      "emoji": "🔐",
+      "title": "Login + rate limit",
+      "risk": "high",
+      "summary": "Checks the password, counts failures per username and answers 429 after five in ten minutes."
+     }
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 35,
+    "unresolved": 3,
+    "parse_ms": 10.7,
+    "analyze_ms": 10.4
+   }
+  },
+  {
+   "idx": 14,
+   "ts": "2026-11-05T00:29:10.000Z",
+   "tool": "Edit",
+   "file": "auth.py",
+   "said": "Widen the failure window to 15 minutes, matching the spec.",
+   "turn": 3,
+   "added": 1,
+   "removed": 1,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 50,
+     "complexity": 10,
+     "errors": 4,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:login_failures",
+      "table:users"
+     ],
+     "delta": {
+      "added": 1,
+      "removed": 1,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 40,
+       "end": 73,
+       "lines": 34,
+       "branches": 8,
+       "errors": 3,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:login_failures",
+        "table:users"
+       ],
+       "snippet": [
+        "if recent_failures(name) >= 5: return render_error(429, ...)",
+        "record_failure(name)",
+        "session['uid'] = user.id"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "auth.recent_failures",
+         "error": false
+        },
+        {
+         "to": "auth.record_failure",
+         "error": true
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "a5a7e1a91e",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 22,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "if '$' not in stored: return False",
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "5e696e55cc",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.recent_failures",
+       "name": "recent_failures",
+       "file": "auth.py",
+       "start": 25,
+       "end": 30,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "since = now() - timedelta(minutes=15)",
+        "rows = query('SELECT ts FROM login_failures ...')",
+        "return len(rows)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "43299ef561",
+       "delta": {
+        "added": 1,
+        "removed": 1,
+        "state": "changed"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.record_failure",
+       "name": "record_failure",
+       "file": "auth.py",
+       "start": 32,
+       "end": 35,
+       "lines": 4,
+       "branches": 0,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "execute('INSERT INTO login_failures ...')"
+       ],
+       "calls": [
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "7b559efa6c",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ],
+     "label": {
+      "emoji": "🔐",
+      "title": "Login + rate limit",
+      "risk": "high",
+      "summary": "Checks the password, counts failures per username and answers 429 after five in ten minutes."
+     }
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 35,
+    "unresolved": 3,
+    "parse_ms": 10.7,
+    "analyze_ms": 10.4
+   }
+  },
+  {
+   "idx": 15,
+   "ts": "2026-11-05T00:31:10.000Z",
+   "tool": "Edit",
+   "file": "notes.py",
+   "said": "Sharing: a read-only token link per note; trim the view handler.",
+   "turn": 3,
+   "added": 11,
+   "removed": 4,
+   "blobs": [
+    {
+     "id": "notes.view",
+     "name": "/notes/<id>",
+     "emoji": "📝",
+     "kind": "route",
+     "module": "notes",
+     "size": 5,
+     "complexity": 1,
+     "errors": 0,
+     "data": [
+      "ctx:g.user"
+     ],
+     "delta": {
+      "added": 1,
+      "removed": 4,
+      "moved": 7,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "notes.view",
+       "name": "view",
+       "file": "notes.py",
+       "start": 39,
+       "end": 43,
+       "lines": 5,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.user"
+       ],
+       "snippet": [
+        "note = get_owned_note(nid)",
+        "return render_template('base.html', note=note)"
+       ],
+       "calls": [
+        {
+         "to": "notes.get_owned_note",
+         "error": false
+        }
+       ],
+       "hash": "7a99a6ba2b",
+       "delta": {
+        "added": 1,
+        "removed": 4,
+        "state": "changed"
+       },
+       "refs": [
+        "templates/base.html"
+       ]
+      }
+     ]
+    },
+    {
+     "id": "hub:notes",
+     "name": "notes",
+     "emoji": "📝",
+     "kind": "hub",
+     "module": "notes",
+     "size": 7,
+     "complexity": 2,
+     "errors": 2,
+     "data": [
+      "ctx:g.user",
+      "table:notes"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 7,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "notes.get_owned_note",
+       "name": "get_owned_note",
+       "file": "notes.py",
+       "start": 12,
+       "end": 18,
+       "lines": 7,
+       "branches": 2,
+       "errors": 2,
+       "data": [
+        "ctx:g.user",
+        "table:notes"
+       ],
+       "snippet": [
+        "note = get_note(nid)",
+        "if note is None: abort(404)",
+        "if note.owner != g.user.id: abort(403)"
+       ],
+       "calls": [
+        {
+         "to": "models.get_note",
+         "error": false
+        },
+        {
+         "to": "errors.not_found",
+         "error": true
+        },
+        {
+         "to": "errors.forbidden",
+         "error": true
+        }
+       ],
+       "hash": "347f975ed2",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "moved"
+       },
+       "refs": []
+      }
+     ]
+    },
+    {
+     "id": "notes.share",
+     "name": "POST /notes/<id>/share",
+     "emoji": "🔗",
+     "kind": "route",
+     "module": "notes",
+     "size": 10,
+     "complexity": 1,
+     "errors": 1,
+     "data": [
+      "ctx:g.user",
+      "table:notes"
+     ],
+     "delta": {
+      "added": 10,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": [
+      {
+       "qual": "notes.share",
+       "name": "share",
+       "file": "notes.py",
+       "start": 48,
+       "end": 57,
+       "lines": 10,
+       "branches": 1,
+       "errors": 1,
+       "data": [
+        "ctx:g.user",
+        "table:notes"
+       ],
+       "snippet": [
+        "note = get_owned_note(nid)",
+        "token = secrets.token_urlsafe(16)",
+        "return redirect(url_for('notes.view', nid=nid))"
+       ],
+       "calls": [
+        {
+         "to": "notes.get_owned_note",
+         "error": false
+        },
+        {
+         "to": "db.execute",
+         "error": false
+        }
+       ],
+       "hash": "7bd10aff1e",
+       "delta": {
+        "added": 10,
+        "removed": 0,
+        "state": "new"
+       },
+       "refs": []
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "hub:notes",
+     "b": "hub:models",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.share",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.share",
+     "b": "hub:notes",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "notes.view",
+     "b": "hub:notes",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "hub:notes",
+     "b": "errors.forbidden",
+     "kind": "error",
+     "n": 1
+    },
+    {
+     "a": "hub:notes",
+     "b": "errors.not_found",
+     "kind": "error",
+     "n": 1
+    },
+    {
+     "a": "app.<module>",
+     "b": "hub:notes",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "app.<module>",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "hub:notes",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "auth.load_logged_in_user",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "hub:models",
+     "b": "hub:notes",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:models",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:notes",
+     "b": "notes.create",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:notes",
+     "b": "notes.index",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:notes",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "hub:notes",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "notes.create",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.create",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "notes.index",
+     "b": "notes.share",
+     "kind": "data",
+     "n": 2,
+     "via": [
+      "ctx:g.user",
+      "table:notes"
+     ]
+    },
+    {
+     "a": "notes.index",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    },
+    {
+     "a": "notes.share",
+     "b": "notes.view",
+     "kind": "data",
+     "n": 1,
+     "via": [
+      "ctx:g.user"
+     ]
+    }
+   ],
+   "edges_remove": [
+    {
+     "a": "notes.view",
+     "b": "hub:models",
+     "kind": "main"
+    },
+    {
+     "a": "notes.view",
+     "b": "errors.forbidden",
+     "kind": "error"
+    },
+    {
+     "a": "notes.view",
+     "b": "errors.not_found",
+     "kind": "error"
+    },
+    {
+     "a": "app.<module>",
+     "b": "notes.view",
+     "kind": "data"
+    },
+    {
+     "a": "hub:models",
+     "b": "notes.view",
+     "kind": "data"
+    }
+   ],
+   "order": [
+    "app.<module>",
+    "auth.login",
+    "auth.register",
+    "auth.logout",
+    "auth.load_logged_in_user",
+    "hub:auth",
+    "hub:models",
+    "hub:db",
+    "hub:errors",
+    "errors.not_found",
+    "errors.forbidden",
+    "notes.index",
+    "notes.create",
+    "notes.view",
+    "tests.test_app",
+    "hub:notes",
+    "notes.share",
+    "file:requirements.txt",
+    "file:templates/base.html",
+    "file:templates/login.html",
+    "file:static/app.css"
+   ],
+   "stats": {
+    "calls": 37,
+    "unresolved": 3,
+    "parse_ms": 11.5,
+    "analyze_ms": 10.9
+   }
+  },
+  {
+   "idx": 16,
+   "ts": "2026-11-05T00:33:10.000Z",
+   "tool": "Edit",
+   "file": "static/app.css",
+   "said": "Drop the unused utility classes from the stylesheet.",
+   "turn": 3,
+   "added": 1,
+   "removed": 12,
+   "blobs": [
+    {
+     "id": "file:static/app.css",
+     "name": "app.css",
+     "kind": "file",
+     "module": "static",
+     "path": "static/app.css",
+     "size": 47,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 1,
+      "removed": 12,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 37,
+    "unresolved": 2,
+    "parse_ms": 11.5,
+    "analyze_ms": 10.9
+   }
+  },
+  {
+   "idx": 17,
+   "ts": "2026-11-05T00:35:10.000Z",
+   "tool": "Edit",
+   "file": "auth.py",
+   "said": "record_failure is a one-liner used once; fold it into login.",
+   "turn": 3,
+   "added": 3,
+   "removed": 5,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 48,
+     "complexity": 10,
+     "errors": 4,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:login_failures",
+      "table:users"
+     ],
+     "delta": {
+      "added": 3,
+      "removed": 5,
+      "moved": 0,
+      "state": "changed",
+      "removed_funcs": [
+       "auth.record_failure"
+      ]
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 36,
+       "end": 71,
+       "lines": 36,
+       "branches": 8,
+       "errors": 3,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:login_failures",
+        "table:users"
+       ],
+       "snippet": [
+        "if recent_failures(name) >= 5: return render_error(429, ...)",
+        "execute('INSERT INTO login_failures ...')",
+        "session['uid'] = user.id"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "auth.recent_failures",
+         "error": false
+        },
+        {
+         "to": "db.execute",
+         "error": true
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "8128640873",
+       "delta": {
+        "added": 3,
+        "removed": 1,
+        "state": "changed"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 22,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "if '$' not in stored: return False",
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "5e696e55cc",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.recent_failures",
+       "name": "recent_failures",
+       "file": "auth.py",
+       "start": 25,
+       "end": 30,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "since = now() - timedelta(minutes=15)",
+        "rows = query('SELECT ts FROM login_failures ...')",
+        "return len(rows)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "43299ef561",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ],
+     "label": {
+      "emoji": "🔐",
+      "title": "Login + rate limit",
+      "risk": "high",
+      "summary": "Checks the password, counts failures per username and answers 429 after five in ten minutes."
+     }
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [
+    {
+     "a": "auth.login",
+     "b": "hub:db",
+     "kind": "main",
+     "n": 1
+    },
+    {
+     "a": "auth.login",
+     "b": "hub:db",
+     "kind": "error",
+     "n": 1
+    }
+   ],
+   "edges_remove": [],
+   "stats": {
+    "calls": 36,
+    "unresolved": 3,
+    "parse_ms": 11.5,
+    "analyze_ms": 10.7
+   }
+  },
+  {
+   "idx": 18,
+   "ts": "2026-11-05T00:37:10.000Z",
+   "tool": "Write",
+   "file": "README.md",
+   "said": "Document setup, running and the login rate limit in the README.",
+   "turn": 4,
+   "added": 18,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "auth.login",
+     "name": "POST /login",
+     "emoji": "🔐",
+     "kind": "route",
+     "module": "auth",
+     "size": 48,
+     "complexity": 10,
+     "errors": 4,
+     "data": [
+      "ctx:request.form",
+      "ctx:session.uid",
+      "table:login_failures",
+      "table:users"
+     ],
+     "delta": {
+      "added": 0,
+      "removed": 0,
+      "moved": 0,
+      "state": "same"
+     },
+     "funcs": [
+      {
+       "qual": "auth.login",
+       "name": "login",
+       "file": "auth.py",
+       "start": 36,
+       "end": 71,
+       "lines": 36,
+       "branches": 8,
+       "errors": 3,
+       "data": [
+        "ctx:request.form",
+        "ctx:session.uid",
+        "table:login_failures",
+        "table:users"
+       ],
+       "snippet": [
+        "if recent_failures(name) >= 5: return render_error(429, ...)",
+        "execute('INSERT INTO login_failures ...')",
+        "session['uid'] = user.id"
+       ],
+       "calls": [
+        {
+         "to": "models.get_user_by_username",
+         "error": false
+        },
+        {
+         "to": "auth.verify_password",
+         "error": false
+        },
+        {
+         "to": "auth.recent_failures",
+         "error": false
+        },
+        {
+         "to": "db.execute",
+         "error": true
+        },
+        {
+         "to": "errors.render_error",
+         "error": true
+        }
+       ],
+       "hash": "8128640873",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": [
+        "static/app.css",
+        "templates/login.html"
+       ]
+      },
+      {
+       "qual": "auth.verify_password",
+       "name": "verify_password",
+       "file": "auth.py",
+       "start": 17,
+       "end": 22,
+       "lines": 6,
+       "branches": 1,
+       "errors": 1,
+       "data": [],
+       "snippet": [
+        "if '$' not in stored: return False",
+        "salt, digest = stored.split('$')",
+        "return hmac.compare_digest(...)"
+       ],
+       "calls": [
+        {
+         "to": "auth.hash_password",
+         "error": false
+        }
+       ],
+       "hash": "5e696e55cc",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      },
+      {
+       "qual": "auth.recent_failures",
+       "name": "recent_failures",
+       "file": "auth.py",
+       "start": 25,
+       "end": 30,
+       "lines": 6,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "table:login_failures"
+       ],
+       "snippet": [
+        "since = now() - timedelta(minutes=15)",
+        "rows = query('SELECT ts FROM login_failures ...')",
+        "return len(rows)"
+       ],
+       "calls": [
+        {
+         "to": "db.query",
+         "error": false
+        }
+       ],
+       "hash": "43299ef561",
+       "delta": {
+        "added": 0,
+        "removed": 0,
+        "state": "same"
+       },
+       "refs": []
+      }
+     ],
+     "label": {
+      "emoji": "🔐",
+      "title": "Login + rate limit",
+      "risk": "high",
+      "summary": "Checks the password, counts failures per username and answers 429 after five in ten minutes."
+     }
+    },
+    {
+     "id": "file:README.md",
+     "name": "README.md",
+     "kind": "text",
+     "module": ".",
+     "path": "README.md",
+     "size": 18,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 18,
+      "removed": 0,
+      "moved": 0,
+      "state": "new"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 36,
+    "unresolved": 3,
+    "parse_ms": 11.9,
+    "analyze_ms": 10.7
+   }
+  },
+  {
+   "idx": 19,
+   "ts": "2026-11-05T00:39:10.000Z",
+   "tool": "Edit",
+   "file": "README.md",
+   "said": "Fix the run command in the README.",
+   "turn": 4,
+   "added": 2,
+   "removed": 2,
+   "blobs": [
+    {
+     "id": "file:README.md",
+     "name": "README.md",
+     "kind": "text",
+     "module": ".",
+     "path": "README.md",
+     "size": 18,
+     "complexity": 0,
+     "errors": 0,
+     "data": [],
+     "delta": {
+      "added": 2,
+      "removed": 2,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": []
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 36,
+    "unresolved": 3,
+    "parse_ms": 11.9,
+    "analyze_ms": 10.7
+   }
+  },
+  {
+   "idx": 20,
+   "ts": "2026-11-05T00:41:10.000Z",
+   "tool": "Edit",
+   "file": "notes.py",
+   "said": "Add a docstring to the view handler.",
+   "turn": 4,
+   "added": 2,
+   "removed": 0,
+   "blobs": [
+    {
+     "id": "notes.view",
+     "name": "/notes/<id>",
+     "emoji": "📝",
+     "kind": "route",
+     "module": "notes",
+     "size": 7,
+     "complexity": 1,
+     "errors": 0,
+     "data": [
+      "ctx:g.user"
+     ],
+     "delta": {
+      "added": 2,
+      "removed": 0,
+      "moved": 0,
+      "state": "changed"
+     },
+     "funcs": [
+      {
+       "qual": "notes.view",
+       "name": "view",
+       "file": "notes.py",
+       "start": 39,
+       "end": 45,
+       "lines": 7,
+       "branches": 1,
+       "errors": 0,
+       "data": [
+        "ctx:g.user"
+       ],
+       "snippet": [
+        "\"\"\"Show one note the user owns.\"\"\"",
+        "note = get_owned_note(nid)",
+        "return render_template('base.html', note=note)"
+       ],
+       "calls": [
+        {
+         "to": "notes.get_owned_note",
+         "error": false
+        }
+       ],
+       "hash": "8386a7dd3c",
+       "delta": {
+        "added": 2,
+        "removed": 0,
+        "state": "changed"
+       },
+       "refs": [
+        "templates/base.html"
+       ]
+      }
+     ]
+    }
+   ],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 36,
+    "unresolved": 2,
+    "parse_ms": 11.9,
+    "analyze_ms": 10.7
+   }
+  },
+  {
+   "idx": 21,
+   "ts": "2026-11-05T00:43:10.000Z",
+   "tool": "Bash",
+   "file": "",
+   "said": "Run the test suite.",
+   "turn": 4,
+   "added": 0,
+   "removed": 0,
+   "blobs": [],
+   "removed_blobs": [],
+   "edges_add": [],
+   "edges_remove": [],
+   "stats": {
+    "calls": 36,
+    "unresolved": 3,
+    "parse_ms": 11.9,
+    "analyze_ms": 10.7
+   }
+  }
+ ]
+}
