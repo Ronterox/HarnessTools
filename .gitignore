@@ -3,3 +3,8 @@ __pycache__/
 *.pyc
 # demo project used to exercise aic; it is its own git repo
 test-webapp/
+# aiblob demo target, built by a recorded agent session
+aiblob/demo/app/
+aiblob/demo/record.out.json
+aiblob/.venv/
+aiblob/web/timeline-aigource.json

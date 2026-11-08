@@ -1,0 +1,1038 @@
+{
+ "blobs": [
+  {
+   "id": "api.create_note",
+   "kind": "route",
+   "name": "POST /notes",
+   "module": "api",
+   "funcs": [
+    "api.create_note"
+   ]
+  },
+  {
+   "id": "api.delete_note",
+   "kind": "route",
+   "name": "DELETE /notes/<int:note_id>",
+   "module": "api",
+   "funcs": [
+    "api.delete_note"
+   ]
+  },
+  {
+   "id": "api.list_notes",
+   "kind": "route",
+   "name": "/notes",
+   "module": "api",
+   "funcs": [
+    "api.list_notes"
+   ]
+  },
+  {
+   "id": "app.<module>",
+   "kind": "entry",
+   "name": "app",
+   "module": "app",
+   "funcs": [
+    "app.<module>",
+    "app.create_app",
+    "db.init_app",
+    "db.init_db",
+    "errors.register"
+   ]
+  },
+  {
+   "id": "auth.load_logged_in_user",
+   "kind": "hook",
+   "name": "before request",
+   "module": "auth",
+   "funcs": [
+    "auth.load_logged_in_user"
+   ]
+  },
+  {
+   "id": "auth.login",
+   "kind": "route",
+   "name": "POST /login",
+   "module": "auth",
+   "funcs": [
+    "auth._safe_next",
+    "auth.clear_failures",
+    "auth.login",
+    "auth.now",
+    "auth.recent_failures",
+    "auth.record_failure",
+    "auth.verify_password"
+   ]
+  },
+  {
+   "id": "auth.logout",
+   "kind": "route",
+   "name": "POST /logout",
+   "module": "auth",
+   "funcs": [
+    "auth.logout"
+   ]
+  },
+  {
+   "id": "auth.register",
+   "kind": "route",
+   "name": "POST /register",
+   "module": "auth",
+   "funcs": [
+    "auth.register",
+    "models.create_user"
+   ]
+  },
+  {
+   "id": "auth.token",
+   "kind": "route",
+   "name": "POST /token",
+   "module": "auth",
+   "funcs": [
+    "auth.token",
+    "models.regenerate_api_token"
+   ]
+  },
+  {
+   "id": "db.close_db",
+   "kind": "hook",
+   "name": "teardown appcontext",
+   "module": "db",
+   "funcs": [
+    "db.close_db"
+   ]
+  },
+  {
+   "id": "errors.render_error",
+   "kind": "error-handler",
+   "name": "error handler",
+   "module": "errors",
+   "funcs": [
+    "errors.render_error",
+    "errors.wants_json"
+   ]
+  },
+  {
+   "id": "file:requirements.txt",
+   "kind": "text",
+   "name": "requirements.txt",
+   "module": ".",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/base.html",
+   "kind": "file",
+   "name": "base.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/error.html",
+   "kind": "file",
+   "name": "error.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/login.html",
+   "kind": "file",
+   "name": "login.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/notes/form.html",
+   "kind": "file",
+   "name": "form.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/notes/index.html",
+   "kind": "file",
+   "name": "index.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/notes/view.html",
+   "kind": "file",
+   "name": "view.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/register.html",
+   "kind": "file",
+   "name": "register.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/share.html",
+   "kind": "file",
+   "name": "share.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "file:templates/token.html",
+   "kind": "file",
+   "name": "token.html",
+   "module": "templates",
+   "funcs": []
+  },
+  {
+   "id": "hub:api",
+   "kind": "hub",
+   "name": "api",
+   "module": "api",
+   "funcs": [
+    "api._token_from_request",
+    "api.token_required"
+   ]
+  },
+  {
+   "id": "hub:auth",
+   "kind": "hub",
+   "name": "auth",
+   "module": "auth",
+   "funcs": [
+    "auth.hash_password",
+    "auth.login_required"
+   ]
+  },
+  {
+   "id": "hub:db",
+   "kind": "hub",
+   "name": "db",
+   "module": "db",
+   "funcs": [
+    "db.connect",
+    "db.execute",
+    "db.get_db",
+    "db.query"
+   ]
+  },
+  {
+   "id": "hub:models",
+   "kind": "hub",
+   "name": "models",
+   "module": "models",
+   "funcs": [
+    "models.Note.from_row",
+    "models.Note.to_dict",
+    "models.User.from_row",
+    "models.create_note",
+    "models.delete_note",
+    "models.get_note",
+    "models.get_user",
+    "models.get_user_by_token",
+    "models.get_user_by_username",
+    "models.list_notes",
+    "models.new_token",
+    "models.save_note"
+   ]
+  },
+  {
+   "id": "hub:notes",
+   "kind": "hub",
+   "name": "notes",
+   "module": "notes",
+   "funcs": [
+    "notes._read_form",
+    "notes.get_owned_note"
+   ]
+  },
+  {
+   "id": "notes.create",
+   "kind": "route",
+   "name": "POST /notes/new",
+   "module": "notes",
+   "funcs": [
+    "notes.create"
+   ]
+  },
+  {
+   "id": "notes.delete",
+   "kind": "route",
+   "name": "POST /notes/<int:note_id>/delete",
+   "module": "notes",
+   "funcs": [
+    "notes.delete"
+   ]
+  },
+  {
+   "id": "notes.edit",
+   "kind": "route",
+   "name": "POST /notes/<int:note_id>/edit",
+   "module": "notes",
+   "funcs": [
+    "notes.edit"
+   ]
+  },
+  {
+   "id": "notes.index",
+   "kind": "route",
+   "name": "/",
+   "module": "notes",
+   "funcs": [
+    "notes.index"
+   ]
+  },
+  {
+   "id": "notes.share",
+   "kind": "route",
+   "name": "POST /notes/<int:note_id>/share",
+   "module": "notes",
+   "funcs": [
+    "notes.share"
+   ]
+  },
+  {
+   "id": "notes.shared",
+   "kind": "route",
+   "name": "/share/<token>",
+   "module": "notes",
+   "funcs": [
+    "models.get_note_by_share_token",
+    "notes.shared"
+   ]
+  },
+  {
+   "id": "notes.unshare",
+   "kind": "route",
+   "name": "POST /notes/<int:note_id>/unshare",
+   "module": "notes",
+   "funcs": [
+    "notes.unshare"
+   ]
+  },
+  {
+   "id": "notes.view",
+   "kind": "route",
+   "name": "/notes/<int:note_id>",
+   "module": "notes",
+   "funcs": [
+    "notes.view"
+   ]
+  },
+  {
+   "id": "tests.test_app",
+   "kind": "tests",
+   "name": "test_app",
+   "module": "tests.test_app",
+   "funcs": [
+    "tests.test_app.api_token",
+    "tests.test_app.app",
+    "tests.test_app.client",
+    "tests.test_app.create_note",
+    "tests.test_app.login",
+    "tests.test_app.logout",
+    "tests.test_app.register",
+    "tests.test_app.test_404_html_and_json",
+    "tests.test_app.test_500_handler_hides_details",
+    "tests.test_app.test_api_cannot_delete_other_users_note",
+    "tests.test_app.test_api_crud_with_token",
+    "tests.test_app.test_api_requires_token",
+    "tests.test_app.test_api_validates_input",
+    "tests.test_app.test_cannot_access_other_users_notes",
+    "tests.test_app.test_hash_password_is_salted_and_verifiable",
+    "tests.test_app.test_login_logout",
+    "tests.test_app.test_login_next_does_not_open_redirect",
+    "tests.test_app.test_login_rate_limited_after_five_failures",
+    "tests.test_app.test_note_body_is_escaped",
+    "tests.test_app.test_note_requires_title",
+    "tests.test_app.test_notes_crud",
+    "tests.test_app.test_rate_limit_429_is_json_when_requested",
+    "tests.test_app.test_rate_limit_expires_after_window",
+    "tests.test_app.test_regenerating_token_revokes_old_one",
+    "tests.test_app.test_register_logs_in_and_redirects",
+    "tests.test_app.test_register_rejects_duplicates_and_short_passwords",
+    "tests.test_app.test_session_cookie_is_httponly",
+    "tests.test_app.test_share_link_is_read_only_and_revocable",
+    "tests.test_app.test_unknown_share_token_404"
+   ]
+  }
+ ],
+ "edges": [
+  {
+   "a": "api.create_note",
+   "b": "api.delete_note",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.create_note",
+   "b": "api.list_notes",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.create_note",
+   "b": "hub:api",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.delete_note",
+   "b": "api.list_notes",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.delete_note",
+   "b": "hub:api",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.list_notes",
+   "b": "hub:api",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "auth.login",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "auth.register",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "auth.token",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "hub:models",
+   "kind": "data",
+   "n": 2
+  },
+  {
+   "a": "app.<module>",
+   "b": "notes.shared",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "auth.login",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "auth.logout",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "auth.register",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "auth.token",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "hub:auth",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "hub:notes",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "notes.create",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "auth.logout",
+   "kind": "data",
+   "n": 2
+  },
+  {
+   "a": "auth.login",
+   "b": "auth.register",
+   "kind": "data",
+   "n": 2
+  },
+  {
+   "a": "auth.login",
+   "b": "tests.test_app",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.logout",
+   "b": "auth.register",
+   "kind": "data",
+   "n": 2
+  },
+  {
+   "a": "auth.register",
+   "b": "auth.token",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.register",
+   "b": "hub:models",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:auth",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:models",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:notes",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "notes.create",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "db.close_db",
+   "b": "hub:db",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:auth",
+   "b": "hub:notes",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:auth",
+   "b": "notes.create",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:auth",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:auth",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:models",
+   "b": "notes.shared",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:notes",
+   "b": "notes.create",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:notes",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "hub:notes",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "notes.delete",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "api.create_note",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 4
+  },
+  {
+   "a": "api.delete_note",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 2
+  },
+  {
+   "a": "auth.login",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 1
+  },
+  {
+   "a": "hub:api",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 1
+  },
+  {
+   "a": "hub:notes",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 2
+  },
+  {
+   "a": "notes.shared",
+   "b": "errors.render_error",
+   "kind": "error",
+   "n": 1
+  },
+  {
+   "a": "api.create_note",
+   "b": "hub:api",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "api.create_note",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "api.delete_note",
+   "b": "hub:api",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "api.delete_note",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "api.list_notes",
+   "b": "hub:api",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "api.list_notes",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "app.<module>",
+   "b": "db.close_db",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "errors.render_error",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "app.<module>",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 4
+  },
+  {
+   "a": "auth.login",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.register",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.register",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.register",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 3
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "hub:api",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "hub:models",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 8
+  },
+  {
+   "a": "hub:notes",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.delete",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.delete",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.delete",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.edit",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.edit",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.edit",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "notes.index",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.index",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.share",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.share",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "notes.share",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.shared",
+   "b": "hub:db",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.shared",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "notes.unshare",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.unshare",
+   "b": "hub:models",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.unshare",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.view",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "notes.view",
+   "b": "hub:notes",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "tests.test_app",
+   "b": "app.<module>",
+   "kind": "main",
+   "n": 1
+  },
+  {
+   "a": "tests.test_app",
+   "b": "auth.login",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "tests.test_app",
+   "b": "hub:auth",
+   "kind": "main",
+   "n": 2
+  },
+  {
+   "a": "auth.login",
+   "b": "file:templates/login.html",
+   "kind": "ref",
+   "n": 2
+  },
+  {
+   "a": "auth.register",
+   "b": "file:templates/register.html",
+   "kind": "ref",
+   "n": 2
+  },
+  {
+   "a": "auth.token",
+   "b": "file:templates/token.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "errors.render_error",
+   "b": "file:templates/error.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/error.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/login.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/notes/form.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/notes/index.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/notes/view.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/register.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/share.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "file:templates/token.html",
+   "b": "file:templates/base.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "notes.create",
+   "b": "file:templates/notes/form.html",
+   "kind": "ref",
+   "n": 2
+  },
+  {
+   "a": "notes.edit",
+   "b": "file:templates/notes/form.html",
+   "kind": "ref",
+   "n": 2
+  },
+  {
+   "a": "notes.index",
+   "b": "file:templates/notes/index.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "notes.shared",
+   "b": "file:templates/share.html",
+   "kind": "ref",
+   "n": 1
+  },
+  {
+   "a": "notes.view",
+   "b": "file:templates/notes/view.html",
+   "kind": "ref",
+   "n": 1
+  }
+ ]
+}
