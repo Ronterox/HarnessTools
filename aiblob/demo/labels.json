@@ -1,0 +1,290 @@
+{
+ "file:requirements.txt:f67451d1ed": {
+  "emoji": "📦",
+  "title": "Python packages",
+  "summary": "Lists Python libraries for the app.",
+  "risk": "low: missing a package breaks the app"
+ },
+ "1b6b9fcb09": {
+  "emoji": "🛑",
+  "title": "Database cleanup",
+  "summary": "Closes database connection on exit.",
+  "risk": "low: Prevents resource leaks."
+ },
+ "2ede2491ea,6c8b5fd6c8,74053af448,e2f54e588a": {
+  "emoji": "💾",
+  "title": "Database connection",
+  "summary": "Links app to SQLite and runs queries.",
+  "risk": "high: data loss if connection fails"
+ },
+ "2ede2491ea,56b8d8d3da,6c8b5fd6c8,74053af448,8efad25066,e2f54e588a": {
+  "emoji": "💾",
+  "title": "Database setup",
+  "summary": "Creates and manages the SQLite database.",
+  "risk": "high: data loss if schema fails"
+ },
+ "56b8d8d3da,8efad25066": {
+  "emoji": "💾",
+  "title": "Database setup",
+  "summary": "Creates tables and starts the database.",
+  "risk": "high: data loss if schema fails"
+ },
+ "0e637e75d3": {
+  "emoji": "🔐",
+  "title": "Login check",
+  "summary": "Verifies user session before access",
+  "risk": "high: invalidates user login"
+ },
+ "58a13cc9a3,6b1c692f66": {
+  "emoji": "📝",
+  "title": "Create new account",
+  "summary": "Registers a user and saves their data.",
+  "risk": "high: Passwords stored insecurely"
+ },
+ "259a3f5d83,63538cd127,81654dd468,9f296f80e6,b13f56c044,c26dde2040,fc51715657": {
+  "emoji": "🔐",
+  "title": "User authentication",
+  "summary": "Verifies password and limits failed attempts.",
+  "risk": "high: Compromised credentials grant access."
+ },
+ "bb7b90a4b7": {
+  "emoji": "🚪",
+  "title": "Sign out user",
+  "summary": "Clears session and sends to login page",
+  "risk": "low: only clears local session data"
+ },
+ "1683c8919c,a72dfa6791": {
+  "emoji": "🔑",
+  "title": "Generate API key",
+  "summary": "Creates a new API token for the user.",
+  "risk": "high: Exposes user's API credentials"
+ },
+ "4532ef6335,c9de718064": {
+  "emoji": "🔐",
+  "title": "Secure password hashing",
+  "summary": "Generates salts and hashes user passwords.",
+  "risk": "high: Password security and session management"
+ },
+ "1683c8919c,a72dfa6791,c9de718064": {
+  "emoji": "🔑",
+  "title": "API token generation",
+  "summary": "Creates and updates user API key",
+  "risk": "high: Exposes user identity and API access"
+ },
+ "4532ef6335": {
+  "emoji": "🔐",
+  "title": "Secure password hashing",
+  "summary": "Creates a unique salt and hash for passwords.",
+  "risk": "high: Weak password storage allows account takeover"
+ },
+ "870b921a88": {
+  "emoji": "👁️",
+  "title": "View single note",
+  "summary": "Displays one note to the user.",
+  "risk": "low: display only"
+ },
+ "b40d869de8": {
+  "emoji": "✏️",
+  "title": "Edit note content",
+  "summary": "Opens form to modify note text",
+  "risk": "low: only changes display text"
+ },
+ "c2928a96ae": {
+  "emoji": "🔗",
+  "title": "Share note link",
+  "summary": "Generates a shareable URL for a note.",
+  "risk": "low: Only displays a link if token exists"
+ },
+ "bef4dc1189": {
+  "emoji": "🚫",
+  "title": "Remove note sharing",
+  "summary": "Clears a note's share token and redirects user.",
+  "risk": "low: Only changes display settings"
+ },
+ "1e98948840,49e4b8f6f2": {
+  "emoji": "🔗",
+  "title": "Access shared note",
+  "summary": "Retrieves and displays a note using a token.",
+  "risk": "low: Only reads data from database."
+ },
+ "f1dfd225f0,fa4b1f6103": {
+  "emoji": "📝",
+  "title": "Validate note title",
+  "summary": "Checks if the note title is provided.",
+  "risk": "low: Only checks for missing text."
+ },
+ "c8ddf9d10c": {
+  "emoji": "📝",
+  "title": "View all notes",
+  "summary": "Shows user's notes on the main page.",
+  "risk": "low: display only"
+ },
+ "a8465d831f": {
+  "emoji": "✏️",
+  "title": "Create new note",
+  "summary": "Starts a new note entry form",
+  "risk": "low: only displays a form"
+ },
+ "bb3d6965cc": {
+  "emoji": "🗑️",
+  "title": "Delete note",
+  "summary": "Removes a note owned by the user.",
+  "risk": "high: accidental data loss"
+ },
+ "c8ddf9d10c,e74cdb28ad": {
+  "emoji": "📝",
+  "title": "View all notes",
+  "summary": "Lists user's notes sorted by newest first.",
+  "risk": "low: Only displays data, no logic errors affect safety."
+ },
+ "84ed8a473c,a8465d831f": {
+  "emoji": "📝",
+  "title": "Create new note",
+  "summary": "Adds a new note to the database",
+  "risk": "low: only creates data"
+ },
+ "bb3d6965cc,ca1e5be091": {
+  "emoji": "🗑️",
+  "title": "Delete note",
+  "summary": "Removes a note if the user owns it.",
+  "risk": "high: accidental data loss"
+ },
+ "288b716f55": {
+  "emoji": "📋",
+  "title": "List user notes",
+  "summary": "Fetches and returns all user notes as JSON.",
+  "risk": "low: Only reads data from database"
+ },
+ "92c1cdb7fa": {
+  "emoji": "📝",
+  "title": "Submit note data",
+  "summary": "Validates JSON input for title and body.",
+  "risk": "low: Input validation only"
+ },
+ "dad686f77d": {
+  "emoji": "🗑️",
+  "title": "Remove note from database",
+  "summary": "Permanently deletes a note record.",
+  "risk": "high: accidental data loss"
+ },
+ "3bba29ed90,641ffb879c": {
+  "emoji": "🔑",
+  "title": "API key validation",
+  "summary": "Checks for valid API token in request headers.",
+  "risk": "high: unauthorized API access"
+ },
+ "034e77cbf6,5262a0190f,84ed8a473c,8d4f02f94b,948585cebb,948585cebb,9cf4f12ba4,aac190a34e,ca1e5be091,e74cdb28ad,e9d4bef9d1,f956b27e03": {
+  "emoji": "🗄️",
+  "title": "Database models",
+  "summary": "Converts database rows into app objects.",
+  "risk": "high: data loss or corruption"
+ },
+ "034e77cbf6,1683c8919c,1e98948840,5262a0190f,58a13cc9a3,84ed8a473c,8d4f02f94b,948585cebb,948585cebb,9cf4f12ba4,aac190a34e,ca1e5be091,e74cdb28ad,e9d4bef9d1,f956b27e03": {
+  "emoji": "🗄️",
+  "title": "Data structure mapping",
+  "summary": "Converts database rows into app objects.",
+  "risk": "high: data loss or corruption"
+ },
+ "8d4f02f94b,948585cebb,9cf4f12ba4,e9d4bef9d1": {
+  "emoji": "🗄️",
+  "title": "User data models",
+  "summary": "Converts database rows into user objects.",
+  "risk": "high: incorrect data mapping breaks user access"
+ },
+ "034e77cbf6,1e98948840,5262a0190f,84ed8a473c,948585cebb,aac190a34e,ca1e5be091,e74cdb28ad,f956b27e03": {
+  "emoji": "🗄️",
+  "title": "Note data structures",
+  "summary": "Converts database rows to note objects",
+  "risk": "high: data loss or corruption"
+ },
+ "034e77cbf6,8d4f02f94b,948585cebb,948585cebb,9cf4f12ba4,aac190a34e,e9d4bef9d1": {
+  "emoji": "📦",
+  "title": "Data models",
+  "summary": "Converts database rows into app objects.",
+  "risk": "high: incorrect data mapping breaks app"
+ },
+ "5262a0190f,f956b27e03": {
+  "emoji": "🗄️",
+  "title": "Data structure definitions",
+  "summary": "Defines app object data structures",
+  "risk": "high: data loss or corruption"
+ },
+ "4771cbc96a,d8ef3d9a08": {
+  "emoji": "⚠️",
+  "title": "Error responses",
+  "summary": "Formats errors as JSON or HTML",
+  "risk": "high: Data loss or security leaks"
+ },
+ "5298dbcb6f": {
+  "emoji": "⚠️",
+  "title": "Error handling",
+  "summary": "Catches and displays error messages to users.",
+  "risk": "low: Only affects error display"
+ },
+ "057473d048,5298dbcb6f,56b8d8d3da,6d286e3d77,8efad25066": {
+  "emoji": "🚀",
+  "title": "Initialize application",
+  "summary": "Sets up database and error handlers.",
+  "risk": "high: Database schema and error handling"
+ },
+ "file:templates/base.html:8f79dd031b": {
+  "emoji": "🎨",
+  "title": "Page layout",
+  "summary": "Defines global HTML structure and styles.",
+  "risk": "low: Visual styling only"
+ },
+ "file:templates/register.html:9020458f8e": {
+  "emoji": "📝",
+  "title": "Register new user",
+  "summary": "Form to register a new user account.",
+  "risk": "high: User credentials are submitted here."
+ },
+ "file:templates/login.html:67b9f266e4": {
+  "emoji": "🔑",
+  "title": "User login page",
+  "summary": "Displays form for entering username and password.",
+  "risk": "high: allows unauthorized access if vulnerable"
+ },
+ "file:templates/token.html:7d71c6ef62": {
+  "emoji": "🔑",
+  "title": "Display API token",
+  "summary": "Shows generated token for API access",
+  "risk": "low: Display only"
+ },
+ "file:templates/error.html:b321193817": {
+  "emoji": "⚠️",
+  "title": "Error display page",
+  "summary": "Shows error messages to the user.",
+  "risk": "low: Only displays text"
+ },
+ "file:templates/share.html:798d3d5348": {
+  "emoji": "👁️",
+  "title": "View shared note",
+  "summary": "Read-only display of a shared note",
+  "risk": "low: display only"
+ },
+ "file:templates/notes/index.html:f04268a75d": {
+  "emoji": "📝",
+  "title": "index.html",
+  "summary": "Shows all notes owned by the current user.",
+  "risk": "low"
+ },
+ "file:templates/notes/form.html:2f233de170": {
+  "emoji": "✏️",
+  "title": "Edit note form",
+  "summary": "Page for creating or editing note text.",
+  "risk": "low: only displays text fields"
+ },
+ "file:templates/notes/view.html:b701949d87": {
+  "emoji": "👁️",
+  "title": "Note detail page",
+  "summary": "Shows note text with edit, delete, and share options.",
+  "risk": "low: Display only"
+ },
+ "0f954a64a2,12bc34d0b5,16b6229a86,177ccff419,25a2ce570b,2da1ff5127,3be819a70a,4deb1fab9e,4e46cbc257,50e546866c,67a1e2ea07,68707fff71,6a6d9bf92a,75c3e2085b,7c1546a606,7c5f30e119,909e8bef06,980a5764b2,aa34da7585,b77ab2bc2a,bc4771eb42,bcacf6b4fe,d0ea9c6f6e,e1d044d83f,e2e22384b5,ee488e631a,fa3cc0db4a,ff8f162725,ffe1052e49": {
+  "emoji": "🧪",
+  "title": "Test suite runner",
+  "summary": "Runs automated tests for app features",
+  "risk": "low: only checks code behavior"
+ }
+}
