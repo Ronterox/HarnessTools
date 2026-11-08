@@ -41,7 +41,7 @@ tests = module name; entry = `module.<module>`.
 
 Rules: a blob absent from a step no longer exists (the page fades it out itself).
 Every step carries the full state (no diffs across steps needed by the page); since v3 the file carries
-deltas instead and readers rebuild this state per step (see v3 below).
+deltas instead and readers rebuild this state per step (see v3 and v4 below).
 `delta` compares function bodies by `hash` with the previous step; a blob's delta is
 the sum over its functions plus the lines of functions deleted from the app. A function with the
 same `qual` and `hash` that sits in another blob than in the previous step is `moved`: its delta is 0
@@ -93,6 +93,41 @@ The *state* of a step, what the page draws and the rules above describe, is unch
 - `timeline.py --v2` writes every step in full (no `schema` key), for debugging; `expand()` of a v3 file equals
   that output step for step. `timeline.py --full` recomputes the whole analysis per step instead of reusing
   the previous step's (incremental is the default); both write the same bytes.
+
+## v4 (2026-11-08)
+
+Same as v3 except for the functions of a blob a delta step sends. Top level `"schema": 4`. Step 0 and `full` steps
+are unchanged (every blob with its whole `funcs`). The rebuilt state is the v3 one: `expand()` of a v4 file equals
+`expand()` of the v3 file and the `--v2` output, step for step. Readers take both: `expand()` and the page patch
+only when `schema` >= 4 (a bare list of steps handed to `expand()` reads as v4), so a v3 file reads as before.
+
+- A delta step's sent blob carries its blob fields in full (`delta`, `size`, `label`, ...) as in v3, but its
+  `funcs` is a patch on the *base*: the previous step's blob of that id with zeroed deltas, i.e. what an unsent
+  blob rebuilds to (none when the blob was not in the previous step's state, then every function is new):
+  - `funcs`: the functions that are new to the base, whole, and the ones whose object differs from the base's
+    function of that qual, as `{"qual", <only the keys whose value differs>}` (a function shifted by an edit
+    above it is `{"qual", "start", "end"}`; a changed body adds `lines`, `hash`, `delta`, ...). A function whose
+    keys are not the base function's keys in the same order is listed in `funcs_remove` and sent whole instead.
+  - `funcs_remove` (only when not empty): `[qual, ...]`, base functions the blob no longer has (deleted from the
+    app, or moved to another blob: there the function is new to that blob's base and sent whole).
+  - `funcs_order` (only when needed): every qual of the blob, in order.
+  - Rebuild: start from the base's functions; drop `funcs_remove`; for each `funcs` entry, a qual the list still
+    has is replaced in place by the base function with the entry's keys over it (key order the base's), any other
+    qual is appended whole; `funcs_order` then replaces the order. A function the patch does not name is the
+    base's: the previous step's function with its `delta` zeroed, as for unsent blobs. `funcs_remove` and
+    `funcs_order` are not part of the rebuilt blob.
+  - A sent blob without `funcs` has none (no patch). The writer sends the step in full when a patch cannot say
+    it: a qual twice in the blob or its base, a function without a string `qual`, a blob with a key named
+    `funcs_remove` / `funcs_order`.
+- Measured on the aigource map (1270 steps): of the 39.7 MB of function objects that re-sent blobs carried in v3,
+  91% of the changed functions differ only in `start` / `end`; whole changed objects would be 13.6 MB, a
+  `{qual, start, end}` patch for shifted-only ones and whole objects for the rest 3.9 MB, changed keys only 3.1 MB
+  (chosen: one rule, smallest). `funcs_order` is 0.4 MB (300 blobs, mostly a function inserted above others).
+- `timeline.compact(steps, schema=3)` / `Compactor(3)` still write v3; `label.py` writes a file back in the
+  schema it read.
+- "Unchanged" is Python `==`: a value that changes only between `1` / `True` / `1.0` (or `0` / `False`), or a
+  function whose keys only change order, is not re-sent and rebuilds with the previous value / key order. The
+  analyzer never writes such changes (checked on every key path of the aigource map).
 
 ## Sessions (2026-11-06)
 

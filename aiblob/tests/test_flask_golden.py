@@ -29,9 +29,9 @@ def runs(tmp_path_factory):
 
 @pytest.fixture(scope='module')
 def tl(runs):
-    """The run's full state per step: timeline.json is schema v3 (deltas), expand() rebuilds each step."""
+    """The run's full state per step: timeline.json is schema v4 (deltas), expand() rebuilds each step."""
     data = json.loads(runs[0])
-    assert data['schema'] == 3
+    assert data['schema'] == 4
     return {'steps': timeline.expand(data)}
 
 

@@ -41,7 +41,7 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
-import timeline  # expand() / compact(): timeline.json is schema v3 (deltas)
+import timeline  # expand() / compact(): timeline.json is schema v3 / v4 (deltas)
 
 TIMEOUT = 60
 MAX_WORDS = 4
@@ -572,7 +572,7 @@ def main():
         for b in step["blobs"]:
             b.pop("_edges", None)
             b.pop("_head", None)
-    tl["steps"] = timeline.compact(steps) if tl.get("schema", 2) >= 3 else steps
+    tl["steps"] = timeline.compact(steps, tl["schema"]) if tl.get("schema", 2) >= 3 else steps  # same schema back
     with open(a.timeline, "w") as f:
         json.dump(tl, f, indent=1, ensure_ascii=False)
     print(f"label.py: {hits} cache hits, {len(todo)} new calls, {stale_n} stale titles redone, "

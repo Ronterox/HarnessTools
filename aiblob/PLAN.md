@@ -186,5 +186,10 @@ for functions of a re-parsed module whose text did not change.
 ## Backlog, next
 - Go: plain reads of another file's package var need a recorded dependency hook in analyze.py (incremental safety).
 - C: a wrapper chain `run(){loop();}` spends both depth levels; consider not counting pass-through wrappers as a level.
-- Per-function deltas inside re-sent blobs (aigource timeline 44.1 MB).
+- ~~Per-function deltas inside re-sent blobs (aigource timeline 44.1 MB).~~ Done 2026-11-08, schema v4 (SCHEMA.md
+  "v4"): a re-sent blob's `funcs` is a patch (new functions whole, changed ones as qual + changed keys,
+  `funcs_remove`, `funcs_order` when needed). aigource map, 1270 steps: 44.5 MB → 8.3 MB compact (gzip 6.9 → 1.2 MB),
+  76.8 → 13.6 MB on disk as label.py writes it; node load (perf.page_cost) parse+expand+maps 1.06 → 0.58 s, heap
+  182 → 122 MB, peak RSS 497 → 314 MB (expand alone 0.19 → 0.22 s). Demo: 114 → 95 KB compact. expand(v4) ==
+  expand(v3) on every aigource step (Python and the page's expandSteps() in node); labels 1221 cache hits, 0 calls.
 - Canvas clips long titles visually; headless-only perf numbers for the page.

@@ -14,8 +14,8 @@ whole-file delta. Parsed modules are cached by content hash, so a step only re-p
 analysis is incremental (analyze(memo=...)): a function's call resolution, data symbols and snippet are reused
 unless its module changed or a cross-module entry it looked up did. --full redoes all of it per step (same output).
 
-The file is schema v3: step 0 (and any step marked "full") carries the whole state, every other step only what
-changed (compact() / expand() below). --v2 writes every step in full instead. --no-timings writes 0 for
+The file is schema v4: step 0 (and any step marked "full") carries the whole state, every other step only what
+changed, down to the functions of a re-sent blob (compact() / expand() below). --v2 writes every step in full instead. --no-timings writes 0 for
 parse_ms / analyze_ms, so two runs on the same session are byte-identical.
 """
 import argparse, difflib, gc, glob, json, operator, os, sys, time
@@ -180,16 +180,79 @@ def rest(b):
     return dict(b, delta=_zero(b['delta']), funcs=[dict(f, delta=_zero(f['delta'])) if 'delta' in f else f
                                                    for f in b.get('funcs', [])])
 
+SCHEMA = 4
+FUNC_PATCH = ('funcs_remove', 'funcs_order')
+
+def _func_patch(b, base):
+    """Blob b as a v4 delta step sends it: its `funcs` a patch on base's (the previous step's blob with zeroed
+    deltas, None for a blob new to the state). A function of base that b no longer has is in `funcs_remove`; a new
+    one is sent whole; a changed one as its qual plus the keys whose value differs (when its keys are base's, in
+    order; otherwise it is removed and sent whole). `funcs_order` only when the order is not base's minus the
+    removed ones with the new ones appended. None when a patch cannot say it (a qual twice, a function without a
+    qual, b using the patch's key names): the step is then written in full."""
+    if 'funcs' not in b:
+        return b
+    old, new = (base.get('funcs') or []) if base else [], b['funcs']
+    if any(k in b for k in FUNC_PATCH) or not all(isinstance(f, dict) and isinstance(f.get('qual'), str)
+                                                    for f in [*old, *new]):
+        return None
+    have, quals = {f['qual']: f for f in old}, [f['qual'] for f in new]
+    now = set(quals)
+    if len(have) != len(old) or len(now) != len(quals):
+        return None
+    gone, funcs = [q for q in have if q not in now], []
+    for f in new:
+        o = have.get(f['qual'])
+        if o is None:
+            funcs.append(f)
+        elif o != f:
+            if list(o) == list(f):
+                funcs.append({'qual': f['qual'], **{k: v for k, v in f.items() if o[k] != v}})
+            else:
+                gone.append(f['qual'])
+                funcs.append(f)
+    left = [q for q in have if q not in set(gone)]
+    kept = set(left)
+    out = {}
+    for k, v in b.items():
+        if k != 'funcs':
+            out[k] = v
+            continue
+        out['funcs'] = funcs
+        if gone:
+            out['funcs_remove'] = gone
+        if left + [f['qual'] for f in funcs if f['qual'] not in kept] != quals:
+            out['funcs_order'] = quals
+    return out
+
+def _apply_func_patch(sent, base):
+    """The blob a v4 delta step's re-sent blob stands for (_func_patch() undone): a function the patch does not
+    name is base's, with base's zeroed delta."""
+    if 'funcs' not in sent:
+        return sent
+    fs = {f['qual']: f for f in ((base.get('funcs') or []) if base else [])}
+    for q in sent.get('funcs_remove', ()):
+        fs.pop(q, None)
+    for f in sent['funcs']:
+        o = fs.get(f['qual'])
+        fs[f['qual']] = f if o is None else {**o, **f}
+    b = dict(sent, funcs=[fs[q] for q in sent['funcs_order']] if 'funcs_order' in sent else list(fs.values()))
+    for k in FUNC_PATCH:
+        b.pop(k, None)
+    return b
+
 class Compactor:
-    """Full-state steps in, schema v3 steps out (one at a time, so a writer can stream).
+    """Full-state steps in, schema v4 (or v3) steps out (one at a time, so a writer can stream).
 
     A blob is left out of a step when it equals the previous step's blob with zeroed deltas (rest()): its delta
     says `same` and nothing else about it changed. A blob whose delta is `same` but whose other fields changed
-    (a function's lines shifted, a call now resolves elsewhere) is sent again in full. `order` is written only
-    when the blob order is not the previous one minus removed_blobs, with new ids appended as they come in
-    `blobs`. A step whose edges are not in edge_key() order is written in full."""
+    (a function's lines shifted, a call now resolves elsewhere) is sent again: in v3 in full, in v4 with its
+    blob fields in full and its `funcs` as a patch on that zeroed previous blob (_func_patch()). `order` is
+    written only when the blob order is not the previous one minus removed_blobs, with new ids appended as they
+    come in `blobs`. A step whose edges are not in edge_key() order is written in full."""
 
-    def __init__(self):
+    def __init__(self, schema=SCHEMA):
+        self.schema = schema
         self.rest, self.order, self.edges = None, [], {}     # id -> rest(blob); blob ids in order; key -> edge
 
     def push(self, step):
@@ -199,11 +262,17 @@ class Compactor:
         ranks = [edge_key(e) for e in edges]
         canonical = all(map(operator.lt, ranks, ranks[1:]))        # sorted, and no (a, b, kind) twice
         ids = [b['id'] for b in blobs]
-        if self.rest is None or not canonical or len(set(ids)) != len(ids):
+        sent = None
+        if self.rest is not None and canonical and len(set(ids)) == len(ids):
+            sent = [b for b in blobs if self.rest.get(b['id']) != b]
+            if self.schema >= 4:
+                sent = [_func_patch(b, self.rest.get(b['id'])) for b in sent]
+                if any(b is None for b in sent):
+                    sent = None
+        if sent is None:
             out = dict(meta, full=True, blobs=blobs, edges=edges)
         else:
             now = set(ids)
-            sent = [b for b in blobs if self.rest.get(b['id']) != b]
             gone = [i for i in self.order if i not in now]
             have = set(self.order) - set(gone)
             expect = [i for i in self.order if i in now] + [b['id'] for b in sent if b['id'] not in have]
@@ -221,17 +290,19 @@ class Compactor:
         self.order, self.edges = ids, {(e['a'], e['b'], e['kind']): e for e in edges}
         return out
 
-def compact(steps):
-    """Full-state steps -> schema v3 steps."""
-    c = Compactor()
+def compact(steps, schema=SCHEMA):
+    """Full-state steps -> schema v4 steps (v3 with schema=3)."""
+    c = Compactor(schema)
     return [c.push(s) for s in steps]
 
 def expand(tl):
     """A timeline (dict with 'steps', or the list of steps) -> the list of full-state steps, each shaped as
     schema v2 writes them (META, blobs, edges, stats). A step is full when it is step 0, is marked `full`, or
-    carries `edges` (v2 steps always do, v3 delta steps never do); a dict without "schema" >= 3 is all full."""
+    carries `edges` (v2 steps always do, v3 / v4 delta steps never do); a dict without "schema" >= 3 is all full.
+    A delta step's blobs carry function patches when the dict says "schema" >= 4, or for a bare list of steps."""
     steps = tl['steps'] if isinstance(tl, dict) else tl
     old = isinstance(tl, dict) and tl.get('schema', 2) < 3
+    v4 = not isinstance(tl, dict) or tl.get('schema', 2) >= 4
     out, cur, order, edges = [], {}, [], {}
     for st in steps:
         if old or st.get('full') or 'edges' in st or not out:
@@ -243,6 +314,9 @@ def expand(tl):
         else:
             gone = set(st.get('removed_blobs', ()))
             sent = {b['id']: b for b in st['blobs']}
+            if v4:             # a patch's base: the blob as the previous state had it, deltas zeroed
+                sent = {i: _apply_func_patch(b, (rest(cur[i]) if i in fresh else cur[i]) if i in cur else None)
+                        for i, b in sent.items()}
             have = [i for i in order if i not in gone]
             cur = {i: sent[i] if i in sent else rest(cur[i]) if i in fresh else cur[i] for i in have}
             order = have + [i for i in sent if i not in cur]
@@ -264,7 +338,7 @@ def expand(tl):
 
 def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False, steps=None, git_reconcile=False):
     """The timeline dict for a session, or several merged (path: a transcript, a directory or a list of them, see
-    replay.transcripts()): schema v3 (compacted) unless v2. steps: replay.steps() already run on path."""
+    replay.transcripts()): schema v4 (compacted) unless v2. steps: replay.steps() already run on path."""
     files = replay.transcripts(path)
     root = os.path.abspath(root or session_root(files[0]) or '.')
     rs = steps if steps is not None else replay.steps(files, root, seed_git=seed_git, git_reconcile=git_reconcile)
@@ -276,7 +350,7 @@ def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False
     if v2:
         return {**head, 'steps': list(steps)}
     c = Compactor()
-    return {**head, 'schema': 3, 'steps': [c.push(s) for s in steps]}
+    return {**head, 'schema': SCHEMA, 'steps': [c.push(s) for s in steps]}
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])

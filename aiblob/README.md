@@ -14,7 +14,7 @@ make timeline                    # transcript -> web/timeline.json (replay.py, a
 cd web && python3 -m http.server 8790         # open http://localhost:8790/?step=18
 ```
 
-The aigource map (`web/timeline-aigource.json`, 44 MB, gitignored) is built locally from the real sessions,
+The aigource map (`web/timeline-aigource.json`, 14 MB, gitignored) is built locally from the real sessions,
 then labelled from the committed cache `demo/labels.aigource.json` (no GPU needed); open `?src=timeline-aigource.json`:
 
 ```
@@ -31,7 +31,7 @@ Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend.
 Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
 
-web/timeline.json is schema v3 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
+web/timeline.json is schema v4 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
 the page rebuilds every step from those deltas. Analysis is incremental per step (only what an edit can affect
 is redone), so big repos stay usable: on TechnicalAnalysis (580 files, 71 steps) a step costs 0.22-0.37 s (p50,
 machine load dependent; --full: ~1.07 s) and the timeline is 6 MB (was 357 MB). `timeline.py --full` recomputes everything per step and `--v2` writes every step in full;

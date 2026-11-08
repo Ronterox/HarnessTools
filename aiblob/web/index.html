@@ -162,19 +162,29 @@ async function load() {
   }
   throw new Error('no timeline.json or sample-timeline.json next to this page');
 }
-/* <expand> schema v3 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only what
+/* <expand> schema v3 / v4 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only what
    changed. Rebuild every step's full state in order, as timeline.expand() does: a blob a step does not send is the
    previous one with zeroed deltas (one copy, shared by the following steps until it changes), kept in its place;
-   new blobs append unless the step gives `order`; edges are re-sorted the way the analyzer writes them. A file
-   without `schema` >= 3 has every step full. perf.py --page runs this block in node. */
+   new blobs append unless the step gives `order`; edges are re-sorted the way the analyzer writes them. In v4 a
+   sent blob's `funcs` is a patch on that zeroed previous blob's (patchFuncs). A file without `schema` >= 3 has
+   every step full. perf.py --page and tests/test_func_patch.py run this block in node. */
 const EDGE_RANK = { main: 0, error: 1, data: 2, ref: 3 };
 const zeroDelta = d => { const z = {}; for (const k in d) z[k] = k === 'state' ? 'same' : Array.isArray(d[k]) ? [] : 0; return z; };
 const restBlob = b => b.delta ? { ...b, delta: zeroDelta(b.delta), funcs: (b.funcs || []).map(f => f.delta ? { ...f, delta: zeroDelta(f.delta) } : f) } : b;
 const edgeId = e => e.a + '\n' + e.b + '\n' + e.kind;
+function patchFuncs(s, base) {        // v4: removed quals go, a known qual merges its sent keys, a new one appends
+  if (!('funcs' in s)) return s;
+  const fs = new Map(((base && base.funcs) || []).map(f => [f.qual, f]));
+  for (const q of s.funcs_remove || []) fs.delete(q);
+  for (const f of s.funcs) { const o = fs.get(f.qual); fs.set(f.qual, o ? { ...o, ...f } : f); }
+  const b = { ...s, funcs: s.funcs_order ? s.funcs_order.map(q => fs.get(q)) : [...fs.values()] };
+  delete b.funcs_remove; delete b.funcs_order;
+  return b;
+}
 const cmpStr = (p, q) => p < q ? -1 : p > q ? 1 : 0;
 const edgeCmp = (p, q) => (EDGE_RANK[p.kind] ?? 4) - (EDGE_RANK[q.kind] ?? 4) || cmpStr(p.a, q.a) || cmpStr(p.b, q.b);
 function expandSteps(tl) {
-  const v3 = tl.schema >= 3;
+  const v3 = tl.schema >= 3, v4 = tl.schema >= 4;
   let cur = new Map(), fresh = new Set(), edges = new Map();
   return (tl.steps || []).map((st, i) => {
     const sent = st.blobs || [];
@@ -183,9 +193,10 @@ function expandSteps(tl) {
       cur = new Map(sent.map(b => [b.id, b])); fresh = new Set(cur.keys());
       elist = st.edges || []; edges = new Map(elist.map(e => [edgeId(e), e]));
     } else {
-      const gone = new Set(st.removed_blobs || []), byId = new Map(sent.map(b => [b.id, b])), next = new Map();
+      const gone = new Set(st.removed_blobs || []), next = new Map(), base = id => cur.has(id) ? (fresh.has(id) ? restBlob(cur.get(id)) : cur.get(id)) : null;
+      const byId = new Map(sent.map(b => [b.id, v4 ? patchFuncs(b, base(b.id)) : b]));
       for (const [id, b] of cur) if (!gone.has(id)) next.set(id, byId.get(id) || (fresh.has(id) ? restBlob(b) : b));
-      for (const b of sent) next.set(b.id, b);          // a blob already there keeps its place, a new one appends
+      for (const b of byId.values()) next.set(b.id, b);  // a blob already there keeps its place, a new one appends
       cur = st.order ? new Map(st.order.map(id => [id, next.get(id)])) : next; fresh = new Set(byId.keys());
       for (const e of st.edges_remove || []) edges.delete(edgeId(e));
       for (const e of st.edges_add || []) edges.set(edgeId(e), e);

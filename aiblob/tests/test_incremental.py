@@ -1,4 +1,4 @@
-"""Incremental analysis (analyze(memo=...)) and the schema v3 delta timeline against a full recompute per step."""
+"""Incremental analysis (analyze(memo=...)) and the schema v3 / v4 delta timelines against a full recompute per step."""
 import json, os
 
 import pytest
@@ -23,14 +23,16 @@ def run(snapshots, full):
 
 
 def check(snapshots):
-    """Incremental == full recompute, byte for byte, and v3 round-trips through compact / expand."""
+    """Incremental == full recompute, byte for byte, and v4 and v3 round-trip through compact / expand."""
     inc, full = run(snapshots, False), run(snapshots, True)
     for a, b in zip(inc, full):
         assert dump(a) == dump(b), f"step {a['idx']} ({a['file']}): incremental differs from a full recompute"
     assert len(inc) == len(full) == len(snapshots)
-    v3 = {'schema': 3, 'steps': timeline.compact(full)}
+    v3 = {'schema': 3, 'steps': timeline.compact(full, 3)}
     assert dump(timeline.expand(json.loads(dump(v3)))) == dump(full)
-    return inc, v3
+    v4 = {'schema': 4, 'steps': timeline.compact(full)}
+    assert dump(timeline.expand(json.loads(dump(v4)))) == dump(full)
+    return inc, v4
 
 
 def sequence(edits):
@@ -98,9 +100,12 @@ def test_flask_session_incremental_equals_full():
     full = timeline.timeline(SESSION, APP, timings=False, full=True)
     v2 = timeline.timeline(SESSION, APP, timings=False, v2=True)
     assert dump(inc) == dump(full)
-    assert inc['schema'] == 3 and 'schema' not in v2
+    assert inc['schema'] == 4 and 'schema' not in v2
     assert dump(timeline.expand(json.loads(dump(inc)))) == dump(v2['steps'])
     assert len(dump(inc)) < len(dump(v2)) / 3
+    v3 = dict(inc, schema=3, steps=timeline.compact(v2['steps'], 3))
+    assert dump(timeline.expand(json.loads(dump(v3)))) == dump(v2['steps'])
+    assert len(dump(inc)) <= len(dump(v3))
 
 
 def test_sample_timeline_is_v3_and_expands():
@@ -109,7 +114,8 @@ def test_sample_timeline_is_v3_and_expands():
     assert tl['schema'] == 3 and tl['steps'][0].get('full')
     steps = timeline.expand(tl)
     assert len(steps) == len(tl['steps']) and all('edges_add' not in s for s in steps)
-    assert dump(timeline.compact(steps)) == dump(tl['steps'])
+    assert dump(timeline.compact(steps, 3)) == dump(tl['steps'])
+    assert dump(timeline.expand({'schema': 4, 'steps': timeline.compact(steps)})) == dump(steps)
 
 
 def test_expand_reads_deltas_only_from_a_v3_dict():
@@ -119,7 +125,7 @@ def test_expand_reads_deltas_only_from_a_v3_dict():
     full = [{'idx': 0, 'blobs': [a, b], 'edges': [], 'stats': {}}, {'idx': 1, 'blobs': [a], 'edges': [], 'stats': {}}]
     assert [len(s['blobs']) for s in timeline.expand(full)] == [2, 1]
     assert [len(s['blobs']) for s in timeline.expand({'steps': full})] == [2, 1]
-    v3 = {'schema': 3, 'steps': timeline.compact(full)}
-    assert v3['steps'][1]['removed_blobs'] == ['b']
-    assert dump(timeline.expand(v3)) == dump(full) == dump(timeline.expand(v3['steps']))
+    v4 = {'schema': timeline.SCHEMA, 'steps': timeline.compact(full)}
+    assert v4['steps'][1]['removed_blobs'] == ['b']
+    assert dump(timeline.expand(v4)) == dump(full) == dump(timeline.expand(v4['steps']))
 
