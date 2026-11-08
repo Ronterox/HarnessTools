@@ -1,0 +1,183 @@
+# aiblob timeline.json contract (v1)
+
+Produced by `timeline.py`, consumed by `web/index.html`. Stable ids across steps:
+route blob id = `module.func` of the handler; hub = `hub:module`; orphan = `orphan:module`;
+tests = module name; entry = `module.<module>`.
+
+```jsonc
+{
+  "root": "/abs/path/of/analyzed/app",
+  "session": "<session id>",
+  "steps": [
+    {
+      "idx": 0, "ts": "2026-11-05T00:01:10.000Z", "tool": "Write|Edit|MultiEdit|Bash",
+      "file": "auth.py", "said": "first line the agent said before this edit", "turn": 0,
+      "added": 52, "removed": 0,                 // lines in this step (whole file)
+      "blobs": [
+        {
+          "id": "auth.login", "name": "POST /login", "emoji": "🔐",
+          "kind": "route|entry|hook|error-handler|command|tests|hub|orphan",
+          "module": "auth", "size": 52, "complexity": 7, "errors": 3,   // errors = abort/raise/4xx-return exits
+          "data": ["table:users", "ctx:session.clear"],
+          "delta": { "added": 52, "removed": 0, "moved": 0, "state": "new|changed|same" },
+          "funcs": [
+            { "qual": "auth.login", "name": "login", "file": "auth.py", "start": 40, "end": 91,
+              "lines": 52, "branches": 7, "errors": 2, "hash": "ab12cd34ef",
+              "data": ["ctx:request.form"], "snippet": ["if not user: abort(401)", "session['uid'] = user.id", "return redirect(next)"],
+              "calls": [ { "to": "models.get_user_by_username", "error": false } ],
+              "delta": { "added": 52, "removed": 0, "state": "new|changed|same|moved" } }
+          ]
+        }
+      ],
+      "edges": [
+        { "a": "auth.login", "b": "hub:models", "kind": "main",  "n": 2 },
+        { "a": "auth.login", "b": "hub:errors", "kind": "error", "n": 1 },
+        { "a": "auth.login", "b": "hub:models", "kind": "data",  "n": 1, "via": ["table:users"] }
+      ]
+    }
+  ]
+}
+```
+
+Rules: a blob absent from a step no longer exists (the page fades it out itself).
+Every step carries the full state (no diffs across steps needed by the page); since v3 the file carries
+deltas instead and readers rebuild this state per step (see v3 below).
+`delta` compares function bodies by `hash` with the previous step; a blob's delta is
+the sum over its functions plus the lines of functions deleted from the app. A function with the
+same `qual` and `hash` that sits in another blob than in the previous step is `moved`: its delta is 0
+and its lines count as the blob's `moved` (in the blob it left and the one it joined), never as
+added/removed. A blob whose only change is moved functions is `changed` with added 0, removed 0. Spots on the page use
+`delta` with fading recency over the following 6 steps.
+
+## v2 additions (2026-11-05)
+
+- New blob kinds: `file` (a non-code file that code references: templates, static assets, configs, SQL files) and `text` (a non-code file nothing references: README, LICENSE, docs). Both: id `file:<relpath>`, `name` = basename, `module` = top directory (`templates`, `static`, `docs`, `.` for root), `path`, `size` = lines, `complexity` 0, `funcs` empty, `delta` from a whole-file diff (`state` new/changed/same). `text` blobs never have edges. A binary file (by extension or a NUL byte) has `size` 0 and a delta of 0 lines (its `state` still says new/changed/same).
+- New edge kind `ref`: from a code blob to a `file` blob, `n` = number of references, `via` = the literals that matched. One hop on, a `file` blob that names another file (`{% extends "base.html" %}`) has a `ref` edge from itself (`a` = `file:templates/notes/view.html`, `b` = `file:templates/base.html`).
+- Function `calls` entries may carry `"deferred": true` when the callee was passed as a value (callback, target=, key=) rather than called. A deferred target is reachable like a called one: it joins the blob of the function that passes it, or the hub when another root reaches it too (a target that is itself a root, e.g. an error handler given to `register_error_handler`, stays in its own blob).
+- Function `refs`: `["templates/notes/view.html", ...]`, the snapshot files the function's own string literals name (sorted). A blob's `ref` edges are the union over its functions.
+- Blob `delta.removed_funcs`: `[qual, ...]`, functions that left this blob in this step because they are gone from the app (a function that moved to another blob is not listed). Always present, `[]` for file / text blobs.
+- Step-level `stats`: `{"calls": N, "unresolved": M, "parse_ms": x, "analyze_ms": y}`; `calls` counts only call sites that can be the app's own code (resolved ones plus `unresolved`), never calls to builtins, the stdlib or third-party imports; `unresolved` counts calls to non-builtin names the resolver could not place, so `1 - unresolved / calls` is the resolved ratio. `timeline.py --no-timings` writes 0 for both `_ms` fields so runs compare byte for byte.
+- Blob kind `command` now also covers subcommands registered by call (argparse `add_parser`, click groups), named by the subcommand string. Its id is the handler's qual for `.set_defaults(func=f)`, a `{"name": f}` dispatch table or `@group.command()`. For `if args.cmd == "name":` dispatch the branch body is carved out of the dispatching function into a function of its own, qual `<module>.<func>:<name>` (e.g. `aic.cli.main:compile`), which is the blob id; a branch several subcommands share (`args.cmd in ("compile", "fix")`) becomes `<func>:compile|fix` and lands in the module's hub. The dispatching function keeps only its own lines and has deferred calls to each branch.
+- JavaScript / TypeScript modules (`.js .mjs .cjs .jsx .ts .mts .cts .tsx`, see `lang_js.py`) produce the same blobs and edges. Module names come from paths like Python's (`routes/users.js` -> `routes.users`, `lib/index.js` -> `lib`, dots in a file name become `_`). Inline handlers are carved out of the code that registers them into synthetic functions whose qual is the blob id: `app.get('/p', (req, res) => …)` and plain `node:http` branches `if (req.method === 'GET' && pathname === '/p')` -> `<module>.<GET /p>` (kind `route`, name with a mount prefix from `app.use('/users', router)`, GET omitted as for Flask); `app.use((req, res, next) => …)` -> `<module>.<use>` or `<module>.<use /prefix>` (kind `hook`, name `middleware [/prefix]`; with 4 parameters kind `error-handler`, name `error handler`); in a test module `test('name', …)` / `it` / `before…` -> `<module>.<test name>` / `<module>.<it name>` / `<module>.<before>`. A label used twice in a module gets a ` #2`, ` #3` … suffix (`<use #2>`). Calls and imports never resolve across languages. JS/TS files under `static/`, `public/`, `assets/` or `dist/` are `file` / `text` blobs when another language has the entry, and code when the entry is JS or there is none. Regex routes (`app.get(/^\/users\/(\d+)$/, h)` -> `<GET /users/(\d+)>`, name `/users/(\d+)`) and Express param patterns (`'/u/:id(\\d+)'` -> `/u/:id`) are routes like any other. Route chains `app.route('/p').get(a).post(b)` give one route per verb (inline handlers `<GET /p>`, named ones keep their own id); `.all(mw)` is a `hook` (`middleware /p`) every verb of the chain defers to, so each route has a `main` edge to it. `app[verb]('/p', h)` has no static verb: no route, one unresolved call. Module-level `let` / `var` bindings and `const` objects, arrays, `new …` instances, `Object.create` / `Array.from` results (also behind `as` / `satisfies`) that a handler, a function or the module's own code mentions are data symbols `global:<module>.<name>`; routes sharing one are linked by `data` edges. Imports, functions and plain scalar `const`s are not.
+- C modules (`.c .h`, see `lang_c.py`) produce the same blobs and edges. Module names come from paths (`src/render.c` -> `src.render`); a header is its own module with an `_h` suffix (`src/render.h` -> `src.render_h`) so it never collides with its `.c`, and `#include "render.h"` depends on both. A header has no blob unless it defines functions (`static inline`), which form `hub:src.render_h` / `orphan:src.render_h` like any module's. Calls resolve by name across the program (one global namespace): the file's own definition first, else the one non-static definition anywhere (`.c` before header, a test module's only for test modules); `static` functions resolve only within their file, a header's static inline ones everywhere. Roots: `main` of the non-test module that defines it is the `entry` (id `<module>.<module>`, merged with the file-scope code, as for Python); a function only ever reached from a file-scope initializer (`T[] = { on_a }`, `.fn = on_b`, `static void (*cb)(int) = on_c`) and never from a function body is a `hook` (id its qual, name the function name). A function passed as a value inside a function (`signal(SIGINT, f)`, `pthread_create(.., f, ..)`, `atexit(f)`, `qsort(.., cmp)`, `.handler = f`, `p->cb = f`, any identifier argument) is a `deferred` call. Test modules (under `tests/` / `test/`, or `test_*.c` / `*_test.c`) are one `tests` blob each. Error path: the tail of an `if` / `else` branch that ends in `return -1` / `-EINVAL` / `NULL` / `false`, `exit(…)` / `abort()` / `die(…)`, or `goto fail` (any label like `fail` / `err` / `error` / `bail`), and every statement after such a label; `errors` counts those exits. Data: file-scope and `extern` variables a function reads or writes are `global:<name>`, a field access on one `global:<name>.<field>`; a `static` file-scope variable is `global:<module>.<name>` (two files' statics are different variables); `fopen` / `open` / `openat` / `opendir` with a literal path -> `file:<path>`, `getenv` / `setenv("X")` -> `env:X`; a literal naming a snapshot file is a `ref` as for Python. Unresolved: libc / POSIX / pthread / math names and the `pthread_ sem_ epoll_ SDL_ gl glfw rl …` families (`lang_c.EXTERNAL`, `EXTERNAL_PREFIX`) and macro-looking callees (ALL_CAPS, or a `#define f(…)` of the same file) never count; they still resolve when the program defines them. Function-like macro bodies are not read; a macro's identifier arguments that name a program function are deferred calls. GNU `typeof(…)` is read as a plain type so `(typeof(x)){…}` compound literals parse. An `#include` (quoted or `<…>`) that resolves to no snapshot file, directly or through the program's own headers, is external: names it would provide (`raylib.h` / `raymath.h` a bundled list, `tree_sitter/api.h` the `ts_` / `tree_sitter_` prefixes, `rlgl.h` the `rl` prefix, any other header its stem plus `_`, e.g. `yyjson_*`) are aliased to `ext:<name>` when the program defines nothing of that name and never count as unresolved. A C program has one `main`, so a big entry is split (`CLang.split_entry`; Python / JS entries never are): when the entry alone reaches 20 functions or more (`split_min`), every function `main` calls directly (called or deferred, in any module, static or not) becomes a `command` root, id its qual, name the function name, unless it is already a root, a test's, shorter than 3 lines (except the one that owns more than 50%, below, e.g. a `run() { loop(); }` wrapper), or called by 2+ functions other than `main` (a helper). `main` keeps its own lines plus what only it reaches; what several commands reach goes to the hubs as usual. When one of the qualifying callees (however many there are) owns more than 50% of the entry's functions (reaches them while no other callee does and `main` does not except through it) (a main loop: `main -> run() -> {draw_x, update_y, handle_z}`), the split is one level deeper, at that function's qualifying callees (helper = called by 2+ functions other than `main` and it, the depth-1 commands included); it stays with `main`, the other depth-1 callees stay commands. Never deeper than 2. A split entry blob carries `"depth": 1|2`; an unsplit one has no `depth`.
+- Go modules (`.go`, not under `testdata/`, see `lang_go.py`) produce the same blobs and edges. Module names come from paths like C's (`internal/auth/login.go` -> `internal.auth.login`); a method's qual is `<module>.<Type>.<Method>`. A package is a directory (plus its package clause, so `foo_test` beside `foo` is its own package): bare names resolve package-wide, across the files of the directory (a `_test.go` file's functions only for test files), and `pkg.F` through the import path, which names a snapshot directory when it starts with the module path of a snapshot `go.mod` (`go.mod` files are read by the Go layer, so they are no `file` / `text` blob; module `go_mod`). Methods resolve by the receiver's static type: parameters and receivers, `var x T`, `x := T{}` / `&T{}` / `new(T)`, `x := NewT()` / `a, b := pkg.F()` (the function's declared results, func-typed values included), struct fields (`h.db.Query`, through embedded structs), range elements, type assertions; each local is read in the scope it was bound in (blocks and `if` / `for` / `switch` are scopes; `url, err := url.Parse(s)` reads the package). A value of a program interface type, or of unknown type, resolves to the one non-test method of that name in the program (for unknown types: in a package the caller sees); otherwise nothing. Roots: `func main` of package main is the `entry` (id `<module>.<module>`, merged with the file's package-level `var` / `const` code; that file's `init()`s join it; the shallowest such file is the entry, another package main's `main` is an `entry` blob of its own named after its module); `init()` in a file without `main` is a `hook` named `init` (several in one file: `init`, `init #2`, …). Routes (kind `route`, id the handler's qual, named like Flask: `/p`, `POST /p`, GET omitted): `http.HandleFunc("/p", h)` / `mux.HandleFunc` / `r.HandleFunc(…).Methods("POST")` (gorilla) / Go 1.22 patterns `"POST /p"`, and `r.Get` / `r.Post` … (chi, fiber), `r.GET` … (gin, echo; echo's handler is the second argument, the others' the last), with mount prefixes from `g := r.Group("/api")`, `r.PathPrefix("/api").Subrouter()`, `r.With(mw)` and `r.Route("/api", func(r chi.Router) {…})`. A handler wrapped in `http.HandlerFunc(h)`, `http.StripPrefix(…, h)` or `auth(h)` is looked through; `http.Handle("/p", h)` with a handler value (not a function) is only a deferred call. Inline func literals are carved out of the registering function like JS handlers: `<GET /p>`, `<POST /p>`, `<ANY /p>` for a method-less pattern, `<use>` / `<use /prefix>` for `r.Use(func …)`, `<error 404>` for `r.NoRoute` / `r.NotFound` (kind `error-handler`, also `e.HTTPErrorHandler = f`), `<cmd name>` for commands. `X.Use(mw)` makes `mw` a `hook` named `middleware [/prefix]`; `r.Use(Auth())` makes `Auth` the hook. `cobra.Command{Use: "name …", Run / RunE: f}` and `cli.Command{Name: "name", Action: f}` (also as elided elements of `[]*cli.Command{{…}}`) are `command` blobs named by the first word. `_test.go` files are one `tests` blob each. `go f(x)` is a `deferred` call, `defer f()` a call; an identifier or selector naming a program function as an argument, a composite-literal value or an assignment's right side is a deferred call. Error path (strict tail rule, `if` / `else` branches): a branch whose last statement is `return …, err` (any `err…` / `…Err` / `…Error` identifier or selector), `return fmt.Errorf(…)` / `errors.New(…)` / `….NewHTTPError(…)`, `return c.JSON(4xx|5xx, …)`, a call `http.Error(w, …)` / `c.JSON(4xx|5xx, …)` (also `c.String` … with a status, `http.StatusXxx` constants of 400 and up) / `c.AbortWith…` / an error-named call (`writeError(…)`), or a bare `return` right after one of those; `log.Fatal*` / `….Panic*` / `panic(…)` / `os.Exit(non-zero)` anywhere. `errors` counts those exits. Data (per file, never from another file's declarations): the file's own package-level `var`s, read or written, are `global:<pkg>.<name>`, a field access on one `global:<pkg>.<name>.<field>` (`<pkg>` the package clause; for package main the directory, dotted, or `main` at the root); a package-level variable of another file or package counts only where it is used like one (`x.f`, `x.m()`, `x[k]`, `x = …`, `x++`, `&x`, also `pkg.Var.f` for a non-stdlib import, named by the import path's last segment); `os.Getenv` / `LookupEnv` / `Setenv("X")` -> `env:X`; `os.Open` / `ReadFile` / `WriteFile` / `Create` … and `ioutil.ReadFile` … with a literal path -> `file:<path>`; a string literal that starts like SQL (`SELECT`, `INSERT`, …) -> `table:<name>` with the Python regex. Refs: string literals naming a snapshot file as for Python; a package `var`'s initializer literals (`var tmpl = template.Must(template.ParseFiles("templates/x.html"))`) count for the functions of that file that use the var; glob literals (`ParseGlob`, `LoadHTMLGlob`, `"templates/*.html"`) ref every file they match; `//go:embed pattern` (relative to the file's directory) refs what it matches for the functions that use the embedded var; `http.Dir("static")` / `r.Static("/s", "./assets")` ref every file below the directory. Unresolved (`stats`): every call is placed by `GoLang.link()`; calls into imports outside the snapshot's module path (the standard library, third-party; with no `go.mod` in the snapshot, an import path ending in a snapshot directory is the program's unless it is a standard library path), methods on their values, builtins, conversions, calls of func-typed values and fields, and methods promoted from embedded types never count. A bare name the package does not define, `pkg.F` of a package of this module that lacks `F` (or is missing from the snapshot), and a method a program struct type (without embedded fields) lacks count as unresolved. A file that imports none of the known routers decides echo-vs-gin argument order in `link()` from the router variable's type (`echo.New()`, a program function returning `*echo.Echo`, `e.Group(...)`, a struct field), falling back to whether any file of the package imports echo. `X.Group("/p", mw...)` middleware become `hook` blobs named `middleware /p`, like `Use`. Known gap: a plain read (`return limit`) of a package var declared in another file of the same package produces no data symbol; `x.f`, `x[k]`, `x = …`, `x++`, `&x` do.
+
+## v3 (2026-11-05)
+
+The file now carries deltas. Top level gains `"schema": 3`; a file without it (v1/v2) has every step full. Within v3 (and
+for a bare list of steps handed to `timeline.expand()`), a step is full when it is step 0, has `"full": true`
+or carries `edges`: full steps always carry `edges`, delta steps never do, so a list of v2 steps reads as full.
+The *state* of a step, what the page draws and the rules above describe, is unchanged; only its encoding is.
+
+- Step 0, and any step with `"full": true`, carries the whole state as before: `blobs`, `edges`, `stats`.
+- Every other step carries `idx ts tool file said turn added removed` as before, `stats`, and:
+  - `blobs`: the blobs that are new or changed since the previous step, each a full blob object as in v2.
+  - `removed_blobs`: `[id, ...]`, blobs gone this step.
+  - `edges_add`: edges that are new or changed (`n` or `via`), full edge objects. An edge is identified by
+    `(a, b, kind)`.
+  - `edges_remove`: `[{"a", "b", "kind"}, ...]`, edges gone this step.
+  - `order` (only when needed): every blob id of the state, in order.
+- Rebuilding a step (`timeline.expand()` in Python, `expandSteps()` in web/index.html, which must agree):
+  - A blob the step does not send and does not remove is the previous step's blob with zeroed deltas: every
+    count in `delta` and in each function's `delta` 0, `state` `"same"`, `removed_funcs` `[]`. That is exactly
+    what an unchanged blob looks like in a full state, so the recency fade and stains read the same: a blob
+    absent from a delta step has `delta.state` `"same"` and its last change sits in the step that last sent it.
+  - A blob is left out only when it equals that zeroed copy. A blob whose `delta.state` is `same` but whose
+    other fields changed (a function's lines shifted after an edit above it, a call now resolves elsewhere) is
+    sent again in full.
+  - Blob order: the previous order without `removed_blobs`, a sent blob that already existed in its old place,
+    new ones appended in the order `blobs` lists them; `order` replaces that when given.
+  - Edges: the previous set, minus `edges_remove`, plus `edges_add` (replacing by `(a, b, kind)`), sorted by
+    kind (`main`, `error`, `data`, `ref`), then `a`, then `b`, the order analyze.py writes them. The writer
+    sends a step in full when its edges are not in that order.
+- `timeline.py --v2` writes every step in full (no `schema` key), for debugging; `expand()` of a v3 file equals
+  that output step for step. `timeline.py --full` recomputes the whole analysis per step instead of reusing
+  the previous step's (incremental is the default); both write the same bytes.
+
+## Sessions (2026-11-06)
+
+A timeline can merge several transcripts (`timeline.py a.jsonl b.jsonl ~/.claude/projects/<dir> ...`; a directory means
+all its `*.jsonl` sessions plus each one's `<session>/subagents/*.jsonl`). Steps of all of them are ordered by timestamp
+(a Write / Edit at its tool call, a bashEditDiff file at its tool result) and applied to one snapshot; a tool call
+copied into several transcripts (a resumed session) counts once. The top-level `session` is then the comma-joined
+short ids. Optional step fields, written only when they say something (a single-transcript timeline has none of them
+unless an edit failed or was seeded, so its bytes stay as before):
+- `session`: the 8-char session id (a subagent's is its parent session's); `agent`: `main`, or a subagent's
+  `type · description` from its `agent-<id>.meta.json` (`executor · P2a: analysis core port`). `turn` is renumbered
+  across transcripts in order of first appearance, one number per (transcript, prompt).
+- `tool` `Bash` also covers one file of a command's `bashEditDiff` (the hunks Claude Code recorded for it).
+- `applied: false`: the edit did not fit the snapshot (an Edit's `old_string` not in the file or no file; a
+  bashEditDiff hunk that fits nowhere). The step is kept with `added` / `removed` 0 and the snapshot stays as it was
+  (a missing file is not created). A Write always applies (the first full Write of a file is its base).
+- `seeded: true`: the step's base came from outside the replayed edits. Rule (`--seed-git`): start from an empty
+  snapshot and apply the steps; when the first touch of a file is an Edit or a non-created bashEditDiff (no base),
+  the base is `git show <last commit before that step's ts>:path` of root's repository (`git log --before`).
+  Also seeded: an Edit whose tool result recorded the file before it (`originalFile`) differing from the snapshot
+  (that text is the base), and a failing bashEditDiff that fits the file as the last whole-file Read showed it.
+  Before giving up, a failing bashEditDiff is also tried on the file's earlier texts (Claude Code diffs against
+  the text it last saw), and a hunk whose changed lines no longer match but whose context lines do replaces what
+  lies between them; both are not marked seeded. With `--seed-git`, the files tracked in the last commit before
+  the last step that no step touches are in every snapshot, from that commit, so the names they define resolve.
+`timeline.py --sessions-out F` writes the sessions with steps: `[{"id", "uuid", "start", "end", "steps", "prompt"}]`
+(`id` as the steps' `session`, start / end over the session and its subagents, `prompt` the first line of the first
+typed prompt, 120 chars).
+When the timeline has steps from more than one session, the same list is also the top-level `"sessions"` array of the
+timeline (v3 and --v2), right after `"session"`; with one session the key is absent (byte-identical to before).
+- `author`: on every step of a merged or reconciled timeline (every step that has a `session`), `"git"` on git steps
+  and `"ai"` on the others; a single-transcript timeline without git steps has no `author` (all `"ai"`). With
+  `--git-reconcile`, each commit touching root authored from the first step on, up to HEAD (so the last snapshot is
+  HEAD's tree plus files git never tracked), is a step at its author time: `tool` `"git"`, `session` and `agent` `"git"`, `file` `""`, `said` the commit
+  subject, a `turn` of its own, and the usual blobs / edges / stats. It sets every file under root the commit
+  tracks to the commit's text and deletes the files the previous commit tracked that it does not (files git never
+  tracked stay); `added` / `removed` are the real line diff between the snapshot and the commit tree. A commit
+  that matches the snapshot is kept as a marker with `"empty": true` (`added` / `removed` 0). Edits after it apply
+  on the committed text, so drift from changes the transcripts never recorded ends at the next commit.
+- Ordering and credit: a directory's sessions are read in the order of their first ISO timestamp (records whose
+  `timestamp` is not an ISO string, e.g. integer ms, are skipped here and in `--sessions-out` start / end), so a call
+  copied into a resumed session counts for the original. On a tie (a resumed file that copies the original's very
+  first record) the file whose first record the other lacks is earlier, and a file with no such record (all its
+  records copied into the other: the original) comes first; then the file name. A dropped copy shares the
+  original's text, so the resumed file's next call does not repeat it as `said`. A bashEditDiff change of a file that another transcript
+  also changed while the Bash call ran (between its tool call and its result) is that transcript's: an Edit /
+  Write timed inside the window, or an overlapping Bash change whose call ranks higher, or ranks the same and has
+  the shorter window. A Bash call's rank, per file, from low to high: blind (below), runs under root (its cwd, as
+  the transcript records it, is under root, or the command names root's path or basename), runs under root and
+  names the file (its absolute path as a whole word; or its bare basename as a word; or a name with a directory
+  part that resolves to the file from the call's cwd or the `cd` dirs the command ends in: `docs/README.md` does
+  not name `README.md`). A relative name counts only under root: from another repo, `README.md` is that repo's
+  file. A Write / Edit ranks top. Known limits, by design: a call from an unrelated cwd whose command mentions
+  root's basename as a word (`ls ../aigource`) counts as running under root, and so its bare `README.md` names
+  root's; a bare basename is not resolved, so `cd ../other && sed … README.md` from root, or `README.md` from
+  root's `docs/`, still names root's `README.md`. The report is
+  ordered right after that change, which is applied and credited there; what is left of the report (often
+  nothing, then no step) stays the Bash call's when it applies. Such a report never makes an `applied: false`
+  step: when what is left fits nowhere, the call only saw the other transcript's change (e.g. a smoke test
+  running while another session patched the file) and makes no step. A long-running call (a build, a sleep)
+  thus never takes credit, or blame, for a change another agent made meanwhile.
+- Blind reports: a Bash call that neither names the file nor runs under root (another project's tests, a
+  tmux / nvim check from elsewhere) only saw the change, whoever made it, even when no other transcript recorded
+  it (e.g. a `sed -i` that a call undid before its own diff was taken). Such a report makes no step and takes no
+  credit; its text of the file, when it fits, serves like a whole-file Read: a later failing report that fits
+  only that text applies on it (`seeded: true`), so a change the transcripts never recorded still reaches the
+  snapshot. Such a result (from a Read's text too) is merged with what the snapshot changed in the file since
+  that text was seen (another edit, a git step): `merge3` runs `git merge-file` with the snapshot's text then as
+  the base, the snapshot's text now as one side and the result as the other. A clean merge is the step's text;
+  a conflict is `applied: false`. The guarantee is diff3's, no more: changes that touch the same or adjacent lines
+  conflict, and where lines repeat (`}`, blank lines) a clean merge can still pair them differently than the
+  edits meant, e.g. keep a change twice when the result already carried it.
+  Costs: a real change made by a call that names neither the file nor root (a script run from outside
+  root) is not a step; and since an Edit / Write always ranks top, a Bash call that authored a change of a file
+  another session edited inside its window, and whose leftover does not fit, makes no step (no `applied: false`)
+  rather than a phantom one for the watcher. The next git step resets either drift.
+- A Write / Edit / MultiEdit whose tool result is an error changes nothing (`applied: false`). An Edit that does not
+  fit and has no `originalFile` applies its own recorded hunks (`structuredPatch`) the way bashEditDiff hunks are
+  applied. A failing bashEditDiff retried on an earlier text of the file is merged the same way: the hunks
+  applied exactly at their lines of that text, then `merge3` with that text as the base and the snapshot's text
+  as the other side (a conflict: the next earlier text, else `applied: false`). A hunk whose
+  new lines already stand at its line counts as done only when it has context lines (a context-free `+a` before an
+  `a` is inserted). Heredoc paths follow the `cd dir` commands in effect (heredoc bodies and quoted strings are no
+  commands, a `cd` in `( ... )` ends at `)`, one in a pipeline such as `cd a | cat` does not last, one after
+  `then` / `do` / `{` does, one in a background job (`cd a &`) or a function body (`f() { cd a; }`) does not, a
+  `case` pattern's `)` closes nothing, a `cd` in a `case` arm makes the directory unknown, `&>file` is a
+  redirection, `cd -P dir` / `cd -- dir` / `x=1 cd dir` / `builtin cd dir` /
+  `command cd dir` go to dir); after `cd -` or a bare `cd` the heredoc is skipped.
