@@ -25,7 +25,15 @@ P=~/.claude/projects/-home-rontero-Documents-Projects-AIProjects-HarnessTools
 # new blob versions: label step by step (resumable, timed, GPU-paced; log in demo/label-runs/), then the line above
 ./serve-llm.sh --runtime b11960 ~/.cache/models/Qwen3.5-4B-Q4_K_M.gguf 8080 -np 1 --cache-ram 0 &
 .venv/bin/python label.py web/timeline-aigource.json --per-step --cache demo/labels.aigource.json --cool 80 --report
+.venv/bin/python label.py web/timeline-aigource.json --count   # label requests from an empty cache, no GPU
 ```
+
+A blob keeps its label until the lines changed since that label reach 20% of its lines then (`--relabel-at 0.2`,
+the default; an added or removed function counts whole): the new version gets a copy of the label marked
+`reused_from` in the cache, without a model call. `--relabel-at 0` asks for every new version, as before
+(SCHEMA.md, v5 "Label reuse"). A failed ask leaves its blob with no label to keep, so its next versions are asked
+(a `--retry-failed` run can end with a label or so more than a clean run); in the whole-timeline mode, versions
+that would keep a label whose ask failed stay unlabelled until a later run labels it.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,

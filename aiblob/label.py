@@ -32,6 +32,13 @@ Between steps it pauses while nvidia-smi reads >= --hot °C until below --cool. 
 written: apply the cache afterwards with `label.py T --cache C --server http://127.0.0.1:1`.
 --run-report LOG summarises a run log. Big blobs are cut to --prompt-chars, and the system prompt
 lists every part of the step, so give the server one big slot (`-np 1`).
+
+--relabel-at X (default 0.2; both modes): a blob keeps its label until the lines changed since that label
+was made reach X of the blob's lines at that label (an added or removed function counts its whole length);
+the new key then gets a copy of the label marked `reused_from: <labelled key>`, without a model call (Keeper).
+A key already in the cache is always a hit. The state per blob is replayed from step 0 against the cache, so
+a resumed --per-step run decides as an uninterrupted one. 0 asks for every new key, as before.
+--count prints how many label requests the timeline needs from an empty cache, at X and at 0, and exits.
 """
 import argparse
 import hashlib
@@ -74,10 +81,14 @@ def file_head(root, blob):
         return []
 
 
-def own_hashes(blob):
-    """Hashes of a blob's own functions: not those folded in from a smaller blob (`merged`, schema v5)."""
+def own_funcs(blob):
+    """A blob's own functions: not those folded in from a smaller blob (`merged`, schema v5)."""
     folded = {q for m in blob.get("merged", ()) for q in m["funcs"]}
-    return [f["hash"] for f in blob.get("funcs", []) if not folded or f.get("qual") not in folded]
+    return [f for f in blob.get("funcs", []) if not folded or f.get("qual") not in folded]
+
+
+def own_hashes(blob):
+    return [f["hash"] for f in own_funcs(blob)]
 
 
 def content_key(blob):
@@ -103,6 +114,134 @@ def step_keys(step):
 def key_of(step, blob):
     keys = step.get("_keys")
     return keys[blob["id"]] if keys is not None else content_key(blob)
+
+
+# --- keep a label until the blob has really changed (--relabel-at) ---
+
+def units(step):
+    """The blob identities the reuse rule follows in a step, as the analyzer drew them (schema v5), as
+    [(id, key, functions or None, blob to ask or None)]: a blob under its id (a cut parent with its pieces'
+    functions, key as step_keys()), each `merged` entry under its own id with its own functions (never asked,
+    as before: it can only keep a label), and each piece under its piece id. File and text blobs have no
+    functions: the rule does not apply to them."""
+    pieces = {}
+    for b in step["blobs"]:
+        if "cut" in b:
+            pieces.setdefault(b["cut"], []).extend(own_funcs(b))
+    out = []
+    for b in step["blobs"]:
+        if b["kind"] in ("file", "text"):
+            out.append((b["id"], key_of(step, b), None, b))
+            continue
+        out.append((b["id"], key_of(step, b), own_funcs(b) + pieces.get(b["id"], []), b))
+        for m in b.get("merged", ()):
+            mine = set(m["funcs"])
+            funcs = [f for f in b["funcs"] if f.get("qual") in mine]
+            out.append((m["id"], ",".join(sorted(f["hash"] for f in funcs)), funcs, None))
+    return out
+
+
+def changed_lines(prev, funcs, adjacent):
+    """Lines changed from `prev` ({qual: (hash, lines)}) to `funcs`: a function whose hash changed counts its
+    delta's added + removed lines (after a gap, or with no delta, its line-count difference, at least 1); an
+    added or removed function counts its whole length."""
+    n, cur = 0, set()
+    for f in funcs:
+        cur.add(f["qual"])
+        old = prev.get(f["qual"])
+        if old is None:
+            n += f["lines"]
+        elif old[0] != f["hash"]:
+            d = f.get("delta") or {}
+            moved = d.get("added", 0) + d.get("removed", 0)
+            n += moved if adjacent and moved else max(1, abs(f["lines"] - old[1]))
+    return n + sum(lines for q, (_, lines) in prev.items() if q not in cur)
+
+
+class Keeper:
+    """The --relabel-at rule: a unit (units()) keeps its label until the lines changed since that label was made
+    reach `at` x the unit's lines at that label (changed_lines(), summed over the versions since). A kept label
+    goes into the cache under the new key as a copy marked `reused_from: <labelled key>`, without a model call.
+    A key already in the cache is always a hit: a model label anchors the unit there; a reused one counts as the
+    reuse it records (from another anchor: re-anchored there, at today's lines). Feed it every step from step 0:
+    the state is rebuilt from the cache, so a resumed run decides as an uninterrupted one. at=0: no reuse."""
+
+    def __init__(self, at):
+        self.at = at
+        self.state = {}  # unit id -> [labelled key or None, its lines, lines changed since, key, {qual: (hash, lines)}, step]
+        self.asked = []  # (unit id, key, lines) asked at this step, for settle()
+        self.reused = []
+
+    def step(self, i, step, cache, live=True):
+        """Step position `i`: hits and reuses update the state now (reuses are written into `cache`). -> {key: blob}
+        to ask; call settle() once they are asked. Not `live` (outside the steps being labelled): nothing is
+        written or asked, an uncached key leaves its unit unlabelled."""
+        ask, self.reused = {}, []
+        for uid, key, funcs, blob in units(step):
+            st = self.state.get(uid)
+            if not key:
+                continue
+            if st and st[3] == key and st[5] == i - 1:
+                st[5] = i
+                continue
+            adjacent = st is not None and st[5] == i - 1
+            chg = changed_lines(st[4], funcs, adjacent) if st and funcs is not None else 0
+            anchor, at_lines, since = (st[0], st[1], st[2] + chg) if st else (None, 0, 0)
+            lines = sum(f["lines"] for f in funcs or ())
+            entry = cache.get(key)
+            if key in ask:  # another unit asks for it at this step
+                anchor = None
+                self.asked.append((uid, key, lines))
+            elif entry is not None:
+                src = entry.get("reused_from")
+                if src is None:
+                    anchor, at_lines, since = key, lines, 0
+                elif src != anchor:
+                    anchor, at_lines, since = src, lines, 0
+            elif live and funcs is not None and anchor in cache and since / max(at_lines, 1) < self.at:
+                cache[key] = dict(cache[anchor], reused_from=cache[anchor].get("reused_from", anchor))
+                self.reused.append(key)
+            else:
+                if live and blob is not None:
+                    ask.setdefault(key, blob)
+                    self.asked.append((uid, key, lines))
+                anchor = None
+            self.state[uid] = [anchor, at_lines, since, key, {f["qual"]: (f["hash"], f["lines"]) for f in funcs or ()}, i]
+        return ask
+
+    def settle(self, cache):
+        """After asking: a unit whose key got a model label is anchored there; a failed one stays unlabelled."""
+        for uid, key, lines in self.asked:
+            if key in cache and "reused_from" not in cache[key]:
+                self.state[uid][:3] = [key, lines, 0]
+        self.asked = []
+
+
+def plan_labels(steps, cache, at):
+    """The rule replayed over the whole timeline, step by step, as if every ask succeeded (`cache` is not
+    changed). -> ({key to ask: its first blob}, {reused key: labelled key})."""
+    work, keeper, asks = dict(cache), Keeper(at), {}
+    for i, step in enumerate(steps):
+        for key, b in keeper.step(i, step, work).items():
+            asks.setdefault(key, b)
+            work[key] = {}  # stands in for the label it will get
+        keeper.settle(work)
+    return asks, {k: v["reused_from"] for k, v in work.items() if k not in cache and "reused_from" in v}
+
+
+def count_report(steps, at):
+    """--count: label requests from an empty cache, step by step, under the rule and at --relabel-at 0."""
+    out, n = [f"label.py --count: from an empty cache, every ask assumed to succeed, {len(steps)} steps"], {}
+    for t in dict.fromkeys((at, 0)):
+        asks, reused = plan_labels(steps, {}, t)
+        kinds = Counter("piece" if "cut" in b else "file" if b["kind"] in ("file", "text") else "blob"
+                        for b in asks.values())
+        n[t] = len(asks)
+        out.append(f"--relabel-at {t:g}: {len(asks)} label requests ({kinds['blob']} blobs, {kinds['piece']} pieces, "
+                   f"{kinds['file']} files), {len(reused)} keys reuse a label")
+    if at:
+        out.append(f"saved {n[0] - n[at]} of {n[0]} requests ({(n[0] - n[at]) / max(n[0], 1):.1%})")
+    return "\n".join(out)
 
 
 def system_prompt(last_step):
@@ -192,7 +331,10 @@ def apply_labels(steps, cache):
     """Set each blob's `label` from the cache; a blob the cache does not back loses any old label. Each
     `merged` entry gets the label of its own functions, and a step's areas table is recomputed from the labels.
     Blobs are shared between steps, so run this before dropping the `_head` keys content_key reads; a shared
-    blob whose label differs between two steps (a cut parent whose piece changed) is copied for the later one."""
+    blob whose label differs between two steps (a cut parent whose piece changed) is copied for the later one.
+    A reused label (`reused_from`) is shown without that mark."""
+    cache = {k: {f: x for f, x in v.items() if f != "reused_from"} if "reused_from" in v else v
+             for k, v in cache.items()}
     given = {}
     for step in steps:
         for i, b in enumerate(step["blobs"]):
@@ -424,25 +566,33 @@ def run_per_step(a, steps, cache):
         except (urllib.error.URLError, OSError) as e:
             sys.exit(f"label.py: llama-server unreachable at {server} ({e})")
         os.makedirs(os.path.dirname(a.run_log) or ".", exist_ok=True)
-    failed_in_row = 0
-    for n, (i, digest) in enumerate(plan, 1):
+    plan = dict(plan)
+    keeper, dirty, n, failed_in_row = Keeper(a.relabel_at), False, 0, 0
+    for i in range(picked.stop):  # every step from 0: the rule's state is replayed from the cache
         blobs = versions[i]
         hits = sum(key_of(steps[i], b) in cache for b in blobs)
-        if hits == len(blobs):  # an earlier step of this run labelled them
+        ask = keeper.step(i, steps[i], cache, live=i in picked)
+        reused = len({key_of(steps[i], b) for b in blobs} & set(keeper.reused))
+        dirty = dirty or bool(keeper.reused)
+        if i not in plan or not (ask or reused):  # nothing to do, or an earlier step of this run labelled them
+            keeper.settle(cache)
             continue
-        pause, temp0 = cool_down(a.hot, a.cool)
+        n += 1
+        pause, temp0 = cool_down(a.hot, a.cool) if ask else (0, None)
         t0 = time.monotonic()
-        calls, errors = label_step(server, steps[i], blobs, cache, a)
+        calls, errors = label_step(server, steps[i], list(ask.values()), cache, a) if ask else (0, [])
         secs = time.monotonic() - t0
+        keeper.settle(cache)
         save_cache(a.cache, cache)  # the step's labels, failed or not, before its log line
-        rec = {"step": i, "idx": steps[i].get("idx"), "session": steps[i].get("session"), "keys": digest,
-               "blobs": len(blobs), "asked": len(blobs) - hits, "hits": hits, "calls": calls,
-               "secs": round(secs, 2), "pause_s": pause, "temp_start": temp0, "temp_end": gpu_temp(),
+        dirty = False
+        rec = {"step": i, "idx": steps[i].get("idx"), "session": steps[i].get("session"), "keys": plan[i],
+               "blobs": len(blobs), "asked": len(ask), "hits": hits, "reused": reused, "calls": calls,
+               "secs": round(secs, 2), "pause_s": pause, "temp_start": temp0, "temp_end": gpu_temp() if ask else None,
                "status": "failed" if errors else "ok", "error": "; ".join(errors) or None,
                "at": time.strftime("%Y-%m-%dT%H:%M:%S")}
         with open(a.run_log, "a") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-        print(f"step {i} [{n}/{len(plan)}] {rec['asked']} asked, {calls} calls, {secs:.1f}s, "
+        print(f"step {i} [{n}/{len(plan)}] {rec['asked']} asked, {reused} reused, {calls} calls, {secs:.1f}s, "
               f"{rec['temp_end']} °C{f', paused {pause}s' if pause else ''}: {rec['status']}"
               f"{' ' + rec['error'] if errors else ''}", file=sys.stderr)
         failed_in_row = failed_in_row + 1 if errors else 0
@@ -450,6 +600,8 @@ def run_per_step(a, steps, cache):
             print(f"label.py: {failed_in_row} failed steps in a row, stopping; rerun with --retry-failed",
                   file=sys.stderr)
             break
+    if dirty:  # labels kept on steps that asked nothing
+        save_cache(a.cache, cache)
     if a.report:
         print(run_report(a.run_log))
 
@@ -464,7 +616,8 @@ def run_report(path):
         last[r["step"]] = r
     ok = [r for r in last.values() if r["status"] == "ok"]
     failed = sorted((r for r in last.values() if r["status"] != "ok"), key=lambda r: r["step"])
-    secs = sorted(r["secs"] for r in recs)
+    timed = [r for r in recs if r["asked"]] or recs  # not the steps that only kept labels
+    secs = sorted(r["secs"] for r in timed)
     pct = lambda p: secs[max(0, -(-len(secs) * p // 100) - 1)]
     slowest = max(recs, key=lambda r: r["secs"])
     work = sum(r["secs"] for r in recs)
@@ -475,7 +628,8 @@ def run_report(path):
            f"time {work + sum(pauses):.0f}s: {work:.0f}s labelling + {sum(pauses):.0f}s in {len(pauses)} "
            f"thermal pauses",
            f"per step p50 {pct(50):.1f}s, p90 {pct(90):.1f}s, max {slowest['secs']:.1f}s (step {slowest['step']})",
-           f"{sum(r['asked'] for r in recs)} blobs asked, {sum(r['hits'] for r in recs)} cache hits, "
+           f"{sum(r['asked'] for r in recs)} blobs asked, {sum(r.get('reused', 0) for r in recs)} kept their "
+           f"label, {sum(r['hits'] for r in recs)} cache hits, "
            f"{calls} model calls{f', {work / calls:.2f}s per call' if calls else ''}"]
     if temps:
         out.append(f"GPU {min(temps)}-{max(temps)} °C")
@@ -509,12 +663,20 @@ def main():
     ap.add_argument("--give-up-after", type=int, default=5,
                     help="per-step: stop after this many failed steps in a row (default 5, 0 never)")
     ap.add_argument("--run-report", metavar="LOG", help="print the summary of a per-step run log and exit")
+    ap.add_argument("--relabel-at", type=float, default=0.2,
+                    help="keep a blob's label until the lines changed since it was made reach this share of the "
+                         "blob's lines then (default 0.2; 0 asks for every new version)")
+    ap.add_argument("--count", action="store_true",
+                    help="print how many label requests the timeline needs from an empty cache, at --relabel-at "
+                         "and at 0, and exit (no server, nothing written)")
     a = ap.parse_args()
     if a.run_report:
         print(run_report(a.run_report))
         return
     if not a.timeline:
         ap.error("timeline is required")
+    if not 0 <= a.relabel_at <= 1:
+        ap.error(f"--relabel-at must be between 0 and 1 (got {a.relabel_at:g})")
     server = a.server.rstrip("/")
     a.cache = a.cache or (f"demo/labels.{a.model_tag}.json" if a.model_tag else "demo/labels.json")
     stem = os.path.splitext(os.path.basename(a.timeline))[0]
@@ -540,6 +702,9 @@ def main():
                 b["_head"] = head
     for step in steps:
         step["_keys"] = step_keys(step)
+    if a.count:
+        print(count_report(steps, a.relabel_at))
+        return
     if a.per_step:
         run_per_step(a, steps, cache)
         return
@@ -547,14 +712,16 @@ def main():
     keys = {key_of(step, b) for step in steps for b in step["blobs"]} - {""}
     hits, stale_n = len(keys & cache.keys()), len(keys & set(stale))
 
-    # One representative blob per uncached content key (latest step wins, with its edges).
+    # The keys the rule asks for; one representative blob per key (latest step wins, with its edges).
+    asks, reuse = plan_labels(steps, cache, a.relabel_at)
     todo = {}
     for step in steps:
         for b in step["blobs"]:
             key = key_of(step, b)
-            if key and key not in cache:
+            if key in asks:
                 b["_edges"] = [e for e in step["edges"] if b["id"] in (e["a"], e["b"])]
                 todo[key] = b
+    dirty = bool(todo)
 
     if todo:
         try:
@@ -593,8 +760,6 @@ def main():
                 except Exception as e:  # one bad blob must not sink the rest
                     print(f"label.py: {blob['name']}: {e}", file=sys.stderr)
                 stats[key]["secs"] = time.monotonic() - t0
-        with open(a.cache, "w") as f:
-            json.dump(cache, f, indent=1, ensure_ascii=False)
         rejected = sum((st["rejected"] for st in stats.values()), Counter())
         summary = (f"{sum(st['retries'] for st in stats.values())} retries, {sum(rejected.values())} rejections "
                    f"({', '.join(f'{n} {r}' for r, n in sorted(rejected.items())) or 'none'}), "
@@ -612,6 +777,13 @@ def main():
                   f"{sum(st['gen'] for st in stats.values())} completion tokens "
                   f"({sum(st['reasoning'] for st in stats.values())} reasoning), {summary}")
 
+    reused = 0
+    for key, src in reuse.items():  # kept labels whose source is labelled now
+        if src in cache:
+            cache[key] = dict(cache[src], reused_from=src)
+            reused += 1
+    if dirty or reused:
+        save_cache(a.cache, cache)
     apply_labels(steps, cache)
     for step in steps:
         step.pop("_keys", None)
@@ -621,7 +793,8 @@ def main():
     tl["steps"] = timeline.compact(steps, tl["schema"]) if tl.get("schema", 2) >= 3 else steps  # same schema back
     with open(a.timeline, "w") as f:
         json.dump(tl, f, indent=1, ensure_ascii=False)
-    print(f"label.py: {hits} cache hits, {len(todo)} new calls, {stale_n} stale titles redone, "
+    print(f"label.py: {hits} cache hits, {reused} kept labels (--relabel-at {a.relabel_at:g}), "
+          f"{len(todo)} new calls, {stale_n} stale titles redone, "
           f"{a.timeline} updated")
 
 

@@ -247,9 +247,37 @@ Ported the approved zoom draft into the real pipeline (areas.py, timeline.py, la
 - On TechnicalAnalysis the areas pass costs ~48 ms per step (p50 276 vs 228 ms): reshape, recount and the areas'
   call-site table walk every function each step; reuse them across steps when blob membership and calls did not
   change.
-- Pieces stay unlabelled until a live labelling run reaches them (root function name + parent's emoji meanwhile).
+- Pieces stay unlabelled until a live labelling run reaches them (root function name + parent's emoji meanwhile);
+  with `--relabel-at` the 15 pieces need 65 label requests over the aigource history instead of 194.
 - The cost is ~10 ms per step on aigource; reshape could reuse the previous step's units when no blob changed
   membership or calls (most steps), if that matters.
 - An open area's dashed outline is sized by its farthest member, so a lone outlier leaves empty room; the local
   layout could pull outliers in.
 - Captions before labels come from heuristic names (function names for C commands); label.py fixes them.
+
+## Label reuse outcome (2026-11-08): `--relabel-at`
+A measurement over the aigource label run (scratchpad labelreuse/report.txt) found that one plain rule saves 53% of
+the calls (875 of 1,656) with 1 borderline real miss in 40 audited skips and drift on 1 of 180 live blobs (a
+rewording), and removes flicker (129 of 454 paid title changes flipped back to an older title). label.py now
+applies it (SCHEMA.md, v5 "Label reuse"):
+- Per analyzer-blob identity (blob id, cut parent with its pieces, each `merged` entry, each piece under its own id)
+  a label is kept until the lines changed since it was made reach `--relabel-at` (default 0.2) of the identity's
+  lines then; an added or removed function counts its whole length. A kept label is a cache entry for the new key
+  marked `reused_from`, no model call; the map shows it unmarked. `--relabel-at 0` is the old behaviour.
+- State: none stored. Each run replays the rule from step 0 against the cache (a key in the cache is always a hit,
+  a reused one counts as the reuse it records), so a `--per-step` resume decides exactly as an uninterrupted run
+  (tested, with the resume between two edits that only add up to 20% together). The whole-timeline mode replays
+  the same rule assuming its asks succeed, then writes the kept labels whose source got labelled; without a
+  server (port 1) it still keeps labels from the cache.
+- Pieces get a label of their own on their first version (the parent's label describes the whole blob, and a
+  piece's functions already count in the parent's identity, so inheriting would put the parent's title twice on
+  the map); later piece versions follow the rule under the piece id. `merged` entries are still never asked, but
+  now keep their label through small edits.
+- Checks: aigource full cache, port 1, on a copy: 1,130 hits, 0 kept, 0 calls, map and cache byte-identical.
+  `--count` from an empty cache: 1,322 -> 533 label requests (59.7% saved; blobs 1,076 -> 416, pieces 194 -> 65,
+  files 52 both). In the measurement's own universe (merged entries askable, no piece identities) 1,221 -> 555
+  (54.5%) vs the measurement's 576 (52.8%): 49 revisits of a key that kept a label are cache hits here and fresh
+  decisions in the measurement; through the anchors they leave they account for the 21 fewer requests (the
+  measurement's replay with that one change gives 555 exactly).
+- Open: the 20% threshold is fitted to one repo and one labeller; a full relabel can tell kept labels apart by
+  `reused_from` but there is no flag to drop them yet. The measurement's audit covers aigource only.

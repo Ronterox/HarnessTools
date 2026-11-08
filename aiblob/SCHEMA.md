@@ -202,6 +202,31 @@ page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `are
   piece has a key of its own and shows its root function's name and its parent's emoji until a live labelling
   run labels it. On the aigource map every key the v4 labels cached still matches (1,130 distinct cache hits, 0
   calls); the only uncached keys are the 192 versions of the 15 pieces.
+- Label reuse (`label.py --relabel-at X`, default 0.2, 2026-11-08): per blob identity, a label is kept until the
+  lines changed since it was made reach X of the identity's lines at that label; then the model is asked again.
+  Identities are the analyzer's blobs: a blob's id (a cut parent with its pieces' functions, keyed as above),
+  each `merged` entry's id (its own functions; never asked, as before, so it only keeps a label it had), and a
+  piece's id (`<parent>><root qual>`, its own functions: a piece gets its own label on its first version, then
+  follows the rule like any blob; the parent's label describes the whole and is not inherited). Changed lines
+  per version: a function whose hash changed counts its `delta` added + removed (after a gap, or with no delta,
+  its line-count difference, at least 1); an added or removed function its whole length; summed since the
+  label, not since the previous version, so a run of small edits cannot avoid a relabel. File and text blobs
+  are outside the rule. A kept label is a cache entry under the new key, a copy of the label with
+  `"reused_from": "<labelled key>"` (always a model-labelled key); the timeline shows it without that field.
+  A key in the cache is always a hit: a model label anchors the identity there, a reused one counts as the
+  reuse it records (one from another anchor re-anchors there at today's lines). No state is stored: label.py
+  replays it from step 0 against the cache each run, so a `--per-step` resume decides as an uninterrupted run
+  (steps before `--steps A` replay without writing; an uncached key there leaves the blob unlabelled). The run
+  log has `reused` per step; steps that only kept labels are logged with `asked` 0. `X = 0` asks for every new
+  key, as before. `--count` prints the label requests from an empty cache at X and at 0. aigource: 1,322 -> 533
+  requests at 0.2 (59.7% saved; non-piece blobs and files 1,128 -> 468, pieces 194 -> 65); in the measurement's
+  universe (merged entries askable, no piece identities) 1,221 -> 555 (54.5%; the measurement's replay gives
+  576, 52.8%, = 875 of 1,656 calls. Here 49 revisits of a key that kept a label are cache hits, where the
+  measurement decides them afresh; through the anchors they leave, they account for the 21 fewer requests).
+- A failed ask leaves that blob with no anchor, so its later versions are asked (and then cached, hits on any
+  rerun): a `--retry-failed` run can end slightly different from a run with no failures (534 vs 533 labels in a
+  verifier run on aigource). In the whole-timeline mode, versions that would keep the label of a key whose ask
+  failed stay unlabelled until a later run labels that key.
 
 ## Sessions (2026-11-06)
 
