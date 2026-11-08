@@ -281,3 +281,33 @@ applies it (SCHEMA.md, v5 "Label reuse"):
   measurement's replay with that one change gives 555 exactly).
 - Open: the 20% threshold is fitted to one repo and one labeller; a full relabel can tell kept labels apart by
   `reused_from` but there is no flag to drop them yet. The measurement's audit covers aigource only.
+
+## Live mode, phases 0-1 outcome (2026-11-08)
+Plan: .omc/plans/aiblob-live.md (strict exactness: the live map must equal a batch build). Scratch evidence:
+scratchpad live/ (measure.py, order.py, sim.py, llm.py and their logs).
+- Measured on the aigource map (frozen copy of both project dirs, 160 transcripts, 1,270 steps): `replay.steps()`
+  ~20 s and ~170 MB peak (difflib line counts ~55% of it, JSON parsing ~17%); analysis 205 s (loaded machine: 246 s), 630 MB
+  peak; `timeline.expand()` 0.4-0.8 s; `analyze(last snapshot, {}, {})` 1.9-2.9 s (143 files).
+- Timestamps vs write order: user / assistant records stay in timestamp order within 1.2 s of each other, but their
+  writes can lag other records: 7 events (18 tool_use / tool_result records) were written 3-38 s after a record
+  with a later timestamp. Copies of earlier sessions (resumes) are written up to 52 min "back in time"; stage 1's
+  dedup lets them through. Subagents start 0.12-0.66 s after the parent's Agent call (all 131 here background).
+  33 of 9,304 Edit/Write/MultiEdit/Bash calls never got a tool_result (all Bash); no result ever came after a later
+  assistant message of the same transcript (10,637 results), which is how the reader ends such calls.
+- llama-server b11960 (Qwen3.5-4B, `-np 1 --cache-ram 0`): `--sleep-idle-seconds 60` frees VRAM (3,098 -> 100 MiB,
+  RSS 1.05 GB -> 0.52 GB), `/health` answers 200 asleep without waking it, the next request wakes it in 3.2 s.
+  `-c 4096`: 2,966 MiB, 4.1 s to /health; `-c 8192` (serve-llm.sh): 3,098 MiB, 5.0 s. `--fit on` does nothing next
+  to serve-llm.sh's `-ngl 99` (it only sets unset options); `-ngl auto -c 0` let it pick the model's 262,144
+  context: 9.6 GB RSS, 25 s start, slower answers. Use `-c 4096 -np 1 --cache-ram 0 --sleep-idle-seconds 60`.
+- Phase 1: replay.steps() is now OpReader (incremental _ops, a call's ops held until its tool_result) -> Engine
+  (copies, credit, apply stages with the strict commit rules in its doc) -> Merger (the old apply loop). Batch is
+  feed-all + finish(), unchanged: aigource map raw and labelled byte-identical to web/timeline-aigource.json, Flask
+  web/timeline.json identical, and the real corpus fed record by record in write order (exact watermark) gives the
+  same 1,270 steps with `late` 0. tests/test_chunking.py: every test_replay scenario plus mixed / racing / git
+  fixtures in all-at-once, one-record, timestamp-ordered, shuffled and byte-chunked (Lines) feeds.
+- Strict stalls (same simulation, hold after max(step time, its call's end)): 1,206 of 1,270 steps 0 s; 59 > 1 s,
+  25 > 60 s, 8 > 300 s, max 45 min, nearly all a Bash report waiting for another transcript's running Bash call
+  that started before it returned (the 45 min: a subagent's `flock`-waiting build held session 8e130533's reports).
+- Open for phase 2: the watermark lag (the 3-38 s late writes would break exactness at now-2.5 s); transcript
+  numbers n of files that appear later (ties and copies sort by n); `many` and subagent tags (meta.json) fixed at
+  add(); seed_git's untouched() needs the last step; git commits are read once.

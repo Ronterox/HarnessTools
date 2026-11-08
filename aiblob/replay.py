@@ -16,6 +16,8 @@ counts once. With more than one
 transcript each step carries `session` (the 8-char session id; a subagent's is its parent session's) and `agent`
 (`main`, or the subagent's `type · description` from its agent-<id>.meta.json), and `turn` is renumbered across
 transcripts in order of first appearance, so it still names one prompt.
+steps() feeds everything to Engine at once; fed records as they are written instead (Lines -> Engine.feed, then
+Engine.drain(w) with a watermark), the Engine makes the same steps, holding back what a call still running could change.
 
 Missing bases, kept consistent:
 - A Write is the file's whole content: it always applies.
@@ -48,7 +50,7 @@ Missing bases, kept consistent:
   between the snapshot and the commit; a commit that matches the snapshot is kept as a marker with `empty`.
   Edits after it apply on the committed text, so drift from changes the transcripts never recorded ends there.
 """
-import json, os, re, sys, glob, functools, subprocess
+import collections, functools, glob, heapq, itertools, json, os, re, subprocess, sys
 from dataclasses import dataclass, field, asdict
 
 @dataclass
@@ -239,70 +241,124 @@ def first_prompt(path, n=120):
             return first_line(t, n)
     return ''
 
-def _ops(path, root, sidechain):
-    """One transcript -> its edits in order, not yet applied: dicts with ts, tool, path, op, turn, said (a box
-    shared by the calls after one text, spent by the first call that makes a step), tid (tool_use id), and per op:
-    write: text; edit: old, new, rall; patch: hunks, created, deleted."""
-    out = []
-    box = {'said': ''}
-    turn = -1
-    results = {}          # tool_use_id -> is_error
-    calls = {}            # Bash tool_use_id -> (turn, box, ts, paths its heredocs wrote)
-    orig = {}             # Edit / Write tool_use_id -> the file's text before it (toolUseResult.originalFile)
-    spatch = {}           # Edit tool_use_id -> its recorded hunks (toolUseResult.structuredPatch)
-    for o in load_lines(path):
-        side = o.get('isSidechain') and not sidechain
+class OpReader:
+    """One transcript's records, fed in file order -> its edits, not yet applied: dicts with ts, tool, path, op,
+    turn, said (a box shared by the calls after one text, spent by the first call that makes a step), tid (tool_use
+    id), id ((tid, op, its number among the call's ops)), i (its number in the transcript), ok, and per op:
+    write: text; edit: old, new, rall, and on a call's first one orig (toolUseResult.originalFile) and, for an Edit,
+    spatch (its structuredPatch); patch: hunks, created, deleted, start, cmd, cwd; see: text.
+    A Write / Edit / heredoc op is made at its tool call and is held (its call is in `open`) until the call's
+    tool_result sets its ok / orig / spatch; a later result of the call sets them again (the last one wins, as in a
+    read of the whole file). A call is also over when a later assistant message of the transcript begins (Claude Code
+    answers every call of a message before it sends the next one; true of all 10,637 results in the aigource
+    transcripts) or at close(); a result that still comes after that is counted in `late`."""
+
+    def __init__(self, root=None, sidechain=False):
+        self.root, self.sidechain = root, sidechain
+        self.box, self.turn = {'said': ''}, -1
+        self.results = {}     # tool_use_id -> is_error
+        self.orig = {}        # Edit / Write tool_use_id -> the file's text before it (toolUseResult.originalFile)
+        self.spatch = {}      # Edit tool_use_id -> its recorded hunks (toolUseResult.structuredPatch)
+        self.calls = {}       # Bash tool_use_id -> (turn, box, ts, paths its heredocs wrote, cmd, cwd)
+        self.by_tid = {}      # tool_use_id -> its ops
+        self.open = {}        # tool_use_id -> its message id, while the call may still get its result
+        self.late = 0
+        self.n = 0
+
+    def _add(self, op, out):
+        tid = op['tid']
+        ops = self.by_tid.setdefault(tid, [])
+        op['id'] = (tid, op['op'], len(ops))
+        op['i'], self.n = self.n, self.n + 1
+        op['ok'] = not self.results.get(tid)
+        if op['op'] == 'edit' and not ops:
+            op['orig'] = self.orig.get(tid)       # before a MultiEdit's first sub-edit only
+            if op['tool'] == 'Edit':
+                op['spatch'] = self.spatch.get(tid)
+        ops.append(op)
+        out.append(op)
+
+    def _result(self, tid):
+        if tid not in self.open and self.by_tid.get(tid):
+            self.late += 1                        # the call was taken as over: its ops may be applied already
+        self.open.pop(tid, None)
+        for op in self.by_tid.get(tid, ()):
+            op['ok'] = not self.results.get(tid)
+            if op['op'] == 'edit' and op['id'][2] == 0:
+                op['orig'] = self.orig.get(tid)
+                if op['tool'] == 'Edit':
+                    op['spatch'] = self.spatch.get(tid)
+
+    def inflight(self):
+        """(start, cmd, cwd) of the Bash calls still running."""
+        return [(self.calls[t][2], self.calls[t][4], self.calls[t][5]) for t in self.open if t in self.calls]
+
+    def close(self):
+        self.open.clear()
+
+    def feed(self, o):
+        """One record -> the ops it adds, in order."""
+        out = []
+        box = self.box
+        side = o.get('isSidechain') and not self.sidechain
         if o.get('type') == 'user' and not side:
             c = (o.get('message') or {}).get('content')
             if isinstance(c, str) or (isinstance(c, list) and any(b.get('type') == 'text' for b in c if isinstance(b, dict))):
-                turn += 1
+                self.turn += 1
             if isinstance(c, list):
                 for b in c:
                     if isinstance(b, dict) and b.get('type') == 'tool_result':
-                        results[b.get('tool_use_id')] = bool(b.get('is_error'))
+                        tid = b.get('tool_use_id')
+                        self.results[tid] = bool(b.get('is_error'))
                         res = o.get('toolUseResult')
                         if isinstance(res, dict) and isinstance(res.get('originalFile'), str):
-                            orig[b.get('tool_use_id')] = res['originalFile']
+                            self.orig[tid] = res['originalFile']
                         if isinstance(res, dict) and isinstance(res.get('structuredPatch'), list):
-                            spatch[b.get('tool_use_id')] = res['structuredPatch']
+                            self.spatch[tid] = res['structuredPatch']
+                        self._result(tid)
                         f = res.get('file') if isinstance(res, dict) and res.get('type') == 'text' else None
                         if isinstance(f, dict) and f.get('startLine') == 1 and f.get('numLines') == f.get('totalLines') \
                                 and isinstance(f.get('content'), str) and f.get('filePath'):
                             t = f['content']    # a whole-file Read: the file as it was (lines joined, no last newline)
-                            out.append({'ts': o.get('timestamp', ''), 'tool': 'Read', 'path': f['filePath'], 'op': 'see',
-                                        'text': t + '\n' if t and not t.endswith('\n') else t, 'turn': turn,
-                                        'said': box, 'tid': b.get('tool_use_id')})
-                        call = calls.get(b.get('tool_use_id'))
+                            self._add({'ts': o.get('timestamp', ''), 'tool': 'Read', 'path': f['filePath'], 'op': 'see',
+                                       'text': t + '\n' if t and not t.endswith('\n') else t, 'turn': self.turn,
+                                       'said': box, 'tid': tid}, out)
+                        call = self.calls.get(tid)
                         if call and isinstance(res, dict) and isinstance(res.get('bashEditDiff'), dict):
                             for f in res['bashEditDiff'].get('files') or []:
                                 p = f.get('filePath') or ''
                                 if p and p not in call[3]:
-                                    out.append({'ts': o.get('timestamp') or call[2], 'tool': 'Bash', 'path': p, 'op': 'patch',
-                                                'hunks': f.get('hunks') or [], 'created': bool(f.get('created')),
-                                                'deleted': bool(f.get('deleted')), 'turn': call[0], 'said': call[1],
-                                                'tid': b.get('tool_use_id'), 'start': call[2], 'cmd': call[4],
-                                                'cwd': call[5]})
+                                    self._add({'ts': o.get('timestamp') or call[2], 'tool': 'Bash', 'path': p, 'op': 'patch',
+                                               'hunks': f.get('hunks') or [], 'created': bool(f.get('created')),
+                                               'deleted': bool(f.get('deleted')), 'turn': call[0], 'said': call[1],
+                                               'tid': tid, 'start': call[2], 'cmd': call[4], 'cwd': call[5]}, out)
         if o.get('type') != 'assistant' or side:
-            continue
-        if root is None:
-            root = o.get('cwd')
+            return out
+        if self.root is None:
+            self.root = o.get('cwd')
+        mid = (o.get('message') or {}).get('id')
+        for tid in [t for t, m in self.open.items() if m != mid]:
+            del self.open[tid]                # a later message: every call of the earlier ones was answered
+        root = self.root
         for b in (o.get('message') or {}).get('content') or []:
             if b.get('type') == 'text' and b.get('text', '').strip():
-                box = {'said': first_line(b['text'])}
+                self.box = box = {'said': first_line(b['text'])}
             if b.get('type') != 'tool_use':
                 continue
             name, inp = b.get('name'), b.get('input') or {}
             ts = o.get('timestamp', '')
-            base = {'ts': ts, 'tool': name, 'turn': turn, 'said': box, 'tid': b.get('id')}
+            self.open[b.get('id')] = mid
+            base = {'ts': ts, 'tool': name, 'turn': self.turn, 'said': box, 'tid': b.get('id')}
             fp = inp.get('file_path')
             if name == 'Write' and fp:
-                out.append(dict(base, path=fp, op='write', text=inp.get('content', '')))
+                self._add(dict(base, path=fp, op='write', text=inp.get('content', '')), out)
             elif name == 'Edit' and fp:
-                out.append(dict(base, path=fp, op='edit', old=inp.get('old_string', ''), new=inp.get('new_string', ''),
-                                rall=inp.get('replace_all', False)))
+                self._add(dict(base, path=fp, op='edit', old=inp.get('old_string', ''), new=inp.get('new_string', ''),
+                               rall=inp.get('replace_all', False)), out)
             elif name == 'MultiEdit' and fp:
-                out += [dict(base, path=fp, op='edit', old=e.get('old_string', ''), new=e.get('new_string', ''),
-                             rall=e.get('replace_all', False)) for e in inp.get('edits', [])]
+                for e in inp.get('edits', []):
+                    self._add(dict(base, path=fp, op='edit', old=e.get('old_string', ''), new=e.get('new_string', ''),
+                                   rall=e.get('replace_all', False)), out)
             elif name == 'Bash':
                 wrote = set()
                 cmd = inp.get('command', '')
@@ -314,18 +370,37 @@ def _ops(path, root, sidechain):
                     if '$' in p or '~' in p:
                         continue            # a shell variable or ~ the transcript cannot expand
                     wrote.add(p)
-                    out.append(dict(base, path=p, op='write', text=m.group(3) + '\n'))
-                calls[b.get('id')] = (turn, box, ts, wrote, cmd, o.get('cwd') or '')
-    per = {}
-    for op in out:
-        op['ok'] = not results.get(op['tid'])
-        per[op['tid']] = per.get(op['tid'], -1) + 1
-        op['id'] = (op['tid'], op['op'], per[op['tid']])
-        if op['op'] == 'edit' and per[op['tid']] == 0:
-            op['orig'] = orig.get(op['tid'])       # before a MultiEdit's first sub-edit only
-            if op['tool'] == 'Edit':
-                op['spatch'] = spatch.get(op['tid'])
-    return out, root
+                    self._add(dict(base, path=p, op='write', text=m.group(3) + '\n'), out)
+                self.calls[b.get('id')] = (self.turn, box, ts, wrote, cmd, o.get('cwd') or '')
+        return out
+
+class Lines:
+    """A transcript's bytes as they are appended -> its records: a line counts once its newline came (a writer may
+    be in the middle of it), the last one also at close(). Lines that are empty or not JSON are skipped, as by
+    load_lines()."""
+
+    def __init__(self):
+        import codecs
+        self.dec, self.buf = codecs.getincrementaldecoder('utf-8')(), ''
+
+    def feed(self, data):
+        text = self.buf + self.dec.decode(data)
+        text = text.replace('\r\n', '\n').replace('\r', '\n')    # universal newlines, as open() reads them
+        *lines, self.buf = text.split('\n')
+        return [o for o in map(_record, lines) if o is not None]
+
+    def close(self):
+        o, self.buf = _record(self.buf + self.dec.decode(b'', final=True)), ''
+        return [o] if o is not None else []
+
+def _record(line):
+    line = line.strip()
+    if line:
+        try:
+            return json.loads(line)
+        except json.JSONDecodeError:
+            pass
+    return None
 
 def git_base(root, rel, ts):
     """rel's text in the last commit of root's repository before ts, or None."""
@@ -442,7 +517,7 @@ def _rank(op, root):
         resolves(m) for m in re.finditer(r'(?<![\w.~/-])([\w.~/-]*?' + re.escape(base) + r')(?!\.?[\w-])', cmd))
     return names, under
 
-def _credit(ops, root=None):
+def _credit(x, group):
     """A bashEditDiff change of a file that another transcript also changed while the Bash call ran (its tool
     call -> result window) is that transcript's: an Edit / Write at a time inside the window, or a Bash change
     whose own window is shorter and overlaps it. The Bash report is then ordered right after that change, so the
@@ -450,37 +525,26 @@ def _credit(ops, root=None):
     report is marked `observer`: what is left of it is a step only when it applies (never `applied: false`).
     Before window length comes how surely each call made the change (_rank): a report of a call that neither names
     the file nor runs under / names root is `blind` (no step at all, and no credit), and a call that ranks higher
-    takes the credit whatever the windows; equal ranks go to the shorter window."""
-    rank = {id(op): _rank(op, root) for op in ops if op['op'] == 'patch'}
-    for op in ops:
-        if op['op'] == 'patch' and rank[id(op)] == (False, False):
-            op['blind'] = True
-    by = {}
-    for op in ops:
-        if op['op'] != 'see':
-            by.setdefault(op['path'], []).append(op)
-    for group in by.values():
-        for x in group:
-            if x['op'] != 'patch' or not x.get('start') or x.get('blind'):
-                continue
-            t0, t1 = x['start'], x['ts']
-            late = ''
-            for y in group:
-                if y['src'] == x['src'] or y.get('blind'):
-                    continue
-                if y['op'] == 'patch' and y.get('start'):
-                    y0, y1 = y['start'], y['ts']
-                    rx, ry = rank[id(x)], rank[id(y)]
-                    if y0 <= t1 and t0 <= y1 and (ry > rx or ry == rx and _span(y0, y1) < _span(t0, t1)):
-                        late = max(late, y1)
-                elif y['op'] in ('write', 'edit') and t0 <= y['ts'] <= t1:
-                    late = max(late, y['ts'])
-            if late:
-                x['observer'] = True
-            if late > x['ts']:
-                x['ts'] = late
-                x['key'] = (late, 1) + x['key'][2:]
-    return sorted(ops, key=lambda op: op['key'])
+    takes the credit whatever the windows; equal ranks go to the shorter window.
+    x: a patch op with a start, not blind; group: the ops of x's path (no Reads, no copies), in order of their key
+    as read, the ones before x already credited. Marks x and moves it after the change that explains it."""
+    t0, t1 = x['start'], x['ts']
+    late = ''
+    for y in group:
+        if y['src'] == x['src'] or y.get('blind'):
+            continue
+        if y['op'] == 'patch' and y.get('start'):
+            y0, y1 = y['start'], y['ts']
+            rx, ry = x['rank'], y['rank']
+            if y0 <= t1 and t0 <= y1 and (ry > rx or ry == rx and _span(y0, y1) < _span(t0, t1)):
+                late = max(late, y1)
+        elif y['op'] in ('write', 'edit') and t0 <= y['ts'] <= t1:
+            late = max(late, y['ts'])
+    if late:
+        x['observer'] = True
+    if late > x['ts']:
+        x['ts'] = late
+        x['key'] = (late, 1) + x['key'][2:]
 
 def _span(a, b):
     from datetime import datetime
@@ -524,54 +588,30 @@ def git_commits(root, first, last):
             out.append({'ts': ts, 'sha': sha, 'subject': subject})
     return out
 
-def steps(path, root=None, seed_git=False, git_reconcile=False):
-    """path: a transcript, a directory or a list of them (see transcripts()) -> [Step], merged by timestamp."""
-    files = transcripts(path)
-    many = len(files) > 1 or git_reconcile      # merged (or with git steps): steps carry session and agent
-    ops = []
-    for n, f in enumerate(files):
-        o, r = _ops(f, root, sidechain=is_subagent(f))
-        root = root or r
-        session, agent = who(f) if many else ('', '')
-        for i, op in enumerate(o):
-            op.update(key=(op['ts'], 0, n, i), session=session, agent=agent, src=n)
-        ops += o
-    ops.sort(key=lambda op: op['key'])
-    first, kept, boxes = {}, [], {}     # a resumed session's file starts with copies of the earlier one's records: once each
-    for op in ops:
-        if op['id'][0] is not None and op['id'] in first:
-            boxes[id(op['said'])] = first[op['id']]['said']   # the copy's text box is the original's: spent together
-            continue
-        if op['id'][0] is not None:
-            first[op['id']] = op
-        kept.append(op)
-    for op in kept:
-        box, n = op['said'], 0
-        while id(box) in boxes and n < len(boxes):
-            box, n = boxes[id(box)], n + 1
-        op['said'] = box
-    ops = kept
-    ops = _credit(ops, root)
-    under = lambda p: not root or os.path.abspath(p).startswith(os.path.abspath(root) + os.sep)
-    times = [op['ts'] for op in ops if op['op'] != 'see' and under(op['path'])]
-    if git_reconcile and root and times:
-        commits = git_commits(root, times[0], times[-1])
-        ops = sorted(ops + [{'ts': c['ts'], 'tool': 'git', 'path': os.path.join(root, ''), 'op': 'git', 'sha': c['sha'],
-                             'turn': c['sha'], 'said': {'said': c['subject']}, 'ok': True, 'session': 'git',
-                             'agent': 'git', 'src': 'git', 'key': (c['ts'], -1, -1, 0)} for c in commits],
-                     key=lambda op: (op['key'][0], op['op'] != 'git', op['key'][1:]))   # a commit before its ts' steps
-    tracked = None        # files the last git step's commit tracked
-    snap, out, turns = {}, [], {}
-    hist = {}             # relpath -> the texts it had, oldest first
-    seen = {}             # relpath -> (its text as a whole-file Read or a blind report last showed it, the snapshot's then)
-    for op in ops:
+class Merger:
+    """Ops in their final order -> steps: the snapshot each leaves, its history and what Reads showed of it, and
+    the git steps' trees. root is set before the first apply()."""
+
+    def __init__(self, root=None, seed_git=False, many=False):
+        self.root, self.seed_git, self.many = root, seed_git, many
+        self.tracked = None   # files the last git step's commit tracked
+        self.snap, self.out, self.turns = {}, [], {}
+        self.hist = {}        # relpath -> the texts it had, oldest first
+        self.seen = {}        # relpath -> (its text as a whole-file Read or a blind report last showed it, the snapshot's then)
+
+    def under(self, p):
+        return not self.root or os.path.abspath(p).startswith(os.path.abspath(self.root) + os.sep)
+
+    def apply(self, op):
+        """One op -> its Step, or None when it makes none."""
+        root, snap, hist, seen = self.root, self.snap, self.hist, self.seen
         if op['op'] == 'git':
             tree = git_tree(root, op['sha'])
-            if tracked is None:           # the first commit: what its parent tracked
-                tracked = set(_git(root, 'ls-tree', '-r', '-z', '--name-only', op['sha'] + '^', text=True).stdout.split('\0'))
+            if self.tracked is None:      # the first commit: what its parent tracked
+                self.tracked = set(_git(root, 'ls-tree', '-r', '-z', '--name-only', op['sha'] + '^', text=True).stdout.split('\0'))
             a = r = 0
             touched = False
-            for rel in sorted(set(tree) | (tracked & set(snap))):
+            for rel in sorted(set(tree) | (self.tracked & set(snap))):
                 before, after = snap.get(rel), tree.get(rel)
                 if before == after:
                     continue
@@ -583,27 +623,26 @@ def steps(path, root=None, seed_git=False, git_reconcile=False):
                 else:
                     snap[rel] = after
                     hist.setdefault(rel, []).append(after)
-            tracked = set(tree)
-            turn = turns.setdefault(('git', op['sha']), len(turns))
-            out.append(Step(len(out), op['ts'], 'git', '', op['said']['said'], turn, a, r, True, dict(snap),
-                            'git', 'git', True, False, 'git', not touched))
-            continue
+            self.tracked = set(tree)
+            turn = self.turns.setdefault(('git', op['sha']), len(self.turns))
+            return self._step(Step(len(self.out), op['ts'], 'git', '', op['said']['said'], turn, a, r, True, dict(snap),
+                                   'git', 'git', True, False, 'git', not touched))
         p = op['path']
-        if not under(p):
-            continue
+        if not self.under(p):
+            return None
         rel = os.path.relpath(p, root) if root else p
         if op['op'] == 'see':
             seen[rel] = (op['text'], snap.get(rel))
-            continue
+            return None
         if op.get('blind'):     # a call that never pointed at the file or root only saw its change: no step, but
             # the change was made (by someone): like a Read, it shows the file for a later report that fits only it
             got = apply_hunks(snap[rel], op['hunks']) if rel in snap and not op['deleted'] else None
             if got not in (None, snap.get(rel)):
                 seen[rel] = (got, snap[rel])
-            continue
+            return None
         before = snap.get(rel)
         seeded = False
-        if before is None and seed_git and root and op['op'] != 'write' and not op.get('created'):
+        if before is None and self.seed_git and root and op['op'] != 'write' and not op.get('created'):
             before = git_base(root, rel, op['ts'])
             seeded = before is not None
         applied = True
@@ -642,11 +681,11 @@ def steps(path, root=None, seed_git=False, git_reconcile=False):
                     got = merge3(then, before, got) if then is not None and before is not None else None
                 seeded = got is not None
             if got is None and op.get('observer'):
-                continue                    # it only saw another transcript's change, which did not fit either
+                return None                 # it only saw another transcript's change, which did not fit either
             if got is None:
                 after, applied = before, False
             elif got == before:
-                continue                    # done already (a concurrent call's report of the same change)
+                return None                 # done already (a concurrent call's report of the same change)
             else:
                 after = got
         if applied:
@@ -656,18 +695,209 @@ def steps(path, root=None, seed_git=False, git_reconcile=False):
                 snap[rel] = after
                 hist.setdefault(rel, []).append(after)
         a, r = _diff_counts(before or '', after or '') if applied else (0, 0)
-        turn = op['turn'] if not many else turns.setdefault((op['src'], op['turn']), len(turns))
+        turn = op['turn'] if not self.many else self.turns.setdefault((op['src'], op['turn']), len(self.turns))
         box = op['said']                     # spent by the first call with a step: later calls of the text say nothing
         said = box['said'] if box.setdefault('by', op['tid']) == op['tid'] else ''
-        out.append(Step(len(out), op['ts'], op['tool'], rel, said, turn, a, r, op['ok'], dict(snap),
-                        op['session'], op['agent'], applied, seeded and applied))
-    if seed_git and root and out:
-        rest = untouched(root, out[-1].ts, {st.file for st in out})
-        for st in out:
-            if st.author == 'git':
-                break                       # from the first commit on, the commits' trees hold those files
-            st.content = {**rest, **st.content}
-    return out
+        return self._step(Step(len(self.out), op['ts'], op['tool'], rel, said, turn, a, r, op['ok'], dict(snap),
+                               op['session'], op['agent'], applied, seeded and applied))
+
+    def _step(self, st):
+        self.out.append(st)
+        return st
+
+def _order(op):
+    """Where an op is applied: by time; a git commit before the other ops of its second; then by its key."""
+    return op['key'][0], op['op'] != 'git', op['key'][1:]
+
+class Engine:
+    """Transcripts' records, fed as they are written -> steps, the same ones whatever the chunking (steps() feeds
+    everything, then finish()).
+
+    Each transcript has a number n (its place in transcripts()), its reader (OpReader) and session / agent tags.
+    An op's key is (ts, 0, n, its number in the transcript). Ops then pass three stages, each in order:
+    1. Copies (`fresh`, by key): a tool call copied into several transcripts counts once, the first by key; the
+       dropped copy's text box is the kept one's.
+    2. Credit (`queue`, by key): a Bash report is credited (_credit) against the ops of its file; it may move later
+       (key (ts, 1, n, i)) and become an observer.
+    3. Apply (`ready`, by _order()): Merger.apply().
+    drain(w) is told that every op still to come has ts >= w (w: an ISO timestamp, as the transcripts write them;
+    copies of a resumed session's earlier records are let through by stage 1). It moves ops on only when nothing
+    still to come or still undecided could change them, so the steps come out exactly as a batch run makes them:
+    - stage 1 takes an op when its ts < w (every op that sorts before it is known);
+    - stage 2 credits a report x (window t0..t1, rank rx) only when no Bash call of another transcript could still
+      take its credit: neither a report not through stage 1 (exact test: it starts by t1 and ranks higher, or the
+      same with a shorter window), nor a call still running that started by t1 (its rank is (names, under) with
+      `under` known from its command and cwd and `names` not yet, and its window is at least start..w);
+    - stage 3 applies the first op by _order() when its ts < w, its call is not held (OpReader: an Edit / Write /
+      heredoc waits for its tool_result), and no op still in stage 2 sorts before it. A git commit also waits until
+      every op at or before its time is credited: it is a step when an op under root (not a Read) comes at or before it
+      (steps() takes commits from the first such op on).
+    `late` counts ops that broke the promise (ts below an earlier w and not a dropped copy) and results that came
+    after their call was taken as over; with 0 the steps equal a batch run's."""
+
+    def __init__(self, root=None, seed_git=False, git_reconcile=False, many=False):
+        self.root, self.git_reconcile = root, git_reconcile
+        self.merger = Merger(root, seed_git, many)
+        self.many = many
+        self.readers, self.tags, self.closed = {}, {}, set()
+        self.fresh, self.queue, self.ready = [], collections.deque(), []
+        self.first, self.boxes = {}, {}     # op id -> the op kept; id(box) -> (box, the box it stands for)
+        self.by = {}                        # path -> its ops through stage 1, no Reads (the credit groups)
+        self.commits = None
+        self.first_ts = None                # ts of the first op under root (not a Read) applied
+        self.w, self._late = '', 0
+        self.seq = itertools.count()
+
+    @property
+    def late(self):
+        return self._late + sum(r.late for r in self.readers.values())
+
+    def add(self, n, path):
+        """Transcript number n (its place in transcripts()) at path."""
+        root = self.root or next((self.readers[m].root for m in sorted(self.readers) if m < n and self.readers[m].root), None)
+        self.readers[n] = OpReader(root, sidechain=is_subagent(path))
+        self.tags[n] = who(path) if self.many else ('', '')
+
+    def feed(self, n, o):
+        """One record of transcript n, in file order."""
+        session, agent = self.tags[n]
+        for op in self.readers[n].feed(o):
+            op.update(key=(op['ts'], 0, n, op['i']), session=session, agent=agent, src=n)
+            heapq.heappush(self.fresh, (op['key'], next(self.seq), op))
+
+    def close(self, n):
+        """Transcript n has ended: its calls without a result never get one."""
+        self.readers[n].close()
+        self.closed.add(n)
+
+    def _resolve(self):
+        """root: the given one, else the first transcript's (in order) whose assistant records name a cwd."""
+        if self.root:
+            return True
+        for n in sorted(self.readers):
+            if self.readers[n].root:
+                self.root = self.merger.root = self.readers[n].root
+                return True
+            if n not in self.closed:
+                return False
+        return False
+
+    def drain(self, w):
+        """The steps that can be made now that every op still to come has ts >= w."""
+        if not self._resolve() and len(self.closed) < len(self.readers):
+            return []
+        root, out = self.root, []
+        if self.git_reconcile and root and self.commits is None:
+            self.commits = git_commits(root, '', '')
+            for c in self.commits:
+                op = {'ts': c['ts'], 'tool': 'git', 'path': os.path.join(root, ''), 'op': 'git', 'sha': c['sha'],
+                      'turn': c['sha'], 'said': {'said': c['subject']}, 'ok': True, 'session': 'git', 'agent': 'git',
+                      'src': 'git', 'key': (c['ts'], -1, -1, 0)}
+                heapq.heappush(self.ready, (_order(op), next(self.seq), op))
+        while self.fresh and self.fresh[0][0][0] < w:                         # 1. copies
+            _, _, op = heapq.heappop(self.fresh)
+            if op['id'][0] is not None:
+                kept = self.first.setdefault(op['id'], op)
+                if kept is not op:
+                    if kept['key'] > op['key']:
+                        self._late += 1
+                    # a resumed session's file starts with copies of the earlier one's records: once each; the
+                    # copy's text box is the original's, spent together
+                    self.boxes[id(op['said'])] = (op['said'], kept['said'])
+                    continue
+            if op['key'][0] < self.w:
+                self._late += 1
+            if op['op'] == 'patch':
+                op['rank'] = _rank(op, root)
+                if op['rank'] == (False, False):
+                    op['blind'] = True
+            if op['op'] != 'see':
+                self.by.setdefault(op['path'], []).append(op)
+            self.queue.append(op)
+        self.w = max(self.w, w)
+        while self.queue:                                                     # 2. credit
+            x = self.queue[0]
+            if x['op'] == 'patch' and x.get('start') and not x.get('blind'):
+                if self._may_take(x, w):
+                    break
+                _credit(x, self.by[x['path']])
+            self.queue.popleft()
+            heapq.heappush(self.ready, (_order(x), next(self.seq), x))
+        while self.ready:                                                     # 3. apply
+            k, _, op = self.ready[0]
+            if k[0] >= w or self.queue and _order(self.queue[0]) < k:
+                break
+            if op['op'] == 'git':
+                if self.queue and self.queue[0]['key'][0] <= op['ts']:
+                    break
+                if self.first_ts is None and not any(
+                        y['op'] not in ('git', 'see') and y['ts'] == op['ts'] and self.merger.under(y['path'])
+                        for _, _, y in self.ready):
+                    heapq.heappop(self.ready)
+                    continue                # before the first op under root: not a step
+            elif op['tid'] in self.readers[op['src']].open:
+                break                       # its tool_result has not come yet
+            heapq.heappop(self.ready)
+            if op['op'] != 'git':
+                if self.first_ts is None and op['op'] != 'see' and self.merger.under(op['path']):
+                    self.first_ts = op['ts']
+                box, n = op['said'], 0
+                while id(box) in self.boxes and n < len(self.boxes):
+                    box, n = self.boxes[id(box)][1], n + 1
+                op['said'] = box
+            st = self.merger.apply(op)
+            if st is not None:
+                out.append(st)
+        return out
+
+    def _may_take(self, x, w):
+        """Whether a Bash call not credited yet could still take x's credit (see the class doc)."""
+        t0, t1, rx = x['start'], x['ts'], x['rank']
+        for _, _, y in self.fresh:
+            if y['op'] == 'patch' and y['path'] == x['path'] and y['src'] != x['src'] and y.get('start') \
+                    and y['start'] <= t1:
+                ry = _rank(y, self.root)
+                if ry != (False, False) and (ry > rx or ry == rx and _span(y['start'], y['ts']) < _span(t0, t1)):
+                    return True
+        for m, reader in self.readers.items():
+            if m == x['src']:
+                continue
+            for y0, cmd, cwd in reader.inflight():
+                if not y0 or y0 > t1:
+                    continue
+                under = _rank({'cmd': cmd, 'cwd': cwd, 'path': x['path']}, self.root)[1]
+                ranks = {(True, under), (False, under)} - {(False, False)}
+                if any(ry > rx for ry in ranks) or rx in ranks and _span(y0, w) < _span(t0, t1):
+                    return True
+        return False
+
+    def finish(self):
+        """Every transcript has ended: the rest of the steps. With seed_git, the files no step touches are then put
+        into every step's snapshot up to the first git step (steps())."""
+        for n in self.readers:
+            self.close(n)
+        out = self.drain('~')               # after every ISO timestamp
+        m = self.merger
+        if m.seed_git and self.root and m.out:
+            rest = untouched(self.root, m.out[-1].ts, {st.file for st in m.out})
+            for st in m.out:
+                if st.author == 'git':
+                    break                   # from the first commit on, the commits' trees hold those files
+                st.content = {**rest, **st.content}
+        return out
+
+def steps(path, root=None, seed_git=False, git_reconcile=False):
+    """path: a transcript, a directory or a list of them (see transcripts()) -> [Step], merged by timestamp."""
+    files = transcripts(path)
+    # merged (or with git steps): steps carry session and agent
+    eng = Engine(root, seed_git, git_reconcile, many=len(files) > 1 or git_reconcile)
+    for n, f in enumerate(files):
+        eng.add(n, f)
+        for o in load_lines(f):
+            eng.feed(n, o)
+        eng.close(n)
+    eng.finish()
+    return eng.merger.out
 
 def untouched(root, ts, touched):
     """{relpath: text} of the files under root tracked in the last commit before ts that no step touches."""
