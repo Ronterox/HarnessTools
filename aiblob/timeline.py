@@ -20,7 +20,7 @@ Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; -
 for debugging and tests), each with its `area`. --v2 writes every step in full instead. --no-timings writes 0 for
 parse_ms / analyze_ms, so two runs on the same session are byte-identical.
 """
-import argparse, difflib, gc, glob, json, operator, os, sys, time
+import argparse, copy, difflib, gc, glob, json, operator, os, sys, time
 
 import replay
 from analyze import analyze, _is_binary
@@ -132,49 +132,86 @@ def analyzed_steps(steps, full=False, timings=True, smart=True):
     """(replay.Step, {relpath: text}) pairs in order -> one full-state step dict per pair (schema v2 shape, plus
     the v5 areas). full: analyze every snapshot from scratch (no memo) instead of incrementally; the steps are the
     same. smart=False leaves the analyzer's blobs as they are (no merges, no cuts; areas still), for debugging."""
+    an = Analyzer(full, timings, smart)
     try:
-        yield from _steps(steps, {}, None if full else {}, timings, Zoner(smart))
+        for st, snap in steps:
+            yield an.step(st, snap)
     finally:
         gc.unfreeze()
 
-def _steps(steps, cache, memo, timings, zoner):
-    prev_funcs, prev_members = {}, {}      # qual -> (hash, body, lines); blob id -> {qual: lines}
-    prev_files = {}                        # relpath -> text of the last analysed step
-    blobs, edges, areas, stats = [], [], [], {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
-    for st, snap in steps:
+class Analyzer:
+    """The analysis of a session's steps, one at a time: parse cache, memo (incremental analysis), the Zoner and
+    the previous step's functions, blobs and files (for deltas). fork() is a copy to run ahead: analyze() and the
+    Zoner replace what they change rather than write into it (the memo's tables, the previous step's state), so the
+    copy shares the parse cache (keyed by content, never mutated) and the memo's tables and copies the few dicts
+    that are written in place. evict() keeps only the parsed modules of the last snapshot."""
+
+    def __init__(self, full=False, timings=True, smart=True):
+        self.cache, self.memo, self.timings, self.zoner = {}, None if full else {}, timings, Zoner(smart)
+        self.prev_funcs, self.prev_members = {}, {}   # qual -> (hash, body, lines); blob id -> {qual: lines}
+        self.prev_files = {}                          # relpath -> text of the last analysed step
+        self.blobs, self.edges, self.areas = [], [], []
+        self.stats = {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
+
+    def fork(self):
+        a = copy.copy(self)
+        a.memo = dict(self.memo) if self.memo is not None else None
+        a.zoner = copy.copy(self.zoner)
+        a.zoner.cut_memo = dict(self.zoner.cut_memo)
+        return a
+
+    def evict(self):
+        if self.memo is not None:
+            live = {id(h[2]) for h in self.memo.get('texts', {}).values() if h[2] is not None}
+            self.cache = {k: v for k, v in self.cache.items() if id(v) in live}
+
+    def warm(self, snap):
+        """Parse cache and memo from a snapshot (the last analysed one, after a restart): the next step is then
+        analysed incrementally, with the same result as from scratch."""
         try:
-            result = analyze(snap, cache, memo)
+            analyze(snap, self.cache, self.memo)
+        except Exception:
+            pass
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d['cache'], d['memo'] = {}, None if self.memo is None else {}   # rebuilt by warm()
+        return d
+
+    def step(self, st, snap):
+        try:
+            result = analyze(snap, self.cache, self.memo)
         except Exception as e:   # a snapshot the analyzer cannot handle keeps the last good state
             print(f'step {st.idx} ({st.file}): analyze failed: {e!r}', file=sys.stderr)
             result = None
         if result is not None:
-            result = zoner.apply(result)
-            areas = result['areas']
-            blobs, edges = build_state(result, prev_funcs, prev_members, snap, prev_files)
-            prev_funcs = {f['qual']: (f['hash'], result['bodies'][f['qual']], f['lines'])
-                          for b in result['blobs'] for f in b['funcs']}
-            prev_members = {b['id']: {f['qual']: f['lines'] for f in b['funcs']} for b in result['blobs']}
-            prev_files = snap
-            stats = dict(result['stats'])
-            if not timings:
-                stats.update(parse_ms=0, analyze_ms=0)
-            step_blobs = blobs
+            result = self.zoner.apply(result)
+            self.areas = result['areas']
+            self.blobs, self.edges = build_state(result, self.prev_funcs, self.prev_members, snap, self.prev_files)
+            self.prev_funcs = {f['qual']: (f['hash'], result['bodies'][f['qual']], f['lines'])
+                               for b in result['blobs'] for f in b['funcs']}
+            self.prev_members = {b['id']: {f['qual']: f['lines'] for f in b['funcs']} for b in result['blobs']}
+            self.prev_files = snap
+            self.stats = dict(result['stats'])
+            if not self.timings:
+                self.stats.update(parse_ms=0, analyze_ms=0)
+            step_blobs = self.blobs
         else:
-            step_blobs = unchanged(blobs)
+            step_blobs = unchanged(self.blobs)
         # Most of the heap lives for the whole session (parsed modules, memo, last state) and almost nothing a
         # step leaves behind is cyclic, so after each step the young generations are collected and everything
         # alive is frozen out of the cyclic GC's sight; otherwise full collections rescan it every step or two
         # (~100 ms each on a 580-file tree). Refcounting still frees what later steps drop.
         gc.collect(1)
         gc.freeze()
-        yield {'idx': st.idx, 'ts': st.ts, 'tool': st.tool, 'file': st.file, 'said': st.said,
-               'turn': st.turn, 'added': st.added, 'removed': st.removed,
-               **{k: getattr(st, k) for k in ('session', 'agent') if getattr(st, k, '')},
-               **({} if getattr(st, 'applied', True) else {'applied': False}),
-               **({'seeded': True} if getattr(st, 'seeded', False) else {}),
-               **({'author': st.author} if getattr(st, 'session', '') else {}),   # merged / reconciled timelines
-               **({'empty': True} if getattr(st, 'empty', False) else {}),
-               'blobs': step_blobs, 'edges': edges, 'areas': areas, 'stats': stats}
+        return {'idx': st.idx, 'ts': st.ts, 'tool': st.tool, 'file': st.file, 'said': st.said,
+                'turn': st.turn, 'added': st.added, 'removed': st.removed,
+                **{k: getattr(st, k) for k in ('session', 'agent') if getattr(st, k, '')},
+                **({} if getattr(st, 'applied', True) else {'applied': False}),
+                **({'seeded': True} if getattr(st, 'seeded', False) else {}),
+                **({'author': st.author} if getattr(st, 'session', '') else {}),   # merged / reconciled timelines
+                **({'empty': True} if getattr(st, 'empty', False) else {}),
+                'blobs': step_blobs, 'edges': self.edges, 'areas': self.areas, 'stats': self.stats}
 
 def _zero(d):
     """A delta with every count 0, lists empty and state 'same' (the keys it has, in its order)."""
@@ -401,16 +438,31 @@ def main():
     ap.add_argument('--git-reconcile', action='store_true', help='a step per commit of root from the first step up to '
                     'HEAD, setting the snapshot to the commit')
     ap.add_argument('--sessions-out', help='also write the sessions with steps (id, start, end, steps, prompt) as JSON')
+    ap.add_argument('--checkpoint', metavar='STORE', help='build through live.py and leave its store (e.g. live/NAME) '
+                    'for `live.py run NAME` to continue; needs --no-timings (same output)')
     a = ap.parse_args()
     t0 = time.perf_counter()
     inputs = a.session if len(a.session) > 1 else a.session[0]
     files = replay.transcripts(inputs)
-    rs = replay.steps(files, os.path.abspath(a.root or session_root(files[0]) or '.'), seed_git=a.seed_git,
-                     git_reconcile=a.git_reconcile)
-    tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart)
+    if a.checkpoint:
+        if not a.no_timings or a.full or a.v2:
+            ap.error('--checkpoint needs --no-timings and takes no --full / --v2')
+        import live
+        if live.writer_pid(a.checkpoint) is not None:
+            ap.error(f'a live writer runs on {a.checkpoint} (pid {live.writer_pid(a.checkpoint)}): stop it first')
+        w = live.Writer(a.checkpoint, a.session, a.root, a.seed_git, a.git_reconcile, not a.no_smart)
+        w.cold(time.time())
+        tl = json.loads(live.export_text(a.checkpoint))
+        rs = None
+    else:
+        rs = replay.steps(files, os.path.abspath(a.root or session_root(files[0]) or '.'), seed_git=a.seed_git,
+                         git_reconcile=a.git_reconcile)
+        tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart)
     if a.sessions_out:
         with open(a.sessions_out, 'w', encoding='utf-8') as fh:
-            json.dump(tl.get('sessions') or replay.session_list(files, rs), fh, ensure_ascii=False, indent=1)
+            json.dump(tl.get('sessions') or replay.session_list(files, rs if rs is not None else [
+                replay.Step(0, '', '', '', '', 0, session=s.get('session', '')) for s in tl['steps']]),
+                fh, ensure_ascii=False, indent=1)
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     with open(a.out, 'w', encoding='utf-8') as fh:
         json.dump(tl, fh, ensure_ascii=False, separators=(',', ':'))

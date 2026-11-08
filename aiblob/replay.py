@@ -50,7 +50,7 @@ Missing bases, kept consistent:
   between the snapshot and the commit; a commit that matches the snapshot is kept as a marker with `empty`.
   Edits after it apply on the committed text, so drift from changes the transcripts never recorded ends there.
 """
-import collections, functools, glob, heapq, itertools, json, os, re, subprocess, sys
+import collections, copy, functools, glob, heapq, json, os, re, subprocess, sys
 from dataclasses import dataclass, field, asdict
 
 @dataclass
@@ -251,7 +251,10 @@ class OpReader:
     tool_result sets its ok / orig / spatch; a later result of the call sets them again (the last one wins, as in a
     read of the whole file). A call is also over when a later assistant message of the transcript begins (Claude Code
     answers every call of a message before it sends the next one; true of all 10,637 results in the aigource
-    transcripts) or at close(); a result that still comes after that is counted in `late`."""
+    transcripts) or at close(); a result that still comes after that is counted in `late`.
+    evict() drops what only a call's own later results would use (its ops, originalFile, structuredPatch) once the
+    call is over and its ops are applied; results, calls and per-call op counts stay, so a stray second result still
+    makes the ops a whole-file read would."""
 
     def __init__(self, root=None, sidechain=False):
         self.root, self.sidechain = root, sidechain
@@ -260,27 +263,35 @@ class OpReader:
         self.orig = {}        # Edit / Write tool_use_id -> the file's text before it (toolUseResult.originalFile)
         self.spatch = {}      # Edit tool_use_id -> its recorded hunks (toolUseResult.structuredPatch)
         self.calls = {}       # Bash tool_use_id -> (turn, box, ts, paths its heredocs wrote, cmd, cwd)
-        self.by_tid = {}      # tool_use_id -> its ops
+        self.by_tid = {}      # tool_use_id -> its ops (until evict())
+        self.count = {}       # tool_use_id -> how many ops it made
         self.open = {}        # tool_use_id -> its message id, while the call may still get its result
+        self.closed = set()   # calls close() ended without a result
         self.late = 0
         self.n = 0
+        self.changes = 0      # ops made, results taken, calls ended: what can change the steps to come
 
     def _add(self, op, out):
         tid = op['tid']
-        ops = self.by_tid.setdefault(tid, [])
-        op['id'] = (tid, op['op'], len(ops))
+        self.changes += 1
+        k = self.count.get(tid, 0)
+        self.count[tid] = k + 1
+        op['id'] = (tid, op['op'], k)
         op['i'], self.n = self.n, self.n + 1
         op['ok'] = not self.results.get(tid)
-        if op['op'] == 'edit' and not ops:
+        if op['op'] == 'edit' and not k:
             op['orig'] = self.orig.get(tid)       # before a MultiEdit's first sub-edit only
             if op['tool'] == 'Edit':
                 op['spatch'] = self.spatch.get(tid)
-        ops.append(op)
+        self.by_tid.setdefault(tid, []).append(op)
         out.append(op)
 
     def _result(self, tid):
-        if tid not in self.open and self.by_tid.get(tid):
-            self.late += 1                        # the call was taken as over: its ops may be applied already
+        self.changes += 1
+        if tid not in self.open and self.count.get(tid) and any(op.get('done') for op in self.by_tid.get(tid, ({'done': 1},))):
+            self.late += 1                        # the call was taken as over and its ops applied
+        elif tid in self.closed:
+            self.late += 1                        # its transcript was closed (live: idle) while the call ran
         self.open.pop(tid, None)
         for op in self.by_tid.get(tid, ()):
             op['ok'] = not self.results.get(tid)
@@ -294,7 +305,21 @@ class OpReader:
         return [(self.calls[t][2], self.calls[t][4], self.calls[t][5]) for t in self.open if t in self.calls]
 
     def close(self):
+        self.closed.update(self.open)
         self.open.clear()
+
+    def fork(self):
+        """A copy for Engine.fork(): its calls are over (it is never fed); the tables are shared."""
+        c = copy.copy(self)
+        c.open = {}
+        return c
+
+    def evict(self):
+        for tid, ops in list(self.by_tid.items()):
+            if tid not in self.open and all(op.get('done') for op in ops):
+                del self.by_tid[tid]
+                self.orig.pop(tid, None)
+                self.spatch.pop(tid, None)
 
     def feed(self, o):
         """One record -> the ops it adds, in order."""
@@ -339,6 +364,7 @@ class OpReader:
         mid = (o.get('message') or {}).get('id')
         for tid in [t for t, m in self.open.items() if m != mid]:
             del self.open[tid]                # a later message: every call of the earlier ones was answered
+            self.changes += 1
         root = self.root
         for b in (o.get('message') or {}).get('content') or []:
             if b.get('type') == 'text' and b.get('text', '').strip():
@@ -392,6 +418,14 @@ class Lines:
     def close(self):
         o, self.buf = _record(self.buf + self.dec.decode(b'', final=True)), ''
         return [o] if o is not None else []
+
+    def __getstate__(self):
+        return {'buf': self.buf, 'dec': self.dec.getstate()}
+
+    def __setstate__(self, d):
+        self.__init__()
+        self.buf = d['buf']
+        self.dec.setstate(d['dec'])
 
 def _record(line):
     line = line.strip()
@@ -588,22 +622,96 @@ def git_commits(root, first, last):
             out.append({'ts': ts, 'sha': sha, 'subject': subject})
     return out
 
-class Merger:
-    """Ops in their final order -> steps: the snapshot each leaves, its history and what Reads showed of it, and
-    the git steps' trees. root is set before the first apply()."""
+HIST_KEEP = 16          # texts per file kept for retries on an earlier text (aigource: retries fit 1-2 back)
+_SIG = ('op', 'path', 'ts', 'tool', 'text', 'old', 'new', 'rall', 'ok', 'orig', 'spatch', 'hunks', 'created', 'deleted',
+        'observer', 'blind', 'turn', 'src', 'tid', 'session', 'agent', 'sha')   # what Merger.apply() reads of an op
 
-    def __init__(self, root=None, seed_git=False, many=False):
-        self.root, self.seed_git, self.many = root, seed_git, many
+class Merger:
+    """Ops in their final order -> steps: the snapshot each leaves, its history (the last HIST_KEEP texts per file)
+    and what Reads showed of it, and the git steps' trees. root is set before the first apply().
+    keep: keep every Step in `out` (batch); else only the count `n`. rest: with seed_git, the untouched files to put
+    into every snapshot before the first git step as steps are made (live: frozen at its cold build); None: steps()
+    puts them in at the end (Engine.finish())."""
+
+    def __init__(self, root=None, seed_git=False, many=False, keep=True, rest=None):
+        self.root, self.seed_git, self.many, self.keep, self.rest = root, seed_git, many, keep, rest
         self.tracked = None   # files the last git step's commit tracked
-        self.snap, self.out, self.turns = {}, [], {}
+        self.snap, self.out, self.turns, self.n = {}, [], {}, 0
         self.hist = {}        # relpath -> the texts it had, oldest first
         self.seen = {}        # relpath -> (its text as a whole-file Read or a blind report last showed it, the snapshot's then)
+        self.git_seen = False
+        self.spent = None     # a fork's own record of the text boxes it spent (it never writes into shared boxes)
+        # A run ahead (live.py's provisional tail) leaves `trace`: per op it applied, (signature, step, state after).
+        # Given as `memo` to the next fork, apply() takes the recorded step and state while the ops match instead of
+        # applying them again; the committed merger only consumes the front it applied itself (and drops the memo
+        # when it applied something else), so the memo always starts at the committed point.
+        self.memo, self.trace, self._pending = None, None, None
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d['memo'] = d['trace'] = d['_pending'] = None
+        return d
+
+    def fork(self):
+        if self._pending is not None:
+            self._restore()
+        m = copy.copy(self)
+        m.snap, m.turns, m.seen, m.out = dict(self.snap), dict(self.turns), dict(self.seen), []
+        m.hist = {k: list(v) for k, v in self.hist.items()}
+        m.spent = dict(self.spent or {})
+        m.memo = m.trace = m._pending = None
+        return m
+
+    def _restore(self):
+        st, self._pending = self._pending, None
+        memo, trace = self.memo, self.trace
+        self.__dict__.update(st.fork().__dict__)
+        self.memo, self.trace = memo, trace
+
+    def _sig(self, op):
+        box = op['said']
+        spent = (self._pending or self).spent           # (a replayed op's state is taken lazily)
+        by = box.get('by', spent.get(id(box)) if spent else None)
+        return tuple(op.get(k) for k in _SIG) + (id(box), box.get('said'), by)
+
+    def apply(self, op):
+        """One op -> its Step, or None when it makes none (see `memo` for a fork that reruns a run ahead)."""
+        sig = self._sig(op) if self.memo is not None or self.trace is not None else None
+        if self.memo is not None:
+            if self.memo and self.memo[0][0] == sig:
+                entry = self.memo.popleft()
+                if self.trace is not None:          # a fork: the recorded result
+                    self._pending = entry[2]
+                    self.trace.append(entry)
+                    return entry[1]
+            else:
+                self.memo = None
+        if self._pending is not None:
+            self._restore()
+        st = self._apply(op)
+        if self.trace is not None:
+            self.trace.append((sig, st, self.fork()))
+        return st
+
+    def _keep(self, rel, text):
+        h = self.hist.setdefault(rel, [])
+        h.append(text)
+        if len(h) > HIST_KEEP:
+            del h[0]
+
+    def _spend(self, box, tid):
+        """Whether the call tid is the first with a step to say box's text."""
+        if self.spent is None:
+            return box.setdefault('by', tid) == tid
+        by = box.get('by', self.spent.get(id(box)))
+        if by is None:
+            self.spent[id(box)] = by = tid
+        return by == tid
 
     def under(self, p):
         return not self.root or os.path.abspath(p).startswith(os.path.abspath(self.root) + os.sep)
 
-    def apply(self, op):
-        """One op -> its Step, or None when it makes none."""
+    def _apply(self, op):
         root, snap, hist, seen = self.root, self.snap, self.hist, self.seen
         if op['op'] == 'git':
             tree = git_tree(root, op['sha'])
@@ -622,10 +730,10 @@ class Merger:
                     snap.pop(rel)
                 else:
                     snap[rel] = after
-                    hist.setdefault(rel, []).append(after)
+                    self._keep(rel, after)
             self.tracked = set(tree)
             turn = self.turns.setdefault(('git', op['sha']), len(self.turns))
-            return self._step(Step(len(self.out), op['ts'], 'git', '', op['said']['said'], turn, a, r, True, dict(snap),
+            return self._step(Step(self.n, op['ts'], 'git', '', op['said']['said'], turn, a, r, True, dict(snap),
                                    'git', 'git', True, False, 'git', not touched))
         p = op['path']
         if not self.under(p):
@@ -693,16 +801,21 @@ class Merger:
                 snap.pop(rel, None)
             else:
                 snap[rel] = after
-                hist.setdefault(rel, []).append(after)
+                self._keep(rel, after)
         a, r = _diff_counts(before or '', after or '') if applied else (0, 0)
         turn = op['turn'] if not self.many else self.turns.setdefault((op['src'], op['turn']), len(self.turns))
         box = op['said']                     # spent by the first call with a step: later calls of the text say nothing
-        said = box['said'] if box.setdefault('by', op['tid']) == op['tid'] else ''
-        return self._step(Step(len(self.out), op['ts'], op['tool'], rel, said, turn, a, r, op['ok'], dict(snap),
+        said = box['said'] if self._spend(box, op['tid']) else ''
+        return self._step(Step(self.n, op['ts'], op['tool'], rel, said, turn, a, r, op['ok'], dict(snap),
                                op['session'], op['agent'], applied, seeded and applied))
 
     def _step(self, st):
-        self.out.append(st)
+        if self.rest is not None and not self.git_seen:
+            st.content = {**self.rest, **st.content}
+        self.git_seen = self.git_seen or st.author == 'git'
+        self.n += 1
+        if self.keep:
+            self.out.append(st)
         return st
 
 def _order(op):
@@ -713,8 +826,10 @@ class Engine:
     """Transcripts' records, fed as they are written -> steps, the same ones whatever the chunking (steps() feeds
     everything, then finish()).
 
-    Each transcript has a number n (its place in transcripts()), its reader (OpReader) and session / agent tags.
-    An op's key is (ts, 0, n, its number in the transcript). Ops then pass three stages, each in order:
+    Each transcript has a number n (anything sortable: its place in transcripts() order), its reader (OpReader) and
+    session / agent tags, read when its first op is applied (retag() rereads them until then: a subagent's
+    meta.json is written after its transcript starts). An op's key is (ts, 0, n, its number in the transcript). Ops
+    then pass three stages, each in order:
     1. Copies (`fresh`, by key): a tool call copied into several transcripts counts once, the first by key; the
        dropped copy's text box is the kept one's.
     2. Credit (`queue`, by key): a Bash report is credited (_credit) against the ops of its file; it may move later
@@ -727,48 +842,78 @@ class Engine:
     - stage 2 credits a report x (window t0..t1, rank rx) only when no Bash call of another transcript could still
       take its credit: neither a report not through stage 1 (exact test: it starts by t1 and ranks higher, or the
       same with a shorter window), nor a call still running that started by t1 (its rank is (names, under) with
-      `under` known from its command and cwd and `names` not yet, and its window is at least start..w);
+      `under` known from its command and cwd and `names` not yet, so at most (True, under); its window is at least
+      start..w);
     - stage 3 applies the first op by _order() when its ts < w, its call is not held (OpReader: an Edit / Write /
       heredoc waits for its tool_result), and no op still in stage 2 sorts before it. A git commit also waits until
-      every op at or before its time is credited: it is a step when an op under root (not a Read) comes at or before it
-      (steps() takes commits from the first such op on).
-    `late` counts ops that broke the promise (ts below an earlier w and not a dropped copy) and results that came
-    after their call was taken as over; with 0 the steps equal a batch run's."""
+      every op at or before its time is credited: it is a step when an op under root (not a Read) comes at or before
+      it (steps() takes commits from the first such op on).
+    `late` counts what broke the promise (an op with ts below an earlier w that is not a dropped copy, a commit
+    authored before an earlier w, tags that changed after the transcript's first step, results that came after
+    their call was taken as over); with 0 the steps equal a batch run's.
+    fork() is a copy to run ahead (fork().finish() is what a batch run would make if the transcripts ended now),
+    evict(w) drops what no op still to come can use."""
 
-    def __init__(self, root=None, seed_git=False, git_reconcile=False, many=False):
+    def __init__(self, root=None, seed_git=False, git_reconcile=False, many=False, keep=True, rest=None):
         self.root, self.git_reconcile = root, git_reconcile
-        self.merger = Merger(root, seed_git, many)
+        self.merger = Merger(root, seed_git, many, keep, rest)
         self.many = many
-        self.readers, self.tags, self.closed = {}, {}, set()
+        self.readers, self.tags, self.paths, self.closed, self.started = {}, {}, {}, set(), set()
         self.fresh, self.queue, self.ready = [], collections.deque(), []
-        self.first, self.boxes = {}, {}     # op id -> the op kept; id(box) -> (box, the box it stands for)
+        self.first, self.boxes = {}, {}     # op id -> the op kept (once applied: its key and box); id(box) -> (box, the box it stands for)
         self.by = {}                        # path -> its ops through stage 1, no Reads (the credit groups)
-        self.commits = None
+        self.commits = None                 # shas of the git commits taken
         self.first_ts = None                # ts of the first op under root (not a Read) applied
-        self.w, self._late = '', 0
-        self.seq = itertools.count()
+        self.w, self._late, self.seq = '', 0, 0
+        self.version = 0                    # counts what can change fork().finish(): ops, results, ends, tags, commits
+
+    def __getstate__(self):
+        d = dict(self.__dict__)
+        d['boxes'] = list(self.boxes.values())          # keyed by id(): rebuilt on load
+        return d
+
+    def __setstate__(self, d):
+        d['boxes'] = {id(b): (b, t) for b, t in d['boxes']}
+        self.__dict__.update(d)
 
     @property
     def late(self):
         return self._late + sum(r.late for r in self.readers.values())
 
+    def _push(self, heap, key, op):
+        self.seq += 1
+        heapq.heappush(heap, (key, self.seq, op))
+
     def add(self, n, path):
         """Transcript number n (its place in transcripts()) at path."""
         root = self.root or next((self.readers[m].root for m in sorted(self.readers) if m < n and self.readers[m].root), None)
         self.readers[n] = OpReader(root, sidechain=is_subagent(path))
+        self.paths[n] = path
         self.tags[n] = who(path) if self.many else ('', '')
+
+    def retag(self, n):
+        """Read transcript n's tags again (its subagent meta.json may have come); after its first step they stay."""
+        tags = who(self.paths[n]) if self.many else ('', '')
+        if tags != self.tags[n]:
+            if n in self.started:
+                self._late += 1
+            else:
+                self.tags[n] = tags
+                self.version += 1
 
     def feed(self, n, o):
         """One record of transcript n, in file order."""
-        session, agent = self.tags[n]
-        for op in self.readers[n].feed(o):
-            op.update(key=(op['ts'], 0, n, op['i']), session=session, agent=agent, src=n)
-            heapq.heappush(self.fresh, (op['key'], next(self.seq), op))
+        r = self.readers[n]
+        before = r.changes
+        for op in r.feed(o):
+            op.update(key=(op['ts'], 0, n, op['i']), src=n)
+            self._push(self.fresh, op['key'], op)
+        self.version += r.changes != before
 
     def close(self, n):
         """Transcript n has ended: its calls without a result never get one."""
         self.readers[n].close()
-        self.closed.add(n)
+        self.closed.add(n)      # (no version change: a fork already takes every call as over, so its tail is the same)
 
     def _resolve(self):
         """root: the given one, else the first transcript's (in order) whose assistant records name a cwd."""
@@ -782,31 +927,44 @@ class Engine:
                 return False
         return False
 
+    def add_commits(self, commits):
+        """Git commits (git_commits()) not taken yet become git ops; steps() reads them once, live polls."""
+        root = self.root
+        for c in commits:
+            if c['sha'] in self.commits:
+                continue
+            self.commits.add(c['sha'])
+            self.version += 1
+            if c['ts'] < self.w:
+                self._late += 1
+            op = {'ts': c['ts'], 'tool': 'git', 'path': os.path.join(root, ''), 'op': 'git', 'sha': c['sha'],
+                  'turn': c['sha'], 'said': {'said': c['subject']}, 'ok': True, 'session': 'git', 'agent': 'git',
+                  'src': 'git', 'key': (c['ts'], -1, -1, 0)}
+            self._push(self.ready, _order(op), op)
+
     def drain(self, w):
         """The steps that can be made now that every op still to come has ts >= w."""
         if not self._resolve() and len(self.closed) < len(self.readers):
             return []
         root, out = self.root, []
         if self.git_reconcile and root and self.commits is None:
-            self.commits = git_commits(root, '', '')
-            for c in self.commits:
-                op = {'ts': c['ts'], 'tool': 'git', 'path': os.path.join(root, ''), 'op': 'git', 'sha': c['sha'],
-                      'turn': c['sha'], 'said': {'said': c['subject']}, 'ok': True, 'session': 'git', 'agent': 'git',
-                      'src': 'git', 'key': (c['ts'], -1, -1, 0)}
-                heapq.heappush(self.ready, (_order(op), next(self.seq), op))
+            self.commits = set()
+            self.add_commits(git_commits(root, '', ''))
         while self.fresh and self.fresh[0][0][0] < w:                         # 1. copies
             _, _, op = heapq.heappop(self.fresh)
             if op['id'][0] is not None:
                 kept = self.first.setdefault(op['id'], op)
                 if kept is not op:
-                    if kept['key'] > op['key']:
+                    if kept['key0'] > op['key']:       # (its key as read: credit may have moved it since)
                         self._late += 1
                     # a resumed session's file starts with copies of the earlier one's records: once each; the
                     # copy's text box is the original's, spent together
                     self.boxes[id(op['said'])] = (op['said'], kept['said'])
+                    op['done'] = True
                     continue
             if op['key'][0] < self.w:
                 self._late += 1
+            op['key0'] = op['key']
             if op['op'] == 'patch':
                 op['rank'] = _rank(op, root)
                 if op['rank'] == (False, False):
@@ -822,7 +980,7 @@ class Engine:
                     break
                 _credit(x, self.by[x['path']])
             self.queue.popleft()
-            heapq.heappush(self.ready, (_order(x), next(self.seq), x))
+            self._push(self.ready, _order(x), x)
         while self.ready:                                                     # 3. apply
             k, _, op = self.ready[0]
             if k[0] >= w or self.queue and _order(self.queue[0]) < k:
@@ -842,9 +1000,14 @@ class Engine:
                 if self.first_ts is None and op['op'] != 'see' and self.merger.under(op['path']):
                     self.first_ts = op['ts']
                 box, n = op['said'], 0
+                if self.first.get(op['id']) is op:
+                    self.first[op['id']] = {'key0': op['key0'], 'said': box}    # all a later copy needs
                 while id(box) in self.boxes and n < len(self.boxes):
                     box, n = self.boxes[id(box)][1], n + 1
                 op['said'] = box
+                op['session'], op['agent'] = self.tags[op['src']]
+                self.started.add(op['src'])
+            op['done'] = True
             st = self.merger.apply(op)
             if st is not None:
                 out.append(st)
@@ -859,26 +1022,69 @@ class Engine:
                 ry = _rank(y, self.root)
                 if ry != (False, False) and (ry > rx or ry == rx and _span(y['start'], y['ts']) < _span(t0, t1)):
                     return True
+        iso = _iso(w)
         for m, reader in self.readers.items():
             if m == x['src']:
                 continue
             for y0, cmd, cwd in reader.inflight():
                 if not y0 or y0 > t1:
                     continue
-                under = _rank({'cmd': cmd, 'cwd': cwd, 'path': x['path']}, self.root)[1]
-                ranks = {(True, under), (False, under)} - {(False, False)}
-                if any(ry > rx for ry in ranks) or rx in ranks and _span(y0, w) < _span(t0, t1):
+                # its rank will be (names, under): (True, under) at best, which a report naming the file would also
+                # have; it can win on a shorter window only while start..w is shorter than x's (w: not ISO = no end)
+                top = (True, _rank({'cmd': cmd, 'cwd': cwd, 'path': x['path']}, self.root)[1])
+                if top > rx or top == rx and (not iso or _span(y0, w) < _span(t0, t1)):
                     return True
         return False
 
+    def fork(self):
+        """A copy to run ahead; this engine is left as it was. The ops still to apply are copied (stages 1-3 write
+        into them), the applied ones, text boxes (the fork's Merger keeps its own record of what it spent) and the
+        readers' tables are shared; the copy's readers have no calls running."""
+        f = copy.copy(self)
+        pend = [op for _, _, op in self.fresh] + list(self.queue) + [op for _, _, op in self.ready]
+        cp = {id(op): dict(op) for op in pend}
+        f.fresh = [(k, s, cp[id(op)]) for k, s, op in self.fresh]
+        f.ready = [(k, s, cp[id(op)]) for k, s, op in self.ready]
+        f.queue = collections.deque(cp[id(op)] for op in self.queue)
+        f.first = dict(self.first)
+        for op in pend:
+            if op['op'] != 'git' and self.first.get(op['id']) is op:
+                f.first[op['id']] = cp[id(op)]
+        f.by = dict(self.by)
+        for p in {op['path'] for op in pend}:
+            if p in self.by:
+                f.by[p] = [cp.get(id(y), y) for y in self.by[p]]
+        f.boxes, f.tags, f.closed, f.started = dict(self.boxes), dict(self.tags), set(self.closed), set(self.started)
+        f.commits = set(self.commits) if self.commits is not None else None
+        f.readers = {n: r.fork() for n, r in self.readers.items()}
+        f.merger = self.merger.fork()
+        return f
+
+    def evict(self, w):
+        """Drop the applied ops no Bash report still to be credited can look at: a report's window starts at its
+        call, which is still running, still in stages 1-2, or not made yet (then at or after w); an applied op
+        counts for it only when its time (a report: its end) is at or after that start. Then the readers' tables
+        of finished calls."""
+        floor = min([w] + [y0 for r in self.readers.values() for y0, _, _ in r.inflight() if y0]
+                    + [op['start'] for _, _, op in self.fresh if op.get('start')]
+                    + [op['start'] for op in self.queue if op.get('start')])
+        for p, group in list(self.by.items()):
+            keep = [y for y in group if not y.get('done') or y['ts'] >= floor]
+            if not keep:
+                del self.by[p]
+            elif len(keep) < len(group):
+                self.by[p] = keep
+        for r in self.readers.values():
+            r.evict()
+
     def finish(self):
-        """Every transcript has ended: the rest of the steps. With seed_git, the files no step touches are then put
-        into every step's snapshot up to the first git step (steps())."""
+        """Every transcript has ended: the rest of the steps. With seed_git and no frozen rest, the files no step
+        touches are then put into every step's snapshot up to the first git step (steps())."""
         for n in self.readers:
             self.close(n)
         out = self.drain('~')               # after every ISO timestamp
         m = self.merger
-        if m.seed_git and self.root and m.out:
+        if m.seed_git and m.rest is None and self.root and m.out:
             rest = untouched(self.root, m.out[-1].ts, {st.file for st in m.out})
             for st in m.out:
                 if st.author == 'git':
@@ -886,11 +1092,19 @@ class Engine:
                 st.content = {**rest, **st.content}
         return out
 
-def steps(path, root=None, seed_git=False, git_reconcile=False):
-    """path: a transcript, a directory or a list of them (see transcripts()) -> [Step], merged by timestamp."""
+def _iso(w):
+    try:
+        _span(w, w)
+        return True
+    except (TypeError, ValueError):
+        return False
+
+def steps(path, root=None, seed_git=False, git_reconcile=False, rest=None):
+    """path: a transcript, a directory or a list of them (see transcripts()) -> [Step], merged by timestamp.
+    rest: with seed_git, the untouched files to use instead of computing them from the last step (live's frozen set)."""
     files = transcripts(path)
     # merged (or with git steps): steps carry session and agent
-    eng = Engine(root, seed_git, git_reconcile, many=len(files) > 1 or git_reconcile)
+    eng = Engine(root, seed_git, git_reconcile, many=len(files) > 1 or git_reconcile, rest=rest)
     for n, f in enumerate(files):
         eng.add(n, f)
         for o in load_lines(f):

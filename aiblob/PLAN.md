@@ -311,3 +311,75 @@ scratchpad live/ (measure.py, order.py, sim.py, llm.py and their logs).
 - Open for phase 2: the watermark lag (the 3-38 s late writes would break exactness at now-2.5 s); transcript
   numbers n of files that appear later (ties and copies sort by n); `many` and subagent tags (meta.json) fixed at
   add(); seed_git's untouched() needs the last step; git commits are read once.
+
+## Live mode, phase 2 outcome (2026-11-08): live.py writer
+Design in live.py's docstring (store, committed vs provisional, liveness, numbering, memory). In short:
+- Committed: replay.Engine drained at w = now - 60 s, analysed (timeline.Analyzer, the old _steps as a class) and
+  compacted, appended to live/NAME/steps.ndjson; exactly timeline.py --no-timings' lines, never changed. A broken
+  promise (Engine.late), a replaced or cut transcript, a new transcript sorting before a followed one, or a second
+  transcript where `many` was off rebuilds the store from scratch.
+- Provisional tail (decision 4b): Engine.fork().finish() = the batch build if the transcripts ended now. Fork cost:
+  pending ops copied, applied ops / boxes / reader tables shared (the fork's Merger records what it spends instead of
+  writing into shared boxes); Merger.fork copies snapshot, history lists, seen, turns; Analyzer.fork shares the parse
+  cache and memo tables (analyze() never writes into them) and copies the memo dict and the Zoner's cut memo;
+  Compactor is copied shallowly. Redone only when Engine.version moved; the fork's Merger replays the previous run's
+  applies while ops match (Merger.memo) and tail analyses are reused while the steps before match; a committed step
+  the tail foresaw is adopted with its analysis.
+- Liveness: open calls of a transcript close after --idle (600 s) without growth when its session is not running
+  (~/.claude/sessions/<pid>.json); an Edit waiting on a permission prompt holds every later step (the tail shows
+  them). Late meta.json: tags read when the transcript's first step is made. Numbering: (input, first timestamp,
+  place among ties, subagent name) = transcripts() order; a resumed file still writing its copies is followed once it
+  has a record of its own. Git commits polled every 10 s; --seed-git's untouched files frozen at the cold build
+  (rest.json; verify uses them).
+- Memory: Engine.evict (applied ops no report still to come can see), OpReader.evict (finished calls' ops,
+  originalFile, structuredPatch), Engine.first keeps (key as read, box) per applied op, HIST_KEEP = 16 texts per file
+  (aigource retries fit 1-2 back), parse cache trimmed to the last snapshot, gc unfreeze + collect every 10 min.
+- Numbers (aigource, frozen corpus written record by record in write order under a simulated clock, live_sim.py in
+  the scratchpad): 1,270 steps committed, 0 rebuilds, late 0, export == batch build of the same files byte for byte;
+  10,567 tail recomputes: fork p50 0.5 ms / p99 1.4 ms, whole tail p50 1.1 ms, p90 7 ms, p99 394 ms, max 1.4 s;
+  tail length p50 0, p90 2, p99 8, max 18; writer RSS <= 321 MB (batch build: 630 MB); checkpoint 37.8 MB written in
+  0.3 s; warm restart (load + analyze of the last snapshot) 2.3 s, 131 MB; two warm restarts mid-run (at 355 and
+  1,060 steps: 7.6 / 29.5 MB checkpoints, 0.7 / 2.0 s to start) changed nothing. Live fuzz (the review's random
+  sessions, 400 seeds, batch checked at every tick, 2 restarts each): 0 failures. Capped batch rebuild (HIST_KEEP) of the
+  aigource map byte-identical, replay 10.8 s (was ~20 s: fewer retries on old texts).
+- Tests: tests/test_live.py (Flask, js-mini, c-mini, mixed, racing, git seed + reconcile with a commit made while
+  live, late meta, many flip, fixture D numbering, idle close, non-ISO w, timeline.py --checkpoint, resumed copy of a
+  moved report, a failing Write the tail showed applied, tracemalloc over 2,000 steps); every tick checks committed
+  never changes and committed + tail == batch; restarts at random ticks. tests/test_chunking.py: fixtures killing the
+  review's surviving mutants (fresh rank, root wait, Read at a commit's second); late == 0 for all-at-once.
+- Open: a resumed copy that sorts before its original (its own first record older than the original's next, not
+  seen in real resumes) costs a rebuild; the 60 s lag is a choice (phase 0's worst late write: 38 s).
+- Review round (phase 2 verifier, REQUEST_CHANGES, 8 defects), all fixed with a test each: a checkpoint is written
+  only after a tick that ended (no `finally` checkpoint past unwritten steps); every git poll checks that each commit
+  taken is still in the history (amend inside the lag, reset, rebase -> rebuild); a result for a call that was open
+  when its transcript was closed is late (rebuild; also covers eviction changing the tail); transcripts are counted
+  as transcripts() counts them (timestamp-less and empty ones turn `many` on, root from its first); live.pid holds
+  `pid start-time` (stop / run / timeline.py --checkpoint check it); a transcript can be idle-closed again; the
+  checkpoint's JSON header (version, code, flags, steps) is checked before unpickling, any load error means a cold
+  build; steps.ndjson is read only up to its last newline, and a half-written last line is cut on restart. Also
+  found: the Merger memo's signature read the spent state before a lazily replayed op's state was taken (only lost
+  hits); and, once waiting copies counted for `many`, a cold build could number a resumed file mid-copy first and
+  keep that order after the copy got a record of its own (late records, rebuild loops). Now a cold build waits for
+  a newer file that holds only another's records, tie groups with a member that has nothing of its own are checked
+  again whenever one grows (a flip rebuilds), and new members of a tie group go after the numbered ones or rebuild. Mutants: 51 (the review's 42 plus 9 for this round) against test_live + test_chunking; the survivors are
+  equivalent (shared memo / cut memo of the analyzer are caches whose content does not change a result; `by` in
+  the op signature is implied by the replayed prefix).
+- Review round 2 (2 blockers): a writer is unclean from its creation until start() (warm or cold) has ended, so a
+  ^C in the first or a --fresh cold build leaves no checkpoint (end to end: SIGINT at 151 of 399 steps, the rerun
+  builds cold and verifies); a new transcript waits as a copy in progress only when it holds nothing but records of
+  a file older than it on disk (a followed file no longer counts by itself: in a resume chain the middle file was
+  left waiting). Tests' Feed now gives each written file its simulated time as mtime (all files written within one
+  clock tick had tied mtimes, which hid the chain case), follow() asserts every waiting file copies an older one
+  and that none waits at the end, and the resume scenarios (chain, two resumes) run with a cold build at every
+  point of their write order. An Analyzer
+  fork is also tested directly: run 25 steps ahead (through a regroup and a cut), the parent's Zoner, cut memo, memo
+  and output equal an analyzer never forked (kills sharing any of them; only `by` in the op signature stays an
+  equivalent mutant).
+- Review round 3 (1 blocker): the "waits as a copy" rule depended on mtimes (touch, an untimed cost-state record
+  appended at exit, cp, clock skew could leave an original waiting for good). live.py now uses no mtime at all, as
+  transcripts() uses none: a cold build numbers every transcript in transcripts() order (a resume found mid-copy is
+  then numbered first, and its next records cost one rebuild); afterwards a new transcript holding only records of
+  a followed one waits only while this writer sees it grow (--settle 60 s), and a rebuild carries over what it saw
+  growing; idle time counts from when the writer found a file; subagent tags are reread by content. Tests: the
+  review's touch / untimed / skew / cp / cp -p cases, cold, following and following with `many` on; Feed can write
+  random mtimes (resume scenarios at every cold-start point run with both); livefuzz uses random mtimes.

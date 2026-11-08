@@ -35,6 +35,18 @@ the default; an added or removed function counts whole): the new version gets a 
 (a `--retry-failed` run can end with a label or so more than a clean run); in the whole-timeline mode, versions
 that would keep a label whose ask failed stay unlabelled until a later run labels it.
 
+Live map (live.py; no page or HTTP yet): it follows the transcripts as they are written and keeps a store in
+live/NAME/: committed steps (steps.ndjson, exactly as a batch build writes them, never changed) and a provisional tail
+(provisional.json: what a batch build would add if the transcripts ended now), with a checkpoint for warm restarts:
+
+```
+.venv/bin/python live.py run aigource $P $P-aigource --root ../aigource --seed-git --git-reconcile &   # or make live
+.venv/bin/python live.py export aigource -o /tmp/t.json   # committed + tail == timeline.py --no-timings
+.venv/bin/python live.py verify aigource                  # a batch build compared with the store
+.venv/bin/python live.py stop aigource                    # SIGTERM by the pid in live/aigource/live.pid
+.venv/bin/python timeline.py ... --no-timings --checkpoint live/aigource   # a batch build live then continues
+```
+
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,
 remembered per browser, default off): blobs grouped into areas above the blob map; click or wheel into an area,

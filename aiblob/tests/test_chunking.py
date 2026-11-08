@@ -110,7 +110,9 @@ def _all_at_once(path, root, seed_git, git_reconcile):
     for n, rs in enumerate(recs):
         for o in rs:
             eng.feed(n, o)
-    return eng.finish()
+    out = eng.finish()
+    assert eng.late == 0
+    return out
 
 
 def _dump(steps):
@@ -334,6 +336,66 @@ def test_a_running_call_that_can_only_win_on_a_shorter_window_holds_a_report_no_
             when[s.ts] = recs[n][pos[n] - 1].get('timestamp')
     # B, running since 4, can no longer be shorter than A's 4 minutes once nothing before 8 is to come: after C's 7
     assert when[ts(5)] == ts(7)
+
+
+def test_a_report_waits_for_a_higher_ranked_report_already_read(tmp_path):
+    """B's call names a.py (top rank) and ran longer than A's (0:30 -> 7 against 1 -> 5): it still takes the credit.
+    Fed transcript by transcript, B's report is read while C's prompt at 6 is not, so A's report could be credited
+    before B's is through stage 1; it must wait for it."""
+    proj = tmp_path / 'proj'
+    hunk = {'oldStart': 1, 'lines': [' a = 1', '+b = 2']}
+    write_lines(proj / 'aaaaaaaa-a.jsonl', [
+        msg('user', 'go', ts=ts(0)),
+        msg('assistant', [tool('w', 'Write', file_path=f'{ROOT}/a.py', content='a = 1\n')], ts=ts(0, 10)),
+        dict(result('w'), timestamp=ts(0, 11)),
+        msg('assistant', [tool('xa', 'Bash', command='python3 one.py')], ts=ts(1)),
+        bash_result('xa', ts(5), {'filePath': f'{ROOT}/a.py', 'hunks': [hunk]})])
+    write_lines(proj / 'bbbbbbbb-b.jsonl', [
+        msg('user', 'go', ts=ts(0, 20)),
+        msg('assistant', [tool('yb', 'Bash', command='sed -i 2ib=2 a.py && make')], ts=ts(0, 30)),
+        bash_result('yb', ts(7), {'filePath': f'{ROOT}/a.py', 'hunks': [hunk]})])
+    write_lines(proj / 'cccccccc-c.jsonl', [msg('user', 'go', ts=ts(0, 40)), msg('user', 'meanwhile', ts=ts(6))])
+    st = _check(str(proj), ROOT, seeds=range(3))
+    assert [(s.session, s.ts) for s in st] == [('aaaaaaaa', ts(0, 10)), ('bbbbbbbb', ts(7))]
+
+
+def test_root_waits_for_the_first_transcript_to_name_its_cwd(tmp_path):
+    """No root given: it is the first transcript's cwd, which comes after the second transcript's own."""
+    proj = tmp_path / 'proj'
+    write_lines(proj / 'aaaaaaaa-a.jsonl', [
+        msg('user', 'go', ts=ts(0)),
+        msg('assistant', [tool('w', 'Write', file_path=f'{ROOT}/a.py', content='a\n')], ts=ts(2)),
+        dict(result('w'), timestamp=ts(2, 1))])
+    write_lines(proj / 'bbbbbbbb-b.jsonl', [
+        msg('user', 'go', ts=ts(0, 30)),
+        msg('assistant', [tool('v', 'Write', file_path=f'{ROOT}/sub/b.py', content='b\n')], ts=ts(1), cwd=f'{ROOT}/sub'),
+        dict(result('v'), timestamp=ts(1, 1))])
+    st = _check(str(proj), None, seeds=range(3))
+    assert [s.file for s in st] == ['sub/b.py', 'a.py']
+
+
+def test_a_read_at_a_commits_second_does_not_make_the_commit_a_step(tmp_path):
+    """Commits count from the first op under root that is not a Read: a Read at the commit's very second does not
+    bring the commit in."""
+    import subprocess
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    (repo / 'a.py').write_text('a = 1\n')
+    env = {'GIT_AUTHOR_DATE': ts(5), 'GIT_COMMITTER_DATE': ts(5), 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
+           'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t', 'HOME': str(tmp_path), 'PATH': '/usr/bin:/bin'}
+    for cmd in (['init', '-q'], ['add', '.'], ['commit', '-qm', 'base']):
+        subprocess.run(['git', '-C', str(repo), *cmd], check=True, env=env)
+    root = str(repo)
+    read = result('r')
+    read.update(timestamp=ts(5), toolUseResult={'type': 'text', 'file': {
+        'filePath': f'{root}/a.py', 'content': 'a = 1', 'startLine': 1, 'numLines': 1, 'totalLines': 1}})
+    p = write_lines(tmp_path / 's.jsonl', [
+        msg('user', 'go', ts=ts(0)),
+        msg('assistant', [tool('r', 'Read', file_path=f'{root}/a.py')], ts=ts(4, 59), cwd=root), read,
+        msg('assistant', [tool('w', 'Write', file_path=f'{root}/b.py', content='b\n')], ts=ts(8), cwd=root),
+        dict(result('w'), timestamp=ts(8, 1))])
+    st = _check(p, root, git_reconcile=True, seeds=range(2))
+    assert [s.tool for s in st] == ['Write']
 
 
 def test_lines_hold_a_line_until_its_newline():

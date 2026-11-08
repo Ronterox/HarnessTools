@@ -5,7 +5,7 @@ ROOT    ?=
 PERF_OUT  ?= demo/perf/perf.csv
 PERF_ARGS ?=
 
-.PHONY: timeline test perf serve
+.PHONY: timeline test perf serve live live-stop live-export live-verify
 LABELS  ?= demo/labels.json
 
 # analyse, then put back the cached labels (port 1: no llama-server is asked; uncached blobs keep heuristic names)
@@ -22,3 +22,19 @@ perf:
 
 serve:
 	cd web && python3 -m http.server 8790
+
+# live map (live.py): make live NAME=aigource PROJECT="$$P $$P-aigource" ROOT=../aigource LIVE_ARGS="--seed-git --git-reconcile"
+NAME      ?= live
+PROJECT   ?= $(SESSION)
+LIVE_ARGS ?=
+live:
+	$(PY) live.py run $(NAME) $(PROJECT) $(if $(ROOT),--root $(ROOT)) $(LIVE_ARGS)
+
+live-stop:
+	$(PY) live.py stop $(NAME)
+
+live-export:
+	$(PY) live.py export $(NAME)
+
+live-verify:
+	$(PY) live.py verify $(NAME)
