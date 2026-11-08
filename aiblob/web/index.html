@@ -32,6 +32,17 @@ button:focus-visible, select:focus-visible, #tl:focus-visible { outline: 2px sol
 .badge { font: 11px var(--mono); padding: 2px 7px; border-radius: 99px; border: 1px solid var(--line); color: var(--mute); }
 .badge.sample { color: var(--mix); border-color: color-mix(in srgb, var(--mix) 50%, transparent); }
 #top button { padding: 4px 12px; font-weight: 600; letter-spacing: .03em; }
+#top button.tog { display: flex; align-items: center; gap: 7px; }
+#top button.tog .k { font: 11px var(--mono); color: var(--mute); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+#top button.tog[aria-pressed="true"] { border-color: color-mix(in srgb, var(--mix) 60%, transparent); color: var(--mix); }
+#crumbs { display: none; align-items: center; gap: 2px; min-width: 0; overflow: hidden; white-space: nowrap; font-size: 15px; font-weight: 600; }
+body.areas #crumbs { display: flex; }
+body.areas .meta { flex: 0 1 auto; max-width: 30%; }
+#crumbs button { border: 0; padding: 2px 6px; color: var(--mute); overflow: hidden; text-overflow: ellipsis; max-width: 28ch; }
+#crumbs button:hover { color: var(--ink); background: var(--line); }
+#crumbs button[aria-current] { color: var(--ink); cursor: default; background: none; }
+#crumbs .sep { color: var(--faint); }
+@media (max-width: 720px) { .meta, #src { display: none; } #top button.tog .k { display: none; } }
 #bar { position: fixed; left: 0; right: 0; bottom: 0; height: 118px; background: var(--panel); border-top: 1px solid var(--line);
        z-index: 3; display: grid; grid-template-rows: auto 1fr; padding: 8px 16px 10px; gap: 6px; }
 #status { display: grid; grid-template-columns: auto 1fr; column-gap: 12px; align-items: baseline; min-width: 0; }
@@ -92,8 +103,11 @@ body.multi #empty { inset: 46px 0 138px; }
 <canvas id="map" role="img" aria-label="Application map: blobs are entry points and shared hubs, lines are calls and shared data"></canvas>
 <header id="top">
   <div class="mark"><span>aiblob</span><i style="background:var(--add)"></i><i style="background:var(--mix)"></i><i style="background:var(--rem)"></i></div>
+  <nav id="crumbs" aria-label="Breadcrumb"></nav>
   <div class="meta" id="meta">loading…</div>
   <span class="badge" id="src"></span>
+  <button id="areasBtn" class="tog" aria-pressed="false" title="Areas: groups of blobs, one level above the blob map (A)">Areas <span class="k">A</span></button>
+  <button id="followBtn" class="tog" aria-pressed="false" title="Follow: each step flies the camera to what it edits (F)">Follow <span class="k">F</span></button>
   <button id="legendBtn" aria-expanded="false" aria-controls="legend">Legend</button>
 </header>
 <aside id="legend" aria-label="Legend"></aside>
@@ -162,12 +176,14 @@ async function load() {
   }
   throw new Error('no timeline.json or sample-timeline.json next to this page');
 }
-/* <expand> schema v3 / v4 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only what
-   changed. Rebuild every step's full state in order, as timeline.expand() does: a blob a step does not send is the
-   previous one with zeroed deltas (one copy, shared by the following steps until it changes), kept in its place;
+/* <expand> schema v3 / v4 / v5 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only
+   what changed. Rebuild every step's full state in order, as timeline.expand() does: a blob a step does not send is
+   the previous one with zeroed deltas (one copy, shared by the following steps until it changes), kept in its place;
    new blobs append unless the step gives `order`; edges are re-sorted the way the analyzer writes them. In v4 a
-   sent blob's `funcs` is a patch on that zeroed previous blob's (patchFuncs). A file without `schema` >= 3 has
-   every step full. perf.py --page and tests/test_func_patch.py run this block in node. */
+   sent blob's `funcs` is a patch on that zeroed previous blob's (patchFuncs). v5's areas table is carried along,
+   patched by a delta step's `areas` / `areas_remove`, sorted by id; a file whose full steps have none rebuilds
+   steps without it. A file without `schema` >= 3 has every step full. perf.py --page and tests/test_func_patch.py
+   run this block in node. */
 const EDGE_RANK = { main: 0, error: 1, data: 2, ref: 3 };
 const zeroDelta = d => { const z = {}; for (const k in d) z[k] = k === 'state' ? 'same' : Array.isArray(d[k]) ? [] : 0; return z; };
 const restBlob = b => b.delta ? { ...b, delta: zeroDelta(b.delta), funcs: (b.funcs || []).map(f => f.delta ? { ...f, delta: zeroDelta(f.delta) } : f) } : b;
@@ -185,11 +201,12 @@ const cmpStr = (p, q) => p < q ? -1 : p > q ? 1 : 0;
 const edgeCmp = (p, q) => (EDGE_RANK[p.kind] ?? 4) - (EDGE_RANK[q.kind] ?? 4) || cmpStr(p.a, q.a) || cmpStr(p.b, q.b);
 function expandSteps(tl) {
   const v3 = tl.schema >= 3, v4 = tl.schema >= 4;
-  let cur = new Map(), fresh = new Set(), edges = new Map();
+  let cur = new Map(), fresh = new Set(), edges = new Map(), areas = null;
   return (tl.steps || []).map((st, i) => {
     const sent = st.blobs || [];
     let elist;
     if (!v3 || st.full || i === 0 || st.edges) {          // a delta step never carries `edges`
+      areas = st.areas ? new Map(st.areas.map(a => [a.id, a])) : null;
       cur = new Map(sent.map(b => [b.id, b])); fresh = new Set(cur.keys());
       elist = st.edges || []; edges = new Map(elist.map(e => [edgeId(e), e]));
     } else {
@@ -201,9 +218,11 @@ function expandSteps(tl) {
       for (const e of st.edges_remove || []) edges.delete(edgeId(e));
       for (const e of st.edges_add || []) edges.set(edgeId(e), e);
       elist = [...edges.values()].sort(edgeCmp);
+      if (areas) { for (const id of st.areas_remove || []) areas.delete(id); for (const a of st.areas || []) areas.set(a.id, a); }
     }
     const out = { ...st, blobs: [...cur.values()], edges: elist };
-    delete out.removed_blobs; delete out.edges_add; delete out.edges_remove; delete out.order; delete out.full;
+    delete out.removed_blobs; delete out.edges_add; delete out.edges_remove; delete out.order; delete out.full; delete out.areas_remove;
+    if (areas) out.areas = [...areas.keys()].sort(cmpStr).map(id => areas.get(id)); else delete out.areas;
     return out;
   });
 }
@@ -259,6 +278,10 @@ function normalize(tl) {
       blobs.set(b.id, b);
       for (const f of b.funcs) { f.delta ||= zero(); f.calls ||= []; f.refs ||= []; f.data ||= []; f.snippet ||= []; f.lines = Math.max(1, f.lines || 0); funcs.set(f.qual, f); owner.set(f.qual, b.id); }
     }
+    // v5: a cut piece the labels do not know yet shows its root function's name with its parent's face
+    for (const b of st.blobs) if (b.cut && !b.label) { const p = blobs.get(b.cut); if (p?.label?.emoji) b.face = p.label.emoji; }
+    st.areas ||= []; st.areaMap = new Map(st.areas.map(a => [a.id, a]));
+    st.kids = new Map(); for (const b of st.blobs) if (b.cut) { if (!st.kids.has(b.cut)) st.kids.set(b.cut, []); st.kids.get(b.cut).push(b.id); }
     st.edges = st.edges.filter(e => blobs.has(e.a) && blobs.has(e.b));
     // a data symbol shared by more than 3 blobs is drawn as spokes from one small data node instead of an all-to-all mesh
     const members = new Map();
@@ -381,6 +404,7 @@ const REGION_GAP = 84;      // world px between blobs of different regions: room
 const radius = size => Math.max(19, K * Math.sqrt(size));
 /* the region a blob lives in: a route's handler module (from its id), not the majority module of its funcs */
 function regionOf(b) {
+  if (b.cut) return regionOf({ ...b, id: b.cut, cut: null });     // a cut piece lives with the blob it was cut from
   if (b.kind === 'text') return TEXT_REGION;
   if (b.kind === 'file') return b.module;
   if (b.kind === 'hub' || b.kind === 'orphan') return b.id.slice(b.id.indexOf(':') + 1) || b.module;
@@ -433,14 +457,16 @@ function spring(a, b, want, k) {
   const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - want) / d * k;
   a.dx += dx * f; a.dy += dy * f; b.dx -= dx * f; b.dy -= dy * f;
 }
+let LINKS = new Map();      // 'a\nb' (sorted ids) -> the most calls / refs between two blobs at any step
 function layout() {
-  const links = new Map();
+  const links = LINKS = new Map();
   STEPS.forEach((st, i) => {
     for (const b of st.blobs) {
       let u = U.get(b.id);
       if (!u) { u = { id: b.id, max: 1, first: i }; U.set(b.id, u); }
       u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, b.size);    // last step wins: a text file that code
-    }                                                                            // later references lives with the files
+      u.stem = (b.module || '').replace(/_h$/, ''); if (b.area) u.area = b.area;   // later references lives with the files
+    }
     for (const e of st.edges) if (e.kind !== 'data') { const k = [e.a, e.b].sort().join('\n'); links.set(k, Math.max(links.get(k) || 0, e.n || 1)); }
   });
   for (const st of STEPS) for (const b of st.blobs) b.region = U.get(b.id).module;
@@ -503,6 +529,281 @@ function layout() {
   }
 }
 
+
+/* ───────────────────────── areas (schema v5) ─────────────────────────
+   One level above the blob map, toggled with A: each area is an organic blob sized by the blobs it holds, showing
+   its top 3 faces and a caption (timeline.py's `areas` table); lines between areas sum the calls, data and file
+   references between their blobs. Members keep fixed places inside their area (a local layout over every blob
+   that was ever in it) and areas are placed by the calls between them, so this map is as stable as the blob map.
+   The camera flies on click and wheel; an area's blobs show once it fills enough of the screen, its neighbours
+   stay dimmed at the edges; Esc / the breadcrumb go back up. */
+const AHUES = [205, 28, 150, 285, 52, 335, 182, 112, 250, 12];
+let AU = new Map(), AREAS_ON = false, AMIX = 0, FOLLOW = false, openA = null, CAM = null, followTo = null, areaHits = [], APP_NAME = '';
+const FACE_R = new Map();               // step -> Map(area id -> face radius)
+function layoutAreas() {
+  AU = new Map(); FACE_R.clear();
+  STEPS.forEach((st, i) => {
+    for (const b of st.blobs) {
+      if (!b.area) continue;
+      let a = AU.get(b.area); if (!a) AU.set(b.area, a = { id: b.area, first: i, ids: new Set(), local: new Map() });
+      a.ids.add(b.id);
+    }
+  });
+  const list = [...AU.values()].sort((p, q) => p.first - q.first || cmpStr(p.id, q.id));
+  list.forEach((a, k) => { a.hue = a.id === 'tests' ? 80 : a.id === 'files' ? 210 : AHUES[k % AHUES.length]; });
+  // 1. members inside each area, clustered by module (a header with its .c), pulled together by their calls
+  for (const a of list) {
+    const ns = [...a.ids].map(id => { const u = U.get(id); return { id, R: u.R, mod: u.stem || u.module, x: 0, y: 0 }; });
+    const ml = new Map(); for (const n of ns) ml.set(n.mod, (ml.get(n.mod) || 0) + n.R * n.R);
+    const mods = [...ml.keys()].sort((p, q) => ml.get(q) - ml.get(p) || cmpStr(p, q));
+    const ring = 0.9 * Math.sqrt(ns.reduce((sum, n) => sum + (n.R + 24) ** 2, 0));
+    const anchor = new Map(mods.map((m, k) => {
+      if (k === 0) return [m, { x: 0, y: 0 }];
+      const ang = (k - 1) / Math.max(1, mods.length - 1) * TAU + (hash(m) % 100) / 200;
+      return [m, { x: Math.cos(ang) * ring, y: Math.sin(ang) * ring }];
+    }));
+    for (const n of ns) { const r = rng(hash(n.id)), an = anchor.get(n.mod); n.x = an.x + (r() - 0.5) * 60; n.y = an.y + (r() - 0.5) * 60; }
+    const at = new Map(ns.map(n => [n.id, n])), L = [];
+    for (const [k, c] of LINKS) { const [p, q] = k.split('\n'); if (at.has(p) && at.has(q)) L.push([at.get(p), at.get(q), c]); }
+    relax(ns, ns.length > 120 ? 160 : 380, () => {
+      for (const n of ns) { const an = anchor.get(n.mod); n.dx += (an.x - n.x) * 0.03; n.dy += (an.y - n.y) * 0.03; }
+      for (const [p, q, c] of L) spring(p, q, p.R + q.R + 44, 0.004 * Math.min(4, c));
+      collide(ns, (p, q) => p.mod === q.mod ? 34 : 54);      // room for the names under the blobs
+    });
+    let cx = 0, cy = 0, w = 0;
+    for (const n of ns) { cx += n.x * n.R * n.R; cy += n.y * n.R * n.R; w += n.R * n.R; }
+    cx /= w || 1; cy /= w || 1;
+    a.enc = 60;
+    for (const n of ns) { n.x -= cx; n.y -= cy; a.local.set(n.id, n); a.enc = Math.max(a.enc, Math.hypot(n.x, n.y) + n.R + 24); }
+    a.R = a.enc;
+  }
+  // 2. areas on the app canvas, pulled together by the calls between their blobs
+  const W = new Map();
+  for (const [k, c] of LINKS) {
+    const [p, q] = k.split('\n'), ap = U.get(p)?.area, aq = U.get(q)?.area;
+    if (!ap || !aq || ap === aq) continue;
+    const key = ap < aq ? ap + '\n' + aq : aq + '\n' + ap; W.set(key, (W.get(key) || 0) + c);
+  }
+  const meanR = list.reduce((sum, a) => sum + a.R, 0) / Math.max(1, list.length), gap = 0.35 * meanR + 30;
+  list.forEach((a, k) => { const ang = k / list.length * TAU + (k % 2) * 0.3; a.x = Math.cos(ang) * meanR * 3; a.y = Math.sin(ang) * meanR * 2; });
+  const AL = [...W].map(([k, c]) => { const [p, q] = k.split('\n'); return [AU.get(p), AU.get(q), c]; });
+  relax(list, 700, () => {
+    for (const a of list) { a.dx += -a.x * 0.0025; a.dy += -a.y * 0.0055; }
+    for (const [p, q, c] of AL) spring(p, q, p.R + q.R + gap, 0.0004 * Math.min(40, Math.sqrt(c)));
+    collide(list, () => gap * 1.2);
+  });
+}
+/* an area's face at step i: big enough for the members present then, at their fixed places */
+function faceR(aid, i = cur) {
+  let m = FACE_R.get(i);
+  if (!m) {
+    m = new Map();
+    for (const b of STEPS[i].blobs) {
+      const a = AU.get(b.area), l = a?.local.get(b.id); if (!l) continue;
+      m.set(b.area, Math.max(m.get(b.area) || 48, Math.hypot(l.x, l.y) + radius(b.size) + 20 + (b.merged ? 12 : 0)));
+    }
+    FACE_R.set(i, m);
+  }
+  return m.get(aid) || 0;
+}
+const areaOf = id => IDX[cur]?.blobs.get(id)?.area ?? VIS.get(id)?.blob.area;
+/* the world place a blob is heading to: inside its area with areas on, its blob-map place otherwise */
+function homeOf(id, b) {
+  if (AREAS_ON && b && b.area) { const a = AU.get(b.area), l = a?.local.get(id); if (l) return { x: a.x + l.x, y: a.y + l.y }; }
+  const u = U.get(id); return { x: u.x, y: u.y };
+}
+function areaCol(aid, kind) {
+  const h = AU.get(aid)?.hue ?? 210;
+  if (kind === 'orphan') return T.light ? { fill: 'hsl(210 8% 89%)', stroke: 'hsl(210 5% 62%)', glow: `hsl(${h} 45% 55%)` } : { fill: 'hsl(210 5% 14%)', stroke: 'hsl(210 4% 40%)', glow: `hsl(${h} 45% 52%)` };
+  return T.light ? { fill: `hsl(${h} 62% 93%)`, stroke: `hsl(${h} 52% 42%)`, glow: `hsl(${h} 45% 55%)`, cap: `hsl(${h} 40% 38%)` }
+                 : { fill: `hsl(${h} 32% 15%)`, stroke: `hsl(${h} 62% 61%)`, glow: `hsl(${h} 45% 52%)`, cap: `hsl(${h} 45% 68%)` };
+}
+const smooth = (a, b, v) => { const t = clamp((v - a) / (b - a), 0, 1); return t * t * (3 - 2 * t); };
+const minDim = () => Math.max(1, Math.min(VW, VH - TOP - BOTTOM));
+/* how far an area's blobs show: they take over from its face as the area fills the screen; only the open area
+   (with none open: whichever the wheel brought closest, once it fills well over a third of the screen) shows its blobs */
+function areaShow() {
+  const out = new Map(); if (AMIX < 0.01) return out;
+  const here = STEPS[cur].areas.map(a => a.id).filter(id => AU.has(id));
+  const lo = openA == null ? 0.36 : 0.17, hi = openA == null ? 0.48 : 0.3;
+  let best = openA, bv = -1;
+  if (best == null) for (const id of here) { const v = faceR(id) * VIEW.s / minDim(); if (v > bv) { bv = v; best = id; } }
+  for (const id of here) out.set(id, id === best ? smooth(lo, hi, faceR(id) * VIEW.s / minDim()) : 0);
+  return out;
+}
+/* lines and stains of an area at this step */
+function areaEdits(aid) {
+  let a = 0, r = 0, n = 0;
+  for (const b of STEPS[cur].blobs) if (b.area === aid) { const d = b.delta, k = d.state === 'new' ? b.size : d.added + d.removed; if (k > 0) { n++; a += d.state === 'new' ? b.size : d.added; r += d.state === 'new' ? 0 : d.removed; } }
+  return { a, r, n };
+}
+const AW = { main: k => 0.8 + 0.55 * Math.sqrt(k), error: k => 1.4 + Math.sqrt(k), data: k => 1.4 + 0.35 * Math.sqrt(k), ref: k => 1 + 0.2 * Math.sqrt(k) };
+function drawAreaLayer(now, t, show, labels) {
+  const st = STEPS[cur], marks = marksAt(cur), am = AMIX;
+  areaHits = [];
+  const ids = st.areas.map(a => a.id).filter(id => AU.has(id)), maxShow = Math.max(0, ...show.values());
+  const hovA = hoverArea, dim = id => (openA != null && id !== openA ? 0.32 : 1);
+  // lines between areas, summed by kind; they give way when an area opens
+  const agg = new Map(), blobs = IDX[cur].blobs;
+  for (const e of st.edges) {
+    const p = blobs.get(e.a)?.area, q = blobs.get(e.b)?.area; if (!p || !q || p === q) continue;
+    const key = p < q ? p + '\n' + q : q + '\n' + p; let r = agg.get(key);
+    if (!r) agg.set(key, r = { p: p < q ? p : q, q: p < q ? q : p, main: 0, error: 0, data: 0, ref: 0 });
+    r[e.kind] = (r[e.kind] || 0) + (e.n || 1);
+  }
+  const edgeA = am * (1 - maxShow) * (openA != null ? 0 : 1);
+  if (edgeA > 0.02) for (const r of agg.values()) {
+    const pa = AU.get(r.p), pb = AU.get(r.q), A = { x: sx(pa.x), y: sy(pa.y) }, B = { x: sx(pb.x), y: sy(pb.y) };
+    const touch = hovA == null || hovA === r.p || hovA === r.q, base = (touch ? 1 : 0.12) * edgeA;
+    for (const k of ['data', 'ref', 'main', 'error']) {
+      if (!r[k]) continue;
+      const w = AW[k](r[k]) * clamp(VIEW.s * 1.4, 0.7, 1.4);
+      strokeEdge(ctx, curve(A, B, faceR(r.p) * VIEW.s * 1.02, faceR(r.q) * VIEW.s * 1.02, k, false), k, w, base * (k === 'main' ? 0.45 : k === 'ref' ? 0.5 : 0.75), false);
+    }
+  }
+  for (const id of ids) {
+    const a = AU.get(id), x = sx(a.x), y = sy(a.y), R = faceR(id) * VIEW.s, c = areaCol(id), sh = show.get(id) || 0, face = 1 - sh;
+    if (R < 1 || x + R * 1.5 < 0 || x - R * 1.5 > VW || y + R * 1.5 < 0 || y - R * 1.5 > VH) continue;
+    const info = st.areaMap.get(id), hovd = hovA === id, alpha = am * dim(id) * (hovA != null && !hovd && openA == null ? 0.55 : 1);
+    // glow: hotter while its blobs were edited recently; an area edited at this step pulses
+    let heat = 0; for (const b of st.blobs) if (b.area === id) heat = Math.max(heat, heatOf(blobSpots(b.id)));
+    const ed = areaEdits(id), live = ed.n > 0, pulse = live ? 0.5 + 0.5 * Math.sin(t * 5) : 0;
+    const gR = R * (1.45 + 0.12 * pulse), g = ctx.createRadialGradient(x, y, R * 0.55, x, y, gR);
+    g.addColorStop(0, live ? T.mix : c.glow); g.addColorStop(1, 'transparent');
+    ctx.save(); ctx.globalAlpha = alpha * ((T.light ? 0.2 : 0.16) + 0.22 * heat + 0.25 * pulse) * (1 - 0.5 * sh); ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, gR, 0, TAU); ctx.fill(); ctx.restore();
+    const seed = hash('area:' + id), wob = face > 0.5 ? 1 : 0.4;
+    ctx.save(); ctx.globalAlpha = alpha * (0.25 + 0.75 * face);
+    blobPath(ctx, x, y, R, seed, t, wob); ctx.fillStyle = c.fill; ctx.fill();
+    // its blobs' stains, where those blobs sit inside it
+    if (face > 0.02) {
+      ctx.save(); blobPath(ctx, x, y, R, seed, t, wob); ctx.clip(); ctx.globalAlpha = alpha * face;
+      for (const b of st.blobs) {
+        if (b.area !== id) continue;
+        const ms = marks.get(b.id); if (!ms) continue;
+        const l = a.local.get(b.id); if (!l) continue;
+        const bx = x + l.x * VIEW.s, by = y + l.y * VIEW.s, br = radius(b.size) * VIEW.s;
+        for (const m of ms) { const p = stainSpot(b.id, m, br, m.size); drawStain(ctx, bx + p.dx, by + p.dy, p.r, m, p.seed, now); }
+      }
+      ctx.restore();
+    }
+    ctx.globalAlpha = alpha * (0.35 + 0.65 * face);
+    ctx.lineWidth = clamp(3.2 * VIEW.s * 3, 1.5, 5) * (face > 0.5 ? 1 : 0.6); ctx.strokeStyle = c.stroke;
+    if (face < 0.5) ctx.setLineDash([2, 7]);
+    blobPath(ctx, x, y, R, seed, t, wob); ctx.stroke(); ctx.setLineDash([]);
+    if (live) {             // the edit of this step: a ring that flashes out, then breathes while the step is current
+      const f = clamp((now - stepAt) / 900, 0, 1);
+      ctx.strokeStyle = ed.r > ed.a ? T.rem : T.mix; ctx.lineWidth = 2 + 2.5 * (1 - f) + 1.2 * pulse; ctx.globalAlpha = alpha * (f < 1 ? 1 - 0.6 * f : 0.35 + 0.35 * pulse);
+      blobPath(ctx, x, y, R + 5 + 14 * (1 - f) + 3 * pulse, seed, t, wob); ctx.stroke();
+    }
+    if (hovd && openA == null) { ctx.strokeStyle = T.flash; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.85 * am; blobPath(ctx, x, y, R + 6, seed, t); ctx.stroke(); }
+    ctx.restore();
+    const faces = info?.faces || [];
+    if (face > 0.02) {
+      const es = clamp(R * 0.42, 12, 64);
+      if (faces.length === 1) drawEmoji(faces[0], x, y, es * 1.2, alpha * face);
+      else faces.forEach((e, k) => { const n = faces.length, ang = -Math.PI / 2 + (k + 0.5) / n * TAU - (n === 2 ? Math.PI / 2 : 0), d = es * 0.62;
+        drawEmoji(e, x + Math.cos(ang) * d, y + Math.sin(ang) * d, es * (k === 0 ? 1.1 : 0.85), alpha * face); });
+      const fs = clamp(R * 0.17, 14, 26);
+      labels.push({ text: info?.caption || id, x, y: y + R + fs * 0.9, alt: y - R - fs * 0.9, fs, col: T.ink, alpha: alpha * face, big: 1e6 + R });
+    }
+    if (face < 0.98) labels.push({ text: (info?.caption || id).toUpperCase(), x, y: y - R - 14, fs: 12, col: c.cap, alpha: alpha * (1 - face) * 0.95, region: true });
+    areaHits.push({ id, x, y, R, face });
+  }
+}
+function drawEmoji(e, x, y, size, alpha) {
+  if (size < 5 || alpha < 0.01) return;
+  ctx.save(); ctx.globalAlpha = alpha; ctx.font = `${size}px ${EMOJI_FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(e, x, y + size * 0.06); ctx.restore();
+}
+/* calls and data from the hovered blob of an open area to other areas, summed per area, ending at their rim */
+function drawRimEdges(show) {
+  if (!hover || openA == null || AMIX < 0.5) return;
+  const v = VIS.get(hover), b = IDX[cur].blobs.get(hover); if (!v || !b || b.area !== openA) return;
+  const out = new Map();
+  for (const e of STEPS[cur].edges) {
+    if (e.a !== hover && e.b !== hover) continue;
+    const other = areaOf(e.a === hover ? e.b : e.a); if (!other || other === openA || !AU.has(other)) continue;
+    const k = other + '\n' + e.kind; out.set(k, (out.get(k) || 0) + (e.n || 1));
+  }
+  for (const [k, n] of out) {
+    const [aid, kind] = k.split('\n'), a = AU.get(aid);
+    const pts = curve({ x: sx(v.x), y: sy(v.y) }, { x: sx(a.x), y: sy(a.y) }, v.r * VIEW.s * 1.05, faceR(aid) * VIEW.s * 1.02, kind, kind !== 'data');
+    strokeEdge(ctx, pts, kind, edgeWidth(kind, n) * clamp(VIEW.s, 0.75, 1.6), 0.85 * AMIX * (show.get(openA) || 0), kind !== 'data');
+  }
+}
+/* camera targets: the open area, or every area present at this step */
+function areaCam() {
+  if (openA != null && AU.has(openA)) { const a = AU.get(openA), R = Math.max(faceR(openA), 40) * 1.18; return frameOf([{ x: a.x, y: a.y, R }], 50); }
+  const here = STEPS[cur].areas.filter(a => AU.has(a.id)).map(a => { const u = AU.get(a.id); return { x: u.x, y: u.y, R: faceR(a.id) * 1.1 }; });
+  if (!here.length) return VIEW0;
+  const s0 = frameOf(here, 50).s;          // then room for the captions under the faces, in screen pixels
+  return frameOf(here.map(h => ({ ...h, R: h.R + 40 / s0 })), 50);
+}
+function fly() { CAM = AREAS_ON ? areaCam() : null; }
+function openArea(id, noFly) { openA = id; closeDrill(); hover = null; hoverArea = null; hideTip(); if (!noFly) fly(); crumbs(); }
+function areaUp() { if (drill) { closeDrill(); crumbs(); return true; } if (openA != null) { openA = null; fly(); crumbs(); return true; } return false; }
+/* the wheel zooms where the pointer is; the level follows once an area fills (or leaves) the screen */
+function onWheel(e) {
+  if (!AREAS_ON || drill) return;
+  e.preventDefault();
+  const k = Math.exp(-e.deltaY * 0.0016), s = clamp(VIEW.s * k, 0.02, 60), mx = e.clientX, my = e.clientY;
+  VIEW = { s, ox: mx - (mx - VIEW.ox) * s / VIEW.s, oy: my - (my - VIEW.oy) * s / VIEW.s }; CAM = null;
+  const md = minDim();
+  if (openA != null) { if (faceR(openA) * VIEW.s < md * 0.2) { openA = null; crumbs(); } return; }
+  const hit = areaHits.find(h => Math.hypot(h.x - mx, h.y - my) < h.R && h.R > md * 0.4);
+  if (hit) openArea(hit.id, true);
+}
+/* the area and blob an edit lands on: the most lines changed (a new blob counts its size) */
+function editedAt(i) {
+  let blob = null, bn = 0; const per = new Map();
+  for (const b of STEPS[i].blobs) {
+    const d = b.delta, n = d.state === 'new' ? b.size : d.added + d.removed;
+    if (n <= 0) continue;
+    if (n > bn) { bn = n; blob = b.id; }
+    if (b.area) per.set(b.area, (per.get(b.area) || 0) + n);
+  }
+  let area = null, an = 0; for (const [k, n] of per) if (n > an) { an = n; area = k; }
+  return { blob, area };
+}
+function followStep() {
+  if (!FOLLOW) return;
+  const e = editedAt(cur);
+  if (AREAS_ON) { if (e.area && AU.has(e.area) && !drill) { openA = e.area; CAM = areaCam(); crumbs(); } }
+  else if (e.blob) followTo = e.blob;
+}
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (err) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (err) { /* storage blocked: the toggle still works for this visit */ } },
+};
+function setAreas(on, keep) {
+  if (on && !AU.size) on = false;
+  AREAS_ON = on; if (!keep) store.set('aiblob.areas', on ? '1' : '0');
+  document.body.classList.toggle('areas', on); $('#areasBtn').setAttribute('aria-pressed', on);
+  hover = null; hoverArea = null; hoverEdge = null; hoverNode = null; hideTip();
+  if (on) { if (FOLLOW) followStep(); CAM = areaCam(); } else { CAM = null; openA = null; if (FOLLOW) followStep(); }
+  crumbs(); buildLegend();
+}
+function setFollow(on) {
+  FOLLOW = on; $('#followBtn').setAttribute('aria-pressed', on);
+  if (on) followStep(); else followTo = null;
+}
+function crumbs() {
+  const el = $('#crumbs'); if (!el) return;
+  const cr = [[APP_NAME || 'app', () => { closeDrill(); openA = null; fly(); crumbs(); }]];
+  if (openA != null) { const a = STEPS[cur].areaMap.get(openA); cr.push([`${a?.faces?.[0] || ''} ${a?.caption || openA}`, () => { closeDrill(); fly(); crumbs(); }]); }
+  if (drill) { const b = IDX[cur].blobs.get(drill.id) || VIS.get(drill.id)?.blob; if (b) cr.push([`${b.face} ${shortName(b.title)}`, null]); }
+  el.innerHTML = cr.map(([n], i) => (i ? '<span class="sep">›</span>' : '') + `<button data-i="${i}"${i === cr.length - 1 ? ' aria-current="page"' : ''}>${esc(n)}</button>`).join('');
+  el.querySelectorAll('button').forEach(b => { const i = +b.dataset.i; if (i < cr.length - 1) b.onclick = cr[i][1]; });
+}
+function areaTip(aid) {
+  const info = STEPS[cur].areaMap.get(aid), bs = STEPS[cur].blobs.filter(b => b.area === aid), ed = areaEdits(aid);
+  const lines = bs.reduce((s, b) => s + b.size, 0), fn = bs.reduce((s, b) => s + b.funcs.length, 0);
+  const mods = [...new Set(bs.filter(b => b.funcs.length).map(b => b.region))].slice(0, 6);
+  return `<b>${esc((info?.faces || []).join(''))} ${esc(info?.caption || aid)}</b><div class="k">area · ${bs.length} blobs · ${lines} lines · ${fn} funcs</div>
+    <div>${ed.n ? `<span class="add">+${ed.a}</span> <span class="rem">−${ed.r}</span> this step in ${ed.n} blob${ed.n > 1 ? 's' : ''}` : '<span class="k">no lines edited this step</span>'}</div>
+    ${mods.length ? `<div class="k">${mods.map(esc).join(' · ')}</div>` : ''}<div class="k" style="margin-top:4px">click to open</div>`;
+}
+
 /* ───────────────────────── view & canvas ───────────────────────── */
 const cv = $('#map'), ctx = cv.getContext('2d'), tl = $('#tl'), tctx = tl.getContext('2d');
 let VW = 0, VH = 0, DPR = 1, VIEW = { s: 1, ox: 0, oy: 0 };
@@ -523,14 +824,20 @@ function frameOf(nodes, maxS) {
   const mw = VW - 48, mh = VH - TOP - BOTTOM - 36, s = Math.min(mw / (x1 - x0), mh / (y1 - y0), maxS);
   return { s, ox: VW / 2 - (x0 + x1) / 2 * s, oy: TOP + 18 + mh / 2 - (y0 + y1) / 2 * s + 6 };
 }
-function fit() { if (!U.size) return; VIEW0 = frameOf([...U.values()], 2.2); VIEW = camTarget(); }
+function fit() { if (!U.size) return; VIEW0 = frameOf([...U.values()], 2.2); VIEW = AREAS_ON ? areaCam() : camTarget(); if (AREAS_ON) CAM = null; }
+/* without areas the camera fits the blobs present at this step; with Follow on it frames the blob the step edits */
 function camTarget() {
+  const f = FOLLOW && followTo && IDX[cur]?.blobs.get(followTo);
+  if (f) { const u = U.get(followTo); return frameOf([{ x: u.x, y: u.y, R: Math.max(radius(f.size) * 3, 150) }], Math.max(1.2, VIEW0.s * 3)); }
   const here = [...U.values()].filter(u => IDX[cur]?.blobs.has(u.id));
   return here.length ? frameOf(here, Math.max(VIEW0.s, Math.min(2.2, VIEW0.s * 1.6))) : VIEW0;
 }
+/* with areas the camera only moves when it is sent somewhere (a click, Follow, Esc); the wheel and a drag move it by hand */
 function moveCamera(dt) {
-  const T2 = camTarget(), k = 1 - Math.exp(-dt * 3);
+  const T2 = AREAS_ON ? CAM : camTarget(); if (!T2) return;
+  const k = 1 - Math.exp(-dt * (AREAS_ON ? 4.5 : 3));
   VIEW = { s: VIEW.s + (T2.s - VIEW.s) * k, ox: VIEW.ox + (T2.ox - VIEW.ox) * k, oy: VIEW.oy + (T2.oy - VIEW.oy) * k };
+  if (AREAS_ON && Math.abs(CAM.s - VIEW.s) / CAM.s < 1e-4 && Math.abs(CAM.ox - VIEW.ox) < 0.1 && Math.abs(CAM.oy - VIEW.oy) < 0.1) CAM = null;
 }
 const sx = x => x * VIEW.s + VIEW.ox, sy = y => y * VIEW.s + VIEW.oy;
 
@@ -584,11 +891,11 @@ function curve(A, B, rA, rB, kind, arrow) {
   }
   return pts;
 }
-function strokeEdge(c, pts, kind, w, alpha, arrow) {
-  if (pts.length < 2) return;
-  const col = kind === 'error' ? T.err : kind === 'data' ? T.data : kind === 'ref' ? T.mute : `rgb(${T.main})`;
+function strokeEdge(c, pts, kind, w, alpha, arrow, color) {
+  if (pts.length < 2 || alpha < 0.005) return;
+  const col = color || (kind === 'error' ? T.err : kind === 'data' ? T.data : kind === 'ref' ? T.mute : `rgb(${T.main})`);
   c.save(); c.globalAlpha = alpha; c.strokeStyle = col; c.lineWidth = w; c.lineCap = 'round';
-  c.setLineDash(kind === 'error' ? [7, 5] : kind === 'data' ? [0.5, 4] : kind === 'deferred' ? [9, 4, 0.5, 4] : []);
+  c.setLineDash(kind === 'error' ? [7, 5] : kind === 'data' ? [0.5, 4] : kind === 'deferred' ? [9, 4, 0.5, 4] : kind === 'cut' ? [4, 5] : []);
   c.beginPath(); c.moveTo(...pts[0]); for (const p of pts) c.lineTo(...p); c.stroke();
   if (arrow) {     // a deferred call (callee passed as a value) gets a hollow head: it runs later, somewhere else
     const [x, y] = pts[pts.length - 1], [px, py] = pts[Math.max(0, pts.length - 3)], a = Math.atan2(y - py, x - px);
@@ -617,15 +924,19 @@ const distToPoly = (pts, x, y) => {
 
 /* ───────────────────────── main map ───────────────────────── */
 const VIS = new Map();     // id → { r, a, blob }  (animated radius/alpha; blob = last seen data)
-let hover = null, hoverEdge = null, hoverNode = null, dnGeo = [], edgeGeo = [], stainGeo = [], stepAt = 0, mouse = { x: -1, y: -1 };
+let hover = null, hoverEdge = null, hoverNode = null, hoverArea = null, dnGeo = [], edgeGeo = [], stainGeo = [], stepAt = 0, mouse = { x: -1, y: -1 };
+/* animated radius, alpha and place per blob; the place glides between the blob map and the area map */
 function updateVis(dt) {
   const k = 1 - Math.exp(-dt * 7);
+  AMIX += ((AREAS_ON ? 1 : 0) - AMIX) * (1 - Math.exp(-dt * 5)); if (Math.abs(AMIX - (AREAS_ON ? 1 : 0)) < 1e-3) AMIX = AREAS_ON ? 1 : 0;
   for (const u of U.values()) {
     const b = IDX[cur]?.blobs.get(u.id);
     let v = VIS.get(u.id);
-    if (!v) { if (!b) continue; v = { r: 0, a: 0, blob: b }; VIS.set(u.id, v); }
+    if (!v) { if (!b) continue; const h = homeOf(u.id, b); v = { r: 0, a: 0, blob: b, x: h.x, y: h.y }; VIS.set(u.id, v); }
     if (b) v.blob = b;
+    const h = homeOf(u.id, v.blob);
     v.r += ((b ? radius(b.size) : 0) - v.r) * k; v.a += ((b ? 1 : 0) - v.a) * k;
+    v.x += (h.x - v.x) * k; v.y += (h.y - v.y) * k;
     if (!b && v.a < 0.01) VIS.delete(u.id);
   }
 }
@@ -635,15 +946,16 @@ function drawRegions() {
   rctx.filter = `blur(${Math.round(16 * VIEW.s * s)}px)`;
   const boxes = new Map();
   for (const [id, v] of VIS) {
-    const u = U.get(id), x = sx(u.x), y = sy(u.y), R = v.r * VIEW.s;
+    const u = U.get(id), x = sx(v.x), y = sy(v.y), R = v.r * VIEW.s;
     rctx.globalAlpha = v.a; rctx.fillStyle = regionTint(u.module, `45% ${T.light ? 55 : 52}%`);
     rctx.beginPath(); rctx.arc(x * s, y * s, (R + 30 * VIEW.s) * s, 0, TAU); rctx.fill();
     if (v.a > 0.3) { const b = boxes.get(u.module) || { x0: 1e9, x1: -1e9, y0: 1e9 }; b.x0 = Math.min(b.x0, x - R); b.x1 = Math.max(b.x1, x + R); b.y0 = Math.min(b.y0, y - R); boxes.set(u.module, b); }
   }
   rctx.filter = 'none';
-  ctx.save(); ctx.globalAlpha = T.light ? 0.2 : 0.13; ctx.drawImage(region, 0, 0, VW, VH); ctx.restore();
+  ctx.save(); ctx.globalAlpha = (T.light ? 0.2 : 0.13) * (1 - AMIX); ctx.drawImage(region, 0, 0, VW, VH); ctx.restore();
+  if (AMIX > 0.5) return [];
   return [...boxes].map(([m, b]) => ({ text: m.toUpperCase(), x: (b.x0 + b.x1) / 2, y: b.y0 - 14 * Math.max(0.8, VIEW.s), fs: 12, region: m,
-    col: regionTint(m, T.light ? '40% 38%' : '45% 68%'), alpha: hover ? 0.35 : 0.85 }));
+    col: regionTint(m, T.light ? '40% 38%' : '45% 68%'), alpha: (hover ? 0.35 : 0.85) * (1 - AMIX) }));
 }
 /* labels that sit outside their blob are placed greedily; one that would overlap a placed label tries
    above its blob, else it is dropped (hover still names the blob) */
@@ -676,41 +988,48 @@ function dataNodePos(g) {
 }
 function drawDataNodes() {
   dnGeo = [];
+  if (AMIX > 0.5) return;          // with areas on, data shared by many blobs is drawn as plain lines inside an area
   for (const g of STEPS[cur].dataNodes) {
     const p = dataNodePos(g), x = sx(p.x), y = sy(p.y), lit = hoverNode === g || (hover && g.ids.includes(hover));
     for (const id of g.ids) {
-      const v = VIS.get(id); if (!v) continue; const u = U.get(id);
-      const a = (lit ? 0.95 : hover || hoverNode ? 0.08 : 0.42) * v.a;
-      strokeEdge(ctx, curve({ x, y }, { x: sx(u.x), y: sy(u.y) }, 5, v.r * VIEW.s * 1.05, 'data', false), 'data', 1.6 * Math.max(0.8, VIEW.s), a, false);
+      const v = VIS.get(id); if (!v) continue;
+      const a = (lit ? 0.95 : hover || hoverNode ? 0.08 : 0.42) * v.a * (1 - AMIX);
+      strokeEdge(ctx, curve({ x, y }, { x: sx(v.x), y: sy(v.y) }, 5, v.r * VIEW.s * 1.05, 'data', false), 'data', 1.6 * Math.max(0.8, VIEW.s), a, false);
     }
-    ctx.save(); ctx.globalAlpha = lit ? 1 : hover || hoverNode ? 0.25 : 0.85;
+    ctx.save(); ctx.globalAlpha = (lit ? 1 : hover || hoverNode ? 0.25 : 0.85) * (1 - AMIX);
     ctx.fillStyle = T.data; ctx.strokeStyle = T.bg; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.arc(x, y, lit ? 5.5 : 4.5, 0, TAU); ctx.fill(); ctx.stroke(); ctx.restore();
     dnGeo.push({ g, x, y });
   }
 }
 function drawMap(now, t) {
-  const st = STEPS[cur], heat = new Map(), marks = marksAt(cur);
+  const st = STEPS[cur], heat = new Map(), marks = marksAt(cur), show = areaShow(), am = AMIX;
   for (const id of VIS.keys()) heat.set(id, heatOf(blobSpots(id)));
   stainGeo = [];
+  // with areas on, a blob shows as much as its area lets it (an open area's blobs); without, always
+  const vis = new Map();
+  for (const [id, v] of VIS) vis.set(id, 1 - am + am * (show.get(v.blob.area) || 0));
   const near = new Set(hover ? [hover] : []);
-  if (hover) for (const e of st.edges) { if (st.spokes.has(e)) continue; if (e.a === hover) near.add(e.b); if (e.b === hover) near.add(e.a); }
+  if (hover) for (const e of st.edges) { if (st.spokes.has(e) && am < 0.5) continue; if (e.a === hover) near.add(e.b); if (e.b === hover) near.add(e.a); }
   if (hoverNode) for (const id of hoverNode.ids) near.add(id);
   const labels = drawRegions();
+  if (am > 0.01) drawAreaLayer(now, t, show, labels);
   drawDataNodes();
-  // edges
+  // edges; with areas on, only those inside an area (the others are summed between areas)
   edgeGeo = [];
   const order = { data: 0, ref: 1, main: 2, error: 3 };
   for (const e of [...st.edges].sort((p, q) => order[p.kind] - order[q.kind])) {
-    if (st.spokes.has(e)) continue;
+    if (st.spokes.has(e) && am < 0.5) continue;
     const va = VIS.get(e.a), vb = VIS.get(e.b); if (!va || !vb) continue;
-    const ua = U.get(e.a), ub = U.get(e.b), A = { x: sx(ua.x), y: sy(ua.y) }, B = { x: sx(ub.x), y: sy(ub.y) };
+    const across = va.blob.area !== vb.blob.area, ea = across ? 1 - am : Math.min(vis.get(e.a), vis.get(e.b));
+    if (ea < 0.02) continue;
+    const ua = U.get(e.a), ub = U.get(e.b), A = { x: sx(va.x), y: sy(va.y) }, B = { x: sx(vb.x), y: sy(vb.y) };
     const arrow = e.kind !== 'data', pts = curve(A, B, trimR(ua.kind, va.r * VIEW.s), trimR(ub.kind, vb.r * VIEW.s), e.kind, arrow);
-    edgeGeo.push({ e, pts });
+    if (ea > 0.3) edgeGeo.push({ e, pts });
     const touches = hover && (e.a === hover || e.b === hover), isHot = heat.get(e.a) > 0 && heat.get(e.b) > 0;
-    let w = edgeWidth(e.kind, e.n || 1) * Math.max(0.8, VIEW.s), alpha = (e.kind === 'data' ? 0.5 : e.kind === 'main' ? 0.5 : e.kind === 'ref' ? 0.6 : 0.85) * Math.min(va.a, vb.a);
-    if (isHot && e.kind !== 'ref') { const p = Math.min(heat.get(e.a), heat.get(e.b)); w *= 1 + 0.35 * p * (0.5 + 0.5 * Math.sin(t * 4.5)); alpha = Math.min(1, alpha + 0.25 * p); }
-    if (hover) alpha = touches ? Math.min(1, alpha * 1.9 + 0.15) : alpha * 0.1;
+    let w = edgeWidth(e.kind, e.n || 1) * Math.max(0.8, VIEW.s), alpha = (e.kind === 'data' ? 0.5 : e.kind === 'main' ? 0.5 : e.kind === 'ref' ? 0.6 : 0.85) * Math.min(va.a, vb.a) * ea;
+    if (isHot && e.kind !== 'ref') { const p = Math.min(heat.get(e.a), heat.get(e.b)); w *= 1 + 0.35 * p * (0.5 + 0.5 * Math.sin(t * 4.5)); alpha = Math.min(1, alpha + 0.25 * p * ea); }
+    if (hover) alpha = touches ? Math.min(1, alpha * 1.9 + 0.15 * ea) : alpha * 0.1;
     if (hoverEdge === e) { alpha = 1; w += 1.5; }
     strokeEdge(ctx, pts, e.kind, w, alpha, arrow);
     if ((e.kind === 'data' || e.kind === 'ref') && hoverEdge === e && e.via && pts.length > 2) {
@@ -720,14 +1039,22 @@ function drawMap(now, t) {
       ctx.globalAlpha = 1; ctx.fillStyle = e.kind === 'ref' ? T.ink : T.data; ctx.fillText(txt, x, y + 3); ctx.restore();
     }
   }
+  drawRimEdges(show);
+  // a cut piece hangs from the blob it was cut from by a dashed thread (schema v5)
+  for (const [id, v] of VIS) {
+    const b = v.blob, pv = b.cut && VIS.get(b.cut); if (!pv || !IDX[cur].blobs.has(id)) continue;
+    const a = Math.min(v.a, pv.a, vis.get(id), vis.get(b.cut)); if (a < 0.02) continue;
+    strokeEdge(ctx, curve({ x: sx(pv.x), y: sy(pv.y) }, { x: sx(v.x), y: sy(v.y) }, pv.r * VIEW.s * 1.12, v.r * VIEW.s * 1.08, 'cut', false), 'cut', 1.4, a * (hover && !near.has(id) ? 0.15 : 0.6), false, kindColors(b.kind, b.region).stroke);
+  }
   // blobs, big first so small ones stay visible on top
   const ids = [...VIS.keys()].sort((a, b) => VIS.get(b).r - VIS.get(a).r);
   for (const id of ids) {
-    const v = VIS.get(id), b = v.blob, u = U.get(id), x = sx(u.x), y = sy(u.y), R = v.r * VIEW.s;
-    if (R < 1) continue;
+    const v = VIS.get(id), b = v.blob, x = sx(v.x), y = sy(v.y), R = v.r * VIEW.s, shown = vis.get(id);
+    if (R < 1 || shown < 0.01) continue;
+    if (x + R < -60 || x - R > VW + 60 || y + R < -60 || y - R > VH + 60) continue;
     const page = PAGE(b.kind), col = kindColors(b.kind, b.region), seed = hash(id), present = IDX[cur].blobs.has(id);
     const shape = (r, tt = t) => shapePath(ctx, b.kind, x, y, r, seed, tt), ms = present ? marks.get(id) || [] : [];
-    let alpha = v.a * (b.kind === 'orphan' ? 0.75 : 1);
+    let alpha = v.a * shown * (b.kind === 'orphan' ? 0.75 : 1);
     if ((hover || hoverNode) && !near.has(id)) alpha *= 0.22;
     ctx.save(); ctx.globalAlpha = alpha;
     shape(R); ctx.fillStyle = col.fill; ctx.fill();
@@ -737,8 +1064,16 @@ function drawMap(now, t) {
       for (const m of ms) { const p = stainSpot(id, m, R, m.size); drawStain(ctx, x + p.dx, y + p.dy, p.r, m, p.seed, now); stainGeo.push({ id, m, x: x + p.dx, y: y + p.dy, r: p.r }); }
       ctx.restore();
     }
+    // a blob that gave up pieces: a bite out of its rim toward each of them
+    for (const kid of present ? st.kids.get(id) || [] : []) {
+      const kv = VIS.get(kid); if (!kv) continue;
+      const ang = Math.atan2(kv.y - v.y, kv.x - v.x), br = clamp(R * 0.13, 4, 24), bx = x + Math.cos(ang) * R * 1.03, by = y + Math.sin(ang) * R * 1.03;
+      ctx.save(); ctx.beginPath(); ctx.arc(bx, by, br, 0, TAU); ctx.fillStyle = T.bg; ctx.fill();
+      ctx.beginPath(); ctx.arc(bx, by, br, ang + Math.PI * 0.62, ang + Math.PI * 1.38); ctx.strokeStyle = col.stroke; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.stroke(); ctx.restore();
+    }
     ctx.lineWidth = page ? 1.3 * Math.max(0.75, VIEW.s) : lineW(b.complexity) * Math.max(0.75, VIEW.s); ctx.strokeStyle = col.stroke; ctx.lineJoin = 'round';
-    if (b.kind === 'orphan') ctx.setLineDash([5, 4]);
+    if (b.cut) { ctx.lineWidth = Math.min(ctx.lineWidth, 2.4); ctx.setLineDash([7, 4]); }     // a cut piece: dashed, as if torn off
+    else if (b.kind === 'orphan') ctx.setLineDash([5, 4]);
     shape(R); ctx.stroke(); ctx.setLineDash([]);
     if (present && b.delta.state === 'new') {          // new blob: its whole outline flashes, then stays lit while this step is current
       const f = clamp((now - stepAt) / 900, 0, 1), blink = 0.55 + 0.45 * Math.cos(f * Math.PI * 3);
@@ -746,8 +1081,18 @@ function drawMap(now, t) {
       shape(R + 4 + 10 * (1 - f)); ctx.stroke();
     }
     if (present && b.delta.moved > 0 && b.delta.state !== 'new') shimmer(ctx, x, y, R + 3, seed, t, alpha);
-    if (hover === id) { ctx.strokeStyle = T.flash; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9; shape(R + 5); ctx.stroke(); }
-    ctx.globalAlpha = alpha;
+    if (hover === id) { ctx.strokeStyle = T.flash; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9 * shown; shape(R + 5); ctx.stroke(); }
+    ctx.restore();
+    // small blobs folded into this one: satellites on its rim, sized by their lines, with their own face
+    if (b.merged && !page) b.merged.forEach((m, k) => {
+      const rs = clamp(K * Math.sqrt(m.lines || 1) * 0.55 * VIEW.s, 3, Math.max(3, R * 0.12)), ang = -Math.PI / 3 + k * (rs * 2.4 + 3) / Math.max(R + rs, 1), d = R + rs + 2;
+      const mx = x + Math.cos(ang) * d, my = y + Math.sin(ang) * d;
+      ctx.save(); ctx.globalAlpha = alpha * 0.5; ctx.strokeStyle = col.stroke; ctx.lineWidth = 1; ctx.beginPath();
+      ctx.moveTo(x + Math.cos(ang) * R * 0.98, y + Math.sin(ang) * R * 0.98); ctx.lineTo(mx - Math.cos(ang) * rs, my - Math.sin(ang) * rs); ctx.stroke();
+      ctx.globalAlpha = alpha; ctx.beginPath(); ctx.arc(mx, my, rs, 0, TAU); ctx.fillStyle = col.fill; ctx.fill(); ctx.lineWidth = 1.2; ctx.stroke(); ctx.restore();
+      drawEmoji(m.label?.emoji || m.emoji || '•', mx, my, rs * 1.25, alpha);
+    });
+    ctx.save(); ctx.globalAlpha = alpha;
     // emoji + name (a page carries no emoji and is always named below itself)
     const label = shortName(b.title), fs = clamp(R * 0.3, 11, 15);
     ctx.font = `600 ${fs}px ${SANS}`; const tw = ctx.measureText(label).width, inside = !page && tw < R * 1.75 && R > 24;
@@ -761,14 +1106,14 @@ function drawMap(now, t) {
     }
     const below = page ? R * 0.92 : R;
     if (inside) { ctx.fillText(label, x, y + es * 0.55 + 2); labels.push({ force: true, text: label, x, y: y + es * 0.55 + 2, fs }); }
-    else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, col: col.text, alpha: hover && !near.has(id) ? 0.2 : alpha, big: R });
+    else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, col: col.text, alpha: hover && !near.has(id) ? 0.2 * shown : alpha, big: R });
     ctx.restore();
   }
   // region names first, then inside labels (as obstacles), then outside labels, hovered blob always wins
   const order2 = l => l.region ? 0 : l.force ? 1 : 2;
   labels.sort((a, b) => order2(a) - order2(b) || (b.big || 0) - (a.big || 0));
-  if (hover) { const v = VIS.get(hover), u = U.get(hover), hy = sy(u.y) + v.r * VIEW.s; const i = labels.findIndex(l => !l.region && !l.force && Math.abs(l.y - hy) < 20 && Math.abs(l.x - sx(u.x)) < 1); if (i > 0) labels.unshift(...labels.splice(i, 1)); }
-  placeLabels(labels);
+  if (hover) { const v = VIS.get(hover), hy = sy(v.y) + v.r * VIEW.s; const i = labels.findIndex(l => !l.region && !l.force && Math.abs(l.y - hy) < 20 && Math.abs(l.x - sx(v.x)) < 1); if (i > 0) labels.unshift(...labels.splice(i, 1)); }
+  placeLabels(labels.filter(l => l.force || l.alpha == null || l.alpha > 0.02));
 }
 
 /* ───────────────────────── drill-down ───────────────────────── */
@@ -776,8 +1121,8 @@ let drill = null, cardFor = null;
 const drillMem = new Map();          // blob id → Map(qual → {x,y}) so a revisit keeps its arrangement
 function openDrill(id) {
   const b = IDX[cur].blobs.get(id); if (b && PAGE(b.kind)) { showFileCard(id); return; }      // a page has no functions to open
-  hideCard(); drill = { id, pos: drillMem.get(id) || new Map(), sel: null, hov: null, t0: performance.now(), chips: [] }; drillMem.set(id, drill.pos); hover = null; hideTip(); }
-function closeDrill() { drill = null; hideCard(); }
+  hideCard(); drill = { id, pos: drillMem.get(id) || new Map(), sel: null, hov: null, t0: performance.now(), chips: [] }; drillMem.set(id, drill.pos); hover = null; hideTip(); if (AREAS_ON) crumbs(); }
+function closeDrill() { drill = null; hideCard(); if (AREAS_ON) crumbs(); }
 function drillGeo() {
   const C = { x: VW / 2, y: TOP + (VH - TOP - BOTTOM) / 2 + 4 }, RR = Math.min(VW * 0.42, VH - TOP - BOTTOM - 130) * 0.5;
   return { C, RR };
@@ -863,10 +1208,10 @@ function drawDrill(now, t) {
   }
   // calls leaving / entering the blob end at chips on the rim, placed toward the other blob on the app map
   // every edge of this blob in this step becomes a chip; its lines end at the functions involved, or at the rim
-  const owner = IDX[cur].owner, ext = new Map(), me = U.get(drill.id);
+  const owner = IDX[cur].owner, ext = new Map(), me = VIS.get(drill.id) || U.get(drill.id);
   const chipOf = bid => {
     let x = ext.get(bid);
-    if (!x) { const u = U.get(bid); x = { bid, ang: Math.atan2(u.y - me.y, u.x - me.x), links: [], kinds: new Set(), via: new Set() }; ext.set(bid, x); }
+    if (!x) { const u = VIS.get(bid) || U.get(bid); x = { bid, ang: Math.atan2(u.y - me.y, u.x - me.x), links: [], kinds: new Set(), via: new Set() }; ext.set(bid, x); }
     return x;
   };
   for (const e of STEPS[cur].edges) {
@@ -1001,7 +1346,7 @@ function placeFileCard() {
   const card = $('#card'), w = card.offsetWidth, h = card.offsetHeight;
   let x, y;
   if (fileAt) { x = fileAt.x - w / 2; y = fileAt.y + 10; }
-  else { const u = U.get(fileCard), v = VIS.get(fileCard), r = (v ? v.r : u.R) * VIEW.s, px = sx(u.x), py = sy(u.y);
+  else { const u = U.get(fileCard), v = VIS.get(fileCard), r = (v ? v.r : u.R) * VIEW.s, px = sx(v ? v.x : u.x), py = sy(v ? v.y : u.y);
          x = px + r * 0.74 + 16; if (x + w > VW - 8) x = px - r * 0.74 - 16 - w; y = py - h / 2; }
   card.style.left = clamp(x, 8, VW - w - 8) + 'px'; card.style.top = clamp(y, TOP + 8, VH - BOTTOM - h - 8) + 'px';
 }
@@ -1070,6 +1415,8 @@ function setStep(i) {
   if (cardFor) cardFor = null;
   if (fileCard) showFileCard(fileCard, fileAt);
   if (drill && drill.sel && !IDX[i].funcs.has(drill.sel)) { drill.sel = null; hideCard(); }
+  followStep();
+  if (AREAS_ON) crumbs();
 }
 function setPlaying(p) {
   playing = p; acc = 0;
@@ -1085,9 +1432,11 @@ function showTip(html, x, y) { if ($('#card').style.display === 'block') { hideT
 function hideTip() { tip.style.display = 'none'; }
 function blobAt(x, y) {
   let best = null, bd = Infinity;
+  const show = AMIX > 0.01 ? areaShow() : null;
   for (const [id, v] of VIS) {
     if (!IDX[cur].blobs.has(id)) continue;
-    const u = U.get(id), dx = sx(u.x) - x, dy = sy(u.y) - y, d = Math.hypot(dx, dy), R = v.r * VIEW.s;
+    if (show && 1 - AMIX + AMIX * (show.get(v.blob.area) || 0) < 0.3) continue;     // a blob its area does not show yet
+    const u = U.get(id), dx = sx(v.x) - x, dy = sy(v.y) - y, d = Math.hypot(dx, dy), R = v.r * VIEW.s;
     const inside = PAGE(u.kind) ? Math.abs(dx) < R * 0.74 + 3 && Math.abs(dy) < R * 0.92 + 3 : d < R + 3;
     if (inside && d < bd) { best = id; bd = d; }
   }
@@ -1110,10 +1459,19 @@ function blobTip(b) {
     ${L.summary ? `<div class="sum">${esc(L.summary)}</div>` : ''}<div class="k">${esc(KIND_LABEL[b.kind] || b.kind)} · ${esc(b.region)} · ${esc(b.id)}</div>
     <div>${b.size} lines · complexity ${b.complexity} · ${b.errors} error exits · ${b.funcs.length} funcs</div>
     <div>${d.added || d.removed ? `<span class="add">+${d.added}</span> <span class="rem">−${d.removed}</span> this step` : '<span class="k">no lines edited this step</span>'}${d.moved ? ` · <span class="k">${d.moved} lines moved between blobs</span>` : ''}${d.state === 'new' ? ' · <b>new</b>' : ''}</div>
-    <div class="k">${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(' · ') || 'no edges'}</div>
+    <div class="k">${Object.entries(kinds).map(([k, n]) => `${n} ${k}`).join(' · ') || 'no edges'}</div>${zoomNotes(b)}
     <div>${b.data.slice(0, 8).map(s => `<span class="sym">${esc(s)}</span>`).join('')}</div><div class="k" style="margin-top:4px">click to open</div>`;
 }
+/* schema v5 marks: what was folded into a blob, what it was cut from or gave up */
+function zoomNotes(b) {
+  const out = [], kids = STEPS[cur].kids.get(b.id) || [];
+  if (b.merged?.length) out.push(`folded in: ${b.merged.map(m => `${esc(m.label?.emoji || m.emoji || '')} ${esc(m.label?.title || m.name)} (${m.lines} lines)`).join(', ')}`);
+  if (b.cut) out.push(`cut from ${esc(IDX[cur].blobs.get(b.cut)?.title || b.cut)}${b.label ? '' : ' · not labelled yet'}`);
+  if (kids.length) out.push(`gave up: ${kids.map(k => esc(IDX[cur].blobs.get(k)?.title || k)).join(', ')}`);
+  return out.map(t => `<div class="k">${t}</div>`).join('');
+}
 function onMove(ev) {
+  if (dragged(ev)) return;
   mouse = { x: ev.clientX, y: ev.clientY };
   if (drill) {
     const ch = drill.chips.find(c => mouse.x > c.x0 && mouse.x < c.x1 && mouse.y > c.y0 && mouse.y < c.y1);
@@ -1130,7 +1488,11 @@ function onMove(ev) {
     else hideTip();
     return;
   }
-  hover = blobAt(mouse.x, mouse.y); hoverEdge = null; hoverNode = null;
+  hover = blobAt(mouse.x, mouse.y); hoverEdge = null; hoverNode = null; hoverArea = null;
+  if (!hover && AMIX > 0.5) {
+    const h = areaHits.filter(h => h.face > 0.3 || h.id !== openA).find(h => Math.hypot(h.x - mouse.x, h.y - mouse.y) < h.R);
+    if (h) { hoverArea = h.id; cv.style.cursor = 'pointer'; showTip(areaTip(h.id), mouse.x, mouse.y); return; }
+  }
   if (!hover) { const dn = dnGeo.find(d => Math.hypot(d.x - mouse.x, d.y - mouse.y) < 9); if (dn) hoverNode = dn.g; }
   if (hoverNode) {
     showTip(`<b>shared data</b> <span class="k">· ${hoverNode.ids.length} blobs</span><div>${hoverNode.syms.map(s => `<span class="sym">${esc(s)}</span>`).join('')}</div>
@@ -1153,6 +1515,8 @@ function onMove(ev) {
 }
 function onClick(ev) {
   const x = ev.clientX, y = ev.clientY;
+  if (drag && drag.moved) { drag = null; return; }      // the end of a pan, not a click
+  drag = null;
   if (drill) {
     const ch = drill.chips.find(c => x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1);
     if (ch) {
@@ -1167,10 +1531,28 @@ function onClick(ev) {
     if (Math.hypot(x - C.x, y - C.y) > RR * 1.05) closeDrill(); else { drill.sel = null; hideCard(); }
     return;
   }
-  const id = blobAt(x, y); if (id) openDrill(id); else hideCard();
+  const id = blobAt(x, y);
+  if (id) { openDrill(id); crumbs(); return; }
+  if (AREAS_ON) {
+    const h = areaHits.filter(h => h.face > 0.3 || h.id !== openA).find(h => Math.hypot(h.x - x, h.y - y) < h.R);
+    if (h) { if (h.id !== openA) openArea(h.id); return; }
+    if (!(openA != null && areaHits.some(h => h.id === openA && Math.hypot(h.x - x, h.y - y) < h.R))) areaUp();
+    return;
+  }
+  hideCard();
 }
+/* with areas on a drag pans the camera (the click that ends it is swallowed) */
+let drag = null;
+function dragged(ev) {
+  if (!drag || !(ev.buttons & 1)) return false;
+  const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
+  if (!drag.moved && Math.hypot(dx, dy) < 5) return false;
+  drag.moved = true; CAM = null; hideTip(); VIEW = { ...VIEW, ox: drag.ox + dx, oy: drag.oy + dy }; return true;
+}
+cv.addEventListener('mousedown', e => { if (AREAS_ON && !drill && e.button === 0) drag = { x: e.clientX, y: e.clientY, ox: VIEW.ox, oy: VIEW.oy, moved: false }; });
+cv.addEventListener('wheel', onWheel, { passive: false });
 cv.addEventListener('mousemove', onMove);
-cv.addEventListener('mouseleave', () => { hover = null; hoverEdge = null; hoverNode = null; hideTip(); });
+cv.addEventListener('mouseleave', () => { hover = null; hoverEdge = null; hoverNode = null; hoverArea = null; hideTip(); });
 cv.addEventListener('click', onClick);
 let scrubbing = false;
 tl.addEventListener('pointerdown', e => { scrubbing = true; tl.setPointerCapture(e.pointerId); setPlaying(false); setStep(tickAt(e.offsetX)); });
@@ -1186,10 +1568,15 @@ $('#play').onclick = togglePlay;
 $('#prev').onclick = () => { setPlaying(false); setStep(cur - 1); };
 $('#next').onclick = () => { setPlaying(false); setStep(cur + 1); };
 $('#speed').onchange = e => { speed = +e.target.value; };
+$('#areasBtn').onclick = () => setAreas(!AREAS_ON);
+$('#followBtn').onclick = () => setFollow(!FOLLOW);
 $('#legendBtn').onclick = () => { const on = $('#legend').classList.toggle('on'); $('#legendBtn').setAttribute('aria-expanded', on); };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT') return;
-  if (e.key === 'Escape') { if (drill) closeDrill(); else if (fileCard) hideCard(); else $('#legend').classList.remove('on'); }
+  if (e.key === 'Escape') { if (drill) { closeDrill(); crumbs(); } else if (fileCard) hideCard(); else if (!(AREAS_ON && areaUp())) $('#legend').classList.remove('on'); }
+  else if (e.key === 'Backspace' && AREAS_ON) { e.preventDefault(); areaUp(); }
+  else if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey) $('#areasBtn').click();
+  else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) $('#followBtn').click();
   else if (e.key === ' ') { e.preventDefault(); togglePlay(); }
   else if (e.key === 'ArrowLeft') { setPlaying(false); setStep(cur - 1); }
   else if (e.key === 'ArrowRight') { setPlaying(false); setStep(cur + 1); }
@@ -1224,7 +1611,12 @@ function buildLegend() {
     <div class="row"><span class="dot" style="border:2px solid ${T.flash}"></span> new blob</div>
     <div class="row"><span class="dot" style="border:1.5px dashed ${T.mute}"></span> code moved in</div>
     ${SESS_ON ? `<div class="row">${stain(T.git)} changed by a git commit</div>` : ''}</div>
-    <div class="keys">pure additions leave no stain: the blob grows instead<br>click blob → functions · click page → file card<br>space play · ← → step · esc back · L legend${SESS_ON ? '<br>g / G next / previous git step · s / S next / previous session' : ''}</div>`;
+    <h4>folds and cuts</h4>
+    <div class="row"><span class="dot" style="border:1.5px solid ${T.mute};width:9px;height:9px;margin:0 2.5px"></span> satellite: a small blob folded into this one</div>
+    <div class="row"><span class="sw" style="border-style:dashed;border-color:${T.mute}"></span> piece cut out of a big blob (that one has a bite)</div>
+    <h4>areas (A) · above the blob map</h4>
+    <div class="row" style="color:var(--mute)">blobs grouped by module and calls; size = their lines, 3 faces, a caption; lines sum the links between areas. An area edited this step pulses and carries its blobs' stains.</div>
+    <div class="keys">pure additions leave no stain: the blob grows instead<br>click blob → functions · click page → file card<br>space play · ← → step · esc back · L legend<br>A areas: click / wheel into an area, esc · breadcrumb · backspace up, drag pans<br>F follow: each step flies to the edited ${AREAS_ON ? 'area' : 'blob'}${SESS_ON ? '<br>g / G next / previous git step · s / S next / previous session' : ''}</div>`;
 }
 
 /* ───────────────────────── loop & boot ───────────────────────── */
@@ -1248,13 +1640,22 @@ function frame(now) {
     const data = await load();
     normalize(data);
     if (!STEPS.length) throw new Error(`${SRC} has no steps`);
-    buildLegend(); buildSessions(); layout(); resize();
+    buildLegend(); buildSessions(); layout(); layoutAreas(); resize();
     const qs = new URLSearchParams(location.search);
+    APP_NAME = String(data.root || '').replace(/\/+$/, '').split('/').pop() || 'app';
+    if (!AU.size) { $('#areasBtn').disabled = true; $('#areasBtn').title = 'this timeline has no areas (schema v5, timeline.py)'; }
+    // areas: remembered per browser (?areas=1 / 0 overrides for this visit); follow: off unless ?follow=1
+    setAreas(qs.has('areas') ? qs.get('areas') === '1' : store.get('aiblob.areas') === '1', qs.has('areas'));
+    setFollow(qs.get('follow') === '1');
+    AMIX = AREAS_ON ? 1 : 0;
     $('#src').textContent = SRC; $('#src').classList.toggle('sample', SRC.startsWith('sample'));
     $('#meta').textContent = `${data.session || ''} · ${data.root || ''} · ${STEPS.length} steps · ${U.size} blobs over the session`;
     tl.setAttribute('aria-valuemax', STEPS.length - 1);
     $('#empty').remove();
-    setStep(qs.has('step') ? +qs.get('step') : STEPS.length - 1); VIEW = camTarget();
+    setStep(qs.has('step') ? +qs.get('step') : STEPS.length - 1);
+    if (AREAS_ON && qs.has('area') && AU.has(qs.get('area'))) openA = qs.get('area');
+    for (const [id, v] of VIS) { const h = homeOf(id, v.blob); v.x = h.x; v.y = h.y; }
+    VIEW = AREAS_ON ? areaCam() : camTarget(); CAM = null; crumbs();
     if (qs.has('drill')) openDrill(qs.get('drill'));
   } catch (e) {
     $('#empty').textContent = String(e.message || e); $('#meta').textContent = 'no data';

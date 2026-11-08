@@ -12,6 +12,10 @@ deepseek` so the reasoning comes back apart from `content`); give it --max-token
 Asks a local llama-server (start it with ./serve-llm.sh) for emoji/title/summary/risk per
 distinct blob content (sorted func hashes), caches by that key, and writes the result into
 every blob with the same content as `label: {...}`. Heuristic emoji/name remain the fallback.
+Schema v5 blobs (areas.py) keep the key of the blob as the analyzer drew it: functions folded in
+from a small blob (`merged`) do not count, a cut parent's key also covers its pieces' functions,
+and each `merged` entry gets the label of its own functions. The areas' captions and faces are
+recomputed from the labels (areas.caption_table()).
 
 Blobs are labelled one at a time, module by module, and each prompt lists the titles already
 chosen (same module first). A title is never clipped: one over 4 words, an unfinished phrase or
@@ -41,7 +45,8 @@ import urllib.error
 import urllib.request
 from collections import Counter
 
-import timeline  # expand() / compact(): timeline.json is schema v3 / v4 (deltas)
+import areas
+import timeline  # expand() / compact(): timeline.json is schema v3 / v4 / v5 (deltas)
 
 TIMEOUT = 60
 MAX_WORDS = 4
@@ -69,13 +74,35 @@ def file_head(root, blob):
         return []
 
 
+def own_hashes(blob):
+    """Hashes of a blob's own functions: not those folded in from a smaller blob (`merged`, schema v5)."""
+    folded = {q for m in blob.get("merged", ()) for q in m["funcs"]}
+    return [f["hash"] for f in blob.get("funcs", []) if not folded or f.get("qual") not in folded]
+
+
 def content_key(blob):
     if blob["kind"] in ("file", "text"):  # "_head" is set by main(); key = path + head hash
         head = blob.get("_head")
         if not head:
             return ""
         return "file:" + blob["path"] + ":" + hashlib.sha1("\n".join(head).encode()).hexdigest()[:10]
-    return ",".join(sorted(f["hash"] for f in blob.get("funcs", [])))
+    return ",".join(sorted(own_hashes(blob)))
+
+
+def step_keys(step):
+    """{blob id: cache key} of a step's blobs: content_key(), except that a cut parent's key also covers its
+    pieces' own functions, i.e. it is the key of the blob before the cut (schema v5). Set as step["_keys"]."""
+    pieces = {}
+    for b in step["blobs"]:
+        if "cut" in b:
+            pieces.setdefault(b["cut"], []).extend(own_hashes(b))
+    return {b["id"]: ",".join(sorted(own_hashes(b) + pieces[b["id"]])) if b["id"] in pieces else content_key(b)
+            for b in step["blobs"]}
+
+
+def key_of(step, blob):
+    keys = step.get("_keys")
+    return keys[blob["id"]] if keys is not None else content_key(blob)
 
 
 def system_prompt(last_step):
@@ -162,15 +189,30 @@ def siblings(blob_id, module, titles, module_of):
 
 
 def apply_labels(steps, cache):
-    """Set each blob's `label` from the cache; a blob the cache does not back loses any old label.
-    Blobs are shared between steps, so run this before dropping the `_head` keys content_key reads."""
+    """Set each blob's `label` from the cache; a blob the cache does not back loses any old label. Each
+    `merged` entry gets the label of its own functions, and a step's areas table is recomputed from the labels.
+    Blobs are shared between steps, so run this before dropping the `_head` keys content_key reads; a shared
+    blob whose label differs between two steps (a cut parent whose piece changed) is copied for the later one."""
+    given = {}
     for step in steps:
-        for b in step["blobs"]:
-            label = cache.get(content_key(b))  # file blobs are keyed by their _head
+        for i, b in enumerate(step["blobs"]):
+            label = cache.get(key_of(step, b))  # file blobs are keyed by their _head
+            if id(b) in given and given[id(b)][1] is not label:
+                b = step["blobs"][i] = dict(b)
+            given[id(b)] = (b, label)       # the blob itself too, so its id is not reused while this runs
             if label:
                 b["label"] = label
             else:
                 b.pop("label", None)
+            for m in b.get("merged", ()):
+                mine = set(m["funcs"])
+                lab = cache.get(",".join(sorted(f["hash"] for f in b["funcs"] if f.get("qual") in mine)))
+                if lab:
+                    m["label"] = lab
+                else:
+                    m.pop("label", None)
+        if "areas" in step:
+            step["areas"] = areas.caption_table(step["blobs"], [a["id"] for a in step["areas"]])
 
 
 def post(server, path, body, timeout=TIMEOUT):
@@ -275,7 +317,7 @@ def changed_versions(steps):
     for step in steps:
         cur, todo = {}, {}
         for b in step["blobs"]:
-            key = cur[b["id"]] = content_key(b)
+            key = cur[b["id"]] = key_of(step, b)
             if key and prev.get(b["id"]) != key:
                 todo.setdefault(key, b)
         out.append(list(todo.values()))
@@ -322,8 +364,9 @@ def label_step(server, step, blobs, cache, a):
     the step. -> (model calls, [error texts])."""
     system = system_prompt(step)
     module_of = {b["id"]: b["module"] for b in step["blobs"]}
-    titles = {b["id"]: cache[content_key(b)]["title"] for b in step["blobs"] if content_key(b) in cache}
-    todo = [b for b in blobs if content_key(b) not in cache]
+    key = lambda b: key_of(step, b)
+    titles = {b["id"]: cache[key(b)]["title"] for b in step["blobs"] if key(b) in cache}
+    todo = [b for b in blobs if key(b) not in cache]
     calls, errors = 0, []
     for module in dict.fromkeys(b["module"] for b in todo):
         for blob in (b for b in todo if b["module"] == module):
@@ -333,9 +376,9 @@ def label_step(server, step, blobs, cache, a):
                 stats = {"prompt": 0, "gen": 0, "reasoning": 0, "truncated": 0, "retries": 0,
                          "rejected": Counter(), "fallback": False, "calls": 0}
                 try:
-                    cache[content_key(blob)] = ask(server, system, blob, stats, taken, a.max_tokens,
-                                                   a.think, a.prompt_chars)
-                    titles[blob["id"]] = cache[content_key(blob)]["title"]
+                    cache[key(blob)] = ask(server, system, blob, stats, taken, a.max_tokens,
+                                           a.think, a.prompt_chars)
+                    titles[blob["id"]] = cache[key(blob)]["title"]
                     break
                 except Exception as e:  # retried, then the step is marked failed
                     err = e
@@ -361,7 +404,7 @@ def run_per_step(a, steps, cache):
     picked = step_range(a.steps, len(steps)) if a.steps else range(len(steps))
     plan, skipped = [], 0
     for i in picked:
-        keys = sorted(content_key(b) for b in versions[i])
+        keys = sorted(key_of(steps[i], b) for b in versions[i])
         if not keys:
             continue
         digest = hashlib.sha1("\n".join(keys).encode()).hexdigest()[:12]
@@ -384,7 +427,7 @@ def run_per_step(a, steps, cache):
     failed_in_row = 0
     for n, (i, digest) in enumerate(plan, 1):
         blobs = versions[i]
-        hits = sum(content_key(b) in cache for b in blobs)
+        hits = sum(key_of(steps[i], b) in cache for b in blobs)
         if hits == len(blobs):  # an earlier step of this run labelled them
             continue
         pause, temp0 = cool_down(a.hot, a.cool)
@@ -495,18 +538,20 @@ def main():
             head = file_head(tl.get("root", "."), b)
             if head:
                 b["_head"] = head
+    for step in steps:
+        step["_keys"] = step_keys(step)
     if a.per_step:
         run_per_step(a, steps, cache)
         return
 
-    keys = {content_key(b) for step in steps for b in step["blobs"]} - {""}
+    keys = {key_of(step, b) for step in steps for b in step["blobs"]} - {""}
     hits, stale_n = len(keys & cache.keys()), len(keys & set(stale))
 
     # One representative blob per uncached content key (latest step wins, with its edges).
     todo = {}
     for step in steps:
         for b in step["blobs"]:
-            key = content_key(b)
+            key = key_of(step, b)
             if key and key not in cache:
                 b["_edges"] = [e for e in step["edges"] if b["id"] in (e["a"], e["b"])]
                 todo[key] = b
@@ -525,8 +570,8 @@ def main():
         # siblings of it). Their titles so far: cache hits first, the rest as they get labelled.
         final = steps[-1]["blobs"]
         module_of = {b["id"]: b["module"] for b in final}
-        titles = {b["id"]: cache[content_key(b)]["title"] for b in final if content_key(b) in cache}
-        final_keys = {content_key(b) for b in final}
+        titles = {b["id"]: cache[key_of(steps[-1], b)]["title"] for b in final if key_of(steps[-1], b) in cache}
+        final_keys = {key_of(steps[-1], b) for b in final}
         order = sorted(todo, key=lambda k: k not in final_keys)  # last-step blobs first
         stats = {}
         t_all = time.monotonic()
@@ -569,6 +614,7 @@ def main():
 
     apply_labels(steps, cache)
     for step in steps:
+        step.pop("_keys", None)
         for b in step["blobs"]:
             b.pop("_edges", None)
             b.pop("_head", None)

@@ -193,3 +193,63 @@ for functions of a re-parsed module whose text did not change.
   182 → 122 MB, peak RSS 497 → 314 MB (expand alone 0.19 → 0.22 s). Demo: 114 → 95 KB compact. expand(v4) ==
   expand(v3) on every aigource step (Python and the page's expandSteps() in node); labels 1221 cache hits, 0 calls.
 - Canvas clips long titles visually; headless-only perf numbers for the page.
+
+## Areas, merges and cuts outcome (2026-11-08): schema v5
+Ported the approved zoom draft into the real pipeline (areas.py, timeline.py, label.py, web/index.html; SCHEMA.md "v5").
+- Merges and cuts are the default blob map (`timeline.py --no-smart` keeps the analyzer's, for debugging / tests):
+  blobs under 20 lines fold into their module's biggest blob (else the one they share most calls / data with),
+  never routes, entries, error handlers, hooks or cut parents; blobs of 500+ lines / 50+ functions give up
+  callee pieces owning 10%+ of their lines (dominators, split_entry's depth rule); a piece's module is its root
+  function's file's (a method root `app.Svc.run` is in `app`). Edges are recounted over the new blobs as analyze()
+  counts them: tests/test_areas.py checks them against a count written from scratch, step by step over c-mini built
+  and edited with the gates lowered (folds and cuts at most steps; the scratch count first equals analyze()'s own
+  edges on the unreshaped blobs); a bumped, duplicated or dropped edge fails it.
+- Areas: modules (header with its .c) of one top directory joined by call sites per line, <= 9 blobs per join,
+  down to min(7, ceil(blobs / 9)) + one per further top dir; past 12 areas the cap gives way (never more than 12
+  code areas); plus `tests`, `files`. Joins from a heap of pair scores, same joins as the plain scan. Stability rule: a module keeps
+  its area id; the grouping is recomputed only when the module set or the cross-module call sites change; new
+  modules join at once; existing modules move only when the same fresh grouping has held for the 40 steps after the
+  one it came out on (or half the session) and would change some area by more than half its lines. Captions / faces: word frequency over the
+  members' label titles and their top 3 emojis by lines, recomputed by label.py when it applies labels.
+- Page: Areas toggle (button + A, localStorage, default off) adds the area level above the blob map in the draft's
+  drawing (organic area blobs sized by members, 3 faces, caption, summed edges, camera fly on click / wheel,
+  neighbours dimmed, breadcrumb, Esc / Backspace up, drag pans); an area edited this step pulses and carries its
+  blobs' stains and heat. Follow toggle (button + F, default off) flies to the edited area / blob each step.
+  Satellites for folded blobs, dashed outline + bite for cuts, in both modes. Blob -> function drill-down unchanged.
+- aigource map (1,270 steps, README build; incremental == --full byte for byte): blobs at the last step 180 -> 167
+  (code 127 -> 114: 15 pieces from 10 cuts, 28 folds), 10 areas at the end (8 code + tests + files), 18 area ids
+  over the session, 96 blob area reassignments in 6 regroups. Per-step p50 (quiet A/B, same machine, load ~2.5
+  from other sessions): HEAD 61.9 / 63.4 ms, v5 70.9-74.1 ms (+~10 ms; areas.apply p50 ~8 ms: reshape 4, recount
+  3, areas 2). Size: 7.89 -> 8.68 MB compact before labels, 15.1 MB as label.py writes it (13.6 MB at v4); the
+  areas table is sent on 249 of 1,270 steps. Labels: 1,130 cache hits, 0 calls; every non-piece key still hits,
+  the 192 versions of the 15 pieces are the only uncached keys (no history labelling run, per the live-only rule).
+- Flask demo: 3 folds (hub:auth -> auth.login, hub:api -> api.create_note, hub:notes -> notes.edit), no cuts,
+  3 code areas + tests + files, 6 reassignments (one regroup at step 13). tests/golden/flask_final.json updated:
+  the three hubs are gone into their targets, 113 -> 102 edges (edges into the hubs now point at the targets, n
+  summed; data edges between a hub and its target became internal), blobs carry `area` / `merged`, `areas` table.
+
+- Verifier round (same day): a cut piece rooted at a method took a ghost module (`app.Svc`) and could land in
+  another area than its parent (4 of the cuts in TechnicalAnalysis's first 30 steps); now the root function's file
+  module. The vacuous identity test of `recount` is replaced by the differential one above. `group()` joins from a
+  heap (same joins as the plain scan, checked on random inputs; 200 modules 0.72 -> 0.09 s, 400 5.7 -> 0.4 s) and
+  the 9-blob cap gives way past 12 areas. aigource and Flask maps unchanged byte for byte (labelled aigource map
+  too; 96 reassignments, 6 regroups). TechnicalAnalysis, first 30 steps (seed-git): 14 areas (12 code + tests +
+  files; 31 before the cap gave way), 397 code blobs, 20 pieces all in their parent's area, regroup 33 ms (was
+  236-271 ms), per-step p50 276 ms vs 228 ms at HEAD (step 0 4.3 s both).
+- Follow-up: the 12-area bound also holds while a session grows (new modules join an existing area at the cap; an
+  assignment over the cap adopts the fresh grouping at once): 150 modules added one per step stay at 12 areas, 0
+  regroups (was 19 areas). A Flask fixture now drives recount's residual branches (abort edge of a folded hub
+  redirected to its new home, a cut parent's ref split to the piece, the extra literal kept by the parent); each
+  of four mutations of those branches fails it. aigource and Flask maps unchanged.
+- User decision: Space stays play / pause; Esc, Backspace and the breadcrumb go up a level (README).
+
+## Backlog, areas
+- On TechnicalAnalysis the areas pass costs ~48 ms per step (p50 276 vs 228 ms): reshape, recount and the areas'
+  call-site table walk every function each step; reuse them across steps when blob membership and calls did not
+  change.
+- Pieces stay unlabelled until a live labelling run reaches them (root function name + parent's emoji meanwhile).
+- The cost is ~10 ms per step on aigource; reshape could reuse the previous step's units when no blob changed
+  membership or calls (most steps), if that matters.
+- An open area's dashed outline is sized by its farthest member, so a lone outlier leaves empty room; the local
+  layout could pull outliers in.
+- Captions before labels come from heuristic names (function names for C commands); label.py fixes them.

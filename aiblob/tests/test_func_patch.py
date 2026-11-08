@@ -35,7 +35,7 @@ def step(i, *blobs):
 
 def encode(steps):
     """v4 and v3 encodings of full-state steps; both expand back to them byte for byte (through JSON)."""
-    v4 = json.loads(dump({'schema': 4, 'steps': timeline.compact(steps)}))
+    v4 = json.loads(dump({'schema': 4, 'steps': timeline.compact(steps, 4)}))
     v3 = json.loads(dump({'schema': 3, 'steps': timeline.compact(steps, 3)}))
     assert dump(timeline.expand(v4)) == dump(steps) == dump(timeline.expand(v3))
     assert not any(s.get('full') for s in v4['steps'][1:])
@@ -116,7 +116,7 @@ def test_func_whose_keys_change_is_replaced_and_repeated_quals_send_the_step_ful
     b = sent(encode(steps), 1, 'A')
     assert b['funcs'] == [a2] and b['funcs_remove'] == ['m.a2'] and b['funcs_order'] == ['m.a1', 'm.a2', 'm.a3']
     twice = [step(0, blob('A', A0, 'new')), step(1, blob('A', A0 + [A0[0]]))]
-    out = timeline.compact(twice)
+    out = timeline.compact(twice, 4)
     assert out[1].get('full') and dump(timeline.expand({'schema': 4, 'steps': out})) == dump(twice)
 
 
@@ -132,6 +132,27 @@ def fixture():
                  blob('B', [dict(a3m, delta=dict(timeline.ZERO)), b1])),
             step(4, blob('A', [dict(a2, delta=dict(timeline.ZERO))], 'changed', 0, 4, removed_funcs=['m.a4'])),
             step(5, blob('A', [dict(a2, delta=dict(timeline.ZERO))]), blob('B', [b1], 'new'))]
+
+
+def fixture5():
+    """fixture() as schema v5: blobs with `area` (B moves area at step 2), a cut piece, a folded-in blob, and an
+    areas table whose entries change, appear and go."""
+    tables = [[('a1', 'One'), ('a2', 'Two')], [('a1', 'One'), ('a2', 'Two')], [('a1', 'One'), ('a2', 'Second')],
+              [('a1', 'One'), ('a2', 'Second'), ('a3', 'Three')], [('a1', 'One'), ('a3', 'Three')], [('a3', 'Three')]]
+    steps = []
+    for i, st in enumerate(fixture()):
+        st = dict(st, blobs=[dict(b, area='a3' if i == 5 else 'a2' if b['id'] == 'B' and i < 2 else 'a1')
+                             for b in st['blobs']])
+        if i == 3:
+            p = dict(blob('A>m.p', [fn('m.p', 40, 60, state='new', added=21)], 'new', 21), cut='A', area='a3')
+            st['blobs'].append(p)
+            st['blobs'][0] = dict(st['blobs'][0], merged=[{'id': 'T', 'name': 't', 'emoji': '', 'kind': 'hub',
+                                                           'lines': 4, 'funcs': ['m.a4']}])
+        stats = st.pop('stats')            # a step's keys in the order timeline.py writes them
+        st['areas'] = [{'id': a, 'caption': c, 'faces': ['x']} for a, c in tables[i]]
+        st['stats'] = stats
+        steps.append(st)
+    return steps
 
 
 def node_expand(path):
@@ -151,13 +172,20 @@ def py_expand(path):
 
 
 @pytest.mark.skipif(not shutil.which('node'), reason='node is not installed: the page block cannot run')
-@pytest.mark.parametrize('name', ['fixture', 'timeline.json', 'sample-timeline.json'])
+@pytest.mark.parametrize('name', ['fixture', 'fixture5', 'timeline.json', 'sample-timeline.json'])
 def test_page_expand_agrees_with_python(name, tmp_path):
-    # the demo timeline (v4) and the committed sample (v3) as the page loads them, and the fixture above in v4.
+    # the demo timeline (v5) and the committed sample (v3) as the page loads them, and the fixtures above in v4 / v5.
     # Step-level key order differs (the page keeps `stats` where the step had it), so keys are compared sorted.
     if name == 'fixture':
         path = tmp_path / 'fixture.json'
-        path.write_text(dump({'schema': 4, 'steps': timeline.compact(fixture())}), encoding='utf-8')
+        path.write_text(dump({'schema': 4, 'steps': timeline.compact(fixture(), 4)}), encoding='utf-8')
+        path = str(path)
+    elif name == 'fixture5':
+        path = tmp_path / 'fixture5.json'
+        v5 = timeline.compact(fixture5())
+        assert [sorted(k for k in s if k.startswith('areas')) for s in v5] == [
+            ['areas'], [], ['areas'], ['areas'], ['areas_remove'], ['areas_remove']]
+        path.write_text(dump({'schema': 5, 'steps': v5}), encoding='utf-8')
         path = str(path)
     else:
         path = os.path.join(REPO, 'web', name)
@@ -167,3 +195,7 @@ def test_page_expand_agrees_with_python(name, tmp_path):
         assert dump(p, sort_keys=True) == dump(j, sort_keys=True), f'{name} step {i}: page and expand() differ'
     if name == 'fixture':
         assert dump(py) == dump(fixture())
+    if name == 'fixture5':
+        assert dump(py) == dump(fixture5())
+    if name == 'timeline.json':
+        assert all('areas' in s for s in py)

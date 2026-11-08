@@ -1,7 +1,7 @@
 """Replay a session and write the per-step blob timeline the web page plays.
 
     python timeline.py <session.jsonl|project-dir> [more ...] [--root DIR] [-o web/timeline.json] [--no-timings]
-                       [--full] [--v2] [--seed-git] [--git-reconcile] [--sessions-out sessions.json]
+                       [--full] [--v2] [--no-smart] [--seed-git] [--git-reconcile] [--sessions-out sessions.json]
 
 Several transcripts and/or project directories are merged into one timeline (replay.steps(); a directory means
 all its sessions with their subagents); their steps then carry `session` and `agent`. --seed-git seeds missing
@@ -14,14 +14,17 @@ whole-file delta. Parsed modules are cached by content hash, so a step only re-p
 analysis is incremental (analyze(memo=...)): a function's call resolution, data symbols and snippet are reused
 unless its module changed or a cross-module entry it looked up did. --full redoes all of it per step (same output).
 
-The file is schema v4: step 0 (and any step marked "full") carries the whole state, every other step only what
-changed, down to the functions of a re-sent blob (compact() / expand() below). --v2 writes every step in full instead. --no-timings writes 0 for
+The file is schema v5: step 0 (and any step marked "full") carries the whole state, every other step only what
+changed, down to the functions of a re-sent blob and the entries of the areas table (compact() / expand() below).
+Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; --no-smart keeps them as analyzed,
+for debugging and tests), each with its `area`. --v2 writes every step in full instead. --no-timings writes 0 for
 parse_ms / analyze_ms, so two runs on the same session are byte-identical.
 """
 import argparse, difflib, gc, glob, json, operator, os, sys, time
 
 import replay
 from analyze import analyze, _is_binary
+from areas import Zoner
 
 def session_file(path):
     if os.path.isdir(path):
@@ -81,7 +84,7 @@ def build_state(result, prev_funcs, prev_members, files=None, prev_files=None):
     for b in result['blobs']:
         if b['kind'] in ('file', 'text'):
             blobs.append({'id': b['id'], 'name': b['name'], 'emoji': b['emoji'], 'kind': b['kind'], 'module': b['module'],
-                          'path': b['path'], 'size': b['size'], 'complexity': 0, 'errors': 0, 'data': [],
+                          **({'area': b['area']} if 'area' in b else {}), 'path': b['path'], 'size': b['size'], 'complexity': 0, 'errors': 0, 'data': [],
                           'delta': dict(_file_delta(b['path'], (files or {}).get(b['path'], ''), prev_files or {}),
                                         removed_funcs=[]), 'funcs': []})
             continue
@@ -104,8 +107,10 @@ def build_state(result, prev_funcs, prev_members, files=None, prev_files=None):
         else:
             state = 'same'
         blobs.append({'id': b['id'], 'name': b['name'], 'emoji': b['emoji'], 'kind': b['kind'], 'module': b['module'],
-                      **({'depth': b['depth']} if 'depth' in b else {}),
+                      **({'depth': b['depth']} if 'depth' in b else {}), **({'cut': b['cut']} if 'cut' in b else {}),
+                      **({'area': b['area']} if 'area' in b else {}),
                       'size': b['size'], 'complexity': b['complexity'], 'errors': b['errors'], 'data': b['data'],
+                      **({'merged': b['merged']} if b.get('merged') else {}),
                       'delta': {'added': added, 'removed': removed, 'moved': moved, 'state': state,
                                 'removed_funcs': sorted(q for q in gone if q not in now)}, 'funcs': funcs})
     edges = [{k: e[k] for k in ('a', 'b', 'kind', 'n', 'via') if k in e} for e in result['edges']]
@@ -123,19 +128,19 @@ def edge_key(e):
     """The order analyze() writes edges in, which expand() restores: kind, then a, then b."""
     return (EDGE_ORDER.get(e['kind'], len(EDGE_ORDER)), e['a'], e['b'])
 
-def analyzed_steps(steps, full=False, timings=True):
-    """(replay.Step, {relpath: text}) pairs in order -> one full-state step dict per pair (schema v2 shape).
-
-    full: analyze every snapshot from scratch (no memo) instead of incrementally; the steps are the same."""
+def analyzed_steps(steps, full=False, timings=True, smart=True):
+    """(replay.Step, {relpath: text}) pairs in order -> one full-state step dict per pair (schema v2 shape, plus
+    the v5 areas). full: analyze every snapshot from scratch (no memo) instead of incrementally; the steps are the
+    same. smart=False leaves the analyzer's blobs as they are (no merges, no cuts; areas still), for debugging."""
     try:
-        yield from _steps(steps, {}, None if full else {}, timings)
+        yield from _steps(steps, {}, None if full else {}, timings, Zoner(smart))
     finally:
         gc.unfreeze()
 
-def _steps(steps, cache, memo, timings):
+def _steps(steps, cache, memo, timings, zoner):
     prev_funcs, prev_members = {}, {}      # qual -> (hash, body, lines); blob id -> {qual: lines}
     prev_files = {}                        # relpath -> text of the last analysed step
-    blobs, edges, stats = [], [], {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
+    blobs, edges, areas, stats = [], [], [], {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
     for st, snap in steps:
         try:
             result = analyze(snap, cache, memo)
@@ -143,6 +148,8 @@ def _steps(steps, cache, memo, timings):
             print(f'step {st.idx} ({st.file}): analyze failed: {e!r}', file=sys.stderr)
             result = None
         if result is not None:
+            result = zoner.apply(result)
+            areas = result['areas']
             blobs, edges = build_state(result, prev_funcs, prev_members, snap, prev_files)
             prev_funcs = {f['qual']: (f['hash'], result['bodies'][f['qual']], f['lines'])
                           for b in result['blobs'] for f in b['funcs']}
@@ -167,7 +174,7 @@ def _steps(steps, cache, memo, timings):
                **({'seeded': True} if getattr(st, 'seeded', False) else {}),
                **({'author': st.author} if getattr(st, 'session', '') else {}),   # merged / reconciled timelines
                **({'empty': True} if getattr(st, 'empty', False) else {}),
-               'blobs': step_blobs, 'edges': edges, 'stats': stats}
+               'blobs': step_blobs, 'edges': edges, 'areas': areas, 'stats': stats}
 
 def _zero(d):
     """A delta with every count 0, lists empty and state 'same' (the keys it has, in its order)."""
@@ -180,7 +187,7 @@ def rest(b):
     return dict(b, delta=_zero(b['delta']), funcs=[dict(f, delta=_zero(f['delta'])) if 'delta' in f else f
                                                    for f in b.get('funcs', [])])
 
-SCHEMA = 4
+SCHEMA = 5
 FUNC_PATCH = ('funcs_remove', 'funcs_order')
 
 def _func_patch(b, base):
@@ -242,18 +249,22 @@ def _apply_func_patch(sent, base):
     return b
 
 class Compactor:
-    """Full-state steps in, schema v4 (or v3) steps out (one at a time, so a writer can stream).
+    """Full-state steps in, schema v5 (or v4, v3) steps out (one at a time, so a writer can stream).
 
     A blob is left out of a step when it equals the previous step's blob with zeroed deltas (rest()): its delta
     says `same` and nothing else about it changed. A blob whose delta is `same` but whose other fields changed
     (a function's lines shifted, a call now resolves elsewhere) is sent again: in v3 in full, in v4 with its
     blob fields in full and its `funcs` as a patch on that zeroed previous blob (_func_patch()). `order` is
     written only when the blob order is not the previous one minus removed_blobs, with new ids appended as they
-    come in `blobs`. A step whose edges are not in edge_key() order is written in full."""
+    come in `blobs`. A step whose edges are not in edge_key() order is written in full. A step's `areas` table
+    (v5, any schema writes it when the steps have one) is whole on a full step; a delta step carries only the
+    entries new or changed since the previous step (`areas`) and the ids gone (`areas_remove`), each only when not
+    empty. A step whose table is not sorted by id is written in full."""
 
     def __init__(self, schema=SCHEMA):
         self.schema = schema
         self.rest, self.order, self.edges = None, [], {}     # id -> rest(blob); blob ids in order; key -> edge
+        self.areas = None                                      # id -> areas entry of the previous step
 
     def push(self, step):
         meta = {k: step[k] for k in META if k in step}
@@ -262,6 +273,9 @@ class Compactor:
         ranks = [edge_key(e) for e in edges]
         canonical = all(map(operator.lt, ranks, ranks[1:]))        # sorted, and no (a, b, kind) twice
         ids = [b['id'] for b in blobs]
+        areas = step.get('areas')
+        aids = [a['id'] for a in areas] if areas is not None else []
+        canonical = canonical and all(map(operator.lt, aids, aids[1:])) and (areas is None) == (self.areas is None)
         sent = None
         if self.rest is not None and canonical and len(set(ids)) == len(ids):
             sent = [b for b in blobs if self.rest.get(b['id']) != b]
@@ -282,30 +296,43 @@ class Compactor:
                        edges_remove=[{'a': a, 'b': b, 'kind': k} for (a, b, k) in self.edges if (a, b, k) not in new_edges])
             if expect != ids:
                 out['order'] = ids
+            if areas is not None:
+                now = {a['id']: a for a in areas}
+                changed = [a for a in areas if self.areas.get(a['id']) != a]
+                if changed:
+                    out['areas'] = changed
+                if self.areas.keys() - now.keys():
+                    out['areas_remove'] = sorted(self.areas.keys() - now.keys())
+        if out.get('full') and areas is not None:
+            out['areas'] = areas
         if 'stats' in step:
             out['stats'] = step['stats']
         prev = self.rest or {}
         sent_ids = {b['id'] for b in (blobs if out.get('full') else out['blobs'])}
         self.rest = {b['id']: rest(b) if b['id'] in sent_ids else prev[b['id']] for b in blobs}
         self.order, self.edges = ids, {(e['a'], e['b'], e['kind']): e for e in edges}
+        self.areas = {a['id']: a for a in areas} if areas is not None else None
         return out
 
 def compact(steps, schema=SCHEMA):
-    """Full-state steps -> schema v4 steps (v3 with schema=3)."""
+    """Full-state steps -> schema v5 steps (v4 / v3 with schema=4 / 3: the same but for the function patches)."""
     c = Compactor(schema)
     return [c.push(s) for s in steps]
 
 def expand(tl):
     """A timeline (dict with 'steps', or the list of steps) -> the list of full-state steps, each shaped as
     schema v2 writes them (META, blobs, edges, stats). A step is full when it is step 0, is marked `full`, or
-    carries `edges` (v2 steps always do, v3 / v4 delta steps never do); a dict without "schema" >= 3 is all full.
-    A delta step's blobs carry function patches when the dict says "schema" >= 4, or for a bare list of steps."""
+    carries `edges` (v2 steps always do, v3 / v4 / v5 delta steps never do); a dict without "schema" >= 3 is all
+    full. A delta step's blobs carry function patches when the dict says "schema" >= 4, or for a bare list of steps.
+    The areas table (v5) is carried from step to step, patched by a delta step's `areas` / `areas_remove`; a file
+    whose full steps have no `areas` (v3, v4) rebuilds steps without the key."""
     steps = tl['steps'] if isinstance(tl, dict) else tl
     old = isinstance(tl, dict) and tl.get('schema', 2) < 3
     v4 = not isinstance(tl, dict) or tl.get('schema', 2) >= 4
-    out, cur, order, edges = [], {}, [], {}
+    out, cur, order, edges, areas = [], {}, [], {}, None
     for st in steps:
         if old or st.get('full') or 'edges' in st or not out:
+            areas = {a['id']: a for a in st['areas']} if 'areas' in st else None
             cur = {b['id']: b for b in st['blobs']}
             order = [b['id'] for b in st['blobs']]
             fresh = set(cur)                    # ids whose blob in cur still carries this step's deltas
@@ -329,16 +356,23 @@ def expand(tl):
             for e in st.get('edges_add', ()):
                 edges[(e['a'], e['b'], e['kind'])] = e
             st_edges = sorted(edges.values(), key=edge_key)
+            if areas is not None:
+                for i in st.get('areas_remove', ()):
+                    areas.pop(i, None)
+                areas.update((a['id'], a) for a in st.get('areas', ()))
         step = {k: st[k] for k in META if k in st}
         step.update(blobs=[cur[i] for i in order], edges=st_edges)
+        if areas is not None:
+            step['areas'] = [areas[i] for i in sorted(areas)]
         if 'stats' in st:
             step['stats'] = st['stats']
         out.append(step)
     return out
 
-def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False, steps=None, git_reconcile=False):
+def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False, steps=None, git_reconcile=False,
+             smart=True):
     """The timeline dict for a session, or several merged (path: a transcript, a directory or a list of them, see
-    replay.transcripts()): schema v4 (compacted) unless v2. steps: replay.steps() already run on path."""
+    replay.transcripts()): schema v5 (compacted) unless v2. steps: replay.steps() already run on path."""
     files = replay.transcripts(path)
     root = os.path.abspath(root or session_root(files[0]) or '.')
     rs = steps if steps is not None else replay.steps(files, root, seed_git=seed_git, git_reconcile=git_reconcile)
@@ -346,7 +380,7 @@ def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False
     session = ','.join(ids) if ids else os.path.splitext(os.path.basename(files[0]))[0]
     sessions = replay.session_list(files, rs) if len(ids) > 1 else []
     head = {'root': root, 'session': session, **({'sessions': sessions} if len(sessions) > 1 else {})}
-    steps = analyzed_steps(((st, st.content) for st in rs), full=full, timings=timings)
+    steps = analyzed_steps(((st, st.content) for st in rs), full=full, timings=timings, smart=smart)
     if v2:
         return {**head, 'steps': list(steps)}
     c = Compactor()
@@ -361,6 +395,8 @@ def main():
     ap.add_argument('--no-timings', action='store_true', help='write 0 for parse_ms / analyze_ms (byte-identical runs)')
     ap.add_argument('--full', action='store_true', help='analyze every step from scratch instead of incrementally')
     ap.add_argument('--v2', action='store_true', help='write every step with its full state (schema v2), for debugging')
+    ap.add_argument('--no-smart', action='store_true', help="keep the analyzer's blobs (no merges, no cuts), for "
+                    'debugging and tests')
     ap.add_argument('--seed-git', action='store_true', help="seed missing bases and untouched files from root's git history")
     ap.add_argument('--git-reconcile', action='store_true', help='a step per commit of root from the first step up to '
                     'HEAD, setting the snapshot to the commit')
@@ -371,7 +407,7 @@ def main():
     files = replay.transcripts(inputs)
     rs = replay.steps(files, os.path.abspath(a.root or session_root(files[0]) or '.'), seed_git=a.seed_git,
                      git_reconcile=a.git_reconcile)
-    tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs)
+    tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart)
     if a.sessions_out:
         with open(a.sessions_out, 'w', encoding='utf-8') as fh:
             json.dump(tl.get('sessions') or replay.session_list(files, rs), fh, ensure_ascii=False, indent=1)
@@ -384,7 +420,7 @@ def main():
     st = last['stats']
     parse = sum(s['stats']['parse_ms'] for s in steps)
     an = sum(s['stats']['analyze_ms'] for s in steps)
-    print(f"{a.out}: {len(steps)} steps, {len(last['blobs'])} blobs at end, "
+    print(f"{a.out}: {len(steps)} steps, {len(last['blobs'])} blobs and {len(last.get('areas', []))} areas at end, "
           f"edges main={kinds['main']} error={kinds['error']} data={kinds['data']} ref={kinds['ref']}, "
           f"{time.perf_counter() - t0:.2f}s (parse {parse:.0f}ms, analyze {an:.0f}ms), {os.path.getsize(a.out) / 1e6:.2f} MB\n"
           f"unresolved calls at end: {st['unresolved']}/{st['calls']} ({st['unresolved'] / max(st['calls'], 1):.1%})",

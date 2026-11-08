@@ -5,8 +5,14 @@
    "kind": "route",
    "name": "POST /notes",
    "module": "api",
+   "area": "a1",
+   "merged": [
+    "hub:api"
+   ],
    "funcs": [
-    "api.create_note"
+    "api._token_from_request",
+    "api.create_note",
+    "api.token_required"
    ]
   },
   {
@@ -14,6 +20,7 @@
    "kind": "route",
    "name": "DELETE /notes/<int:note_id>",
    "module": "api",
+   "area": "a1",
    "funcs": [
     "api.delete_note"
    ]
@@ -23,6 +30,7 @@
    "kind": "route",
    "name": "/notes",
    "module": "api",
+   "area": "a1",
    "funcs": [
     "api.list_notes"
    ]
@@ -32,6 +40,7 @@
    "kind": "entry",
    "name": "app",
    "module": "app",
+   "area": "a1",
    "funcs": [
     "app.<module>",
     "app.create_app",
@@ -45,6 +54,7 @@
    "kind": "hook",
    "name": "before request",
    "module": "auth",
+   "area": "a4",
    "funcs": [
     "auth.load_logged_in_user"
    ]
@@ -54,10 +64,16 @@
    "kind": "route",
    "name": "POST /login",
    "module": "auth",
+   "area": "a4",
+   "merged": [
+    "hub:auth"
+   ],
    "funcs": [
     "auth._safe_next",
     "auth.clear_failures",
+    "auth.hash_password",
     "auth.login",
+    "auth.login_required",
     "auth.now",
     "auth.recent_failures",
     "auth.record_failure",
@@ -69,6 +85,7 @@
    "kind": "route",
    "name": "POST /logout",
    "module": "auth",
+   "area": "a4",
    "funcs": [
     "auth.logout"
    ]
@@ -78,6 +95,7 @@
    "kind": "route",
    "name": "POST /register",
    "module": "auth",
+   "area": "a4",
    "funcs": [
     "auth.register",
     "models.create_user"
@@ -88,6 +106,7 @@
    "kind": "route",
    "name": "POST /token",
    "module": "auth",
+   "area": "a4",
    "funcs": [
     "auth.token",
     "models.regenerate_api_token"
@@ -98,6 +117,7 @@
    "kind": "hook",
    "name": "teardown appcontext",
    "module": "db",
+   "area": "a1",
    "funcs": [
     "db.close_db"
    ]
@@ -107,6 +127,7 @@
    "kind": "error-handler",
    "name": "error handler",
    "module": "errors",
+   "area": "a1",
    "funcs": [
     "errors.render_error",
     "errors.wants_json"
@@ -117,6 +138,7 @@
    "kind": "text",
    "name": "requirements.txt",
    "module": ".",
+   "area": "files",
    "funcs": []
   },
   {
@@ -124,6 +146,7 @@
    "kind": "file",
    "name": "base.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -131,6 +154,7 @@
    "kind": "file",
    "name": "error.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -138,6 +162,7 @@
    "kind": "file",
    "name": "login.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -145,6 +170,7 @@
    "kind": "file",
    "name": "form.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -152,6 +178,7 @@
    "kind": "file",
    "name": "index.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -159,6 +186,7 @@
    "kind": "file",
    "name": "view.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -166,6 +194,7 @@
    "kind": "file",
    "name": "register.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -173,6 +202,7 @@
    "kind": "file",
    "name": "share.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
   },
   {
@@ -180,33 +210,15 @@
    "kind": "file",
    "name": "token.html",
    "module": "templates",
+   "area": "files",
    "funcs": []
-  },
-  {
-   "id": "hub:api",
-   "kind": "hub",
-   "name": "api",
-   "module": "api",
-   "funcs": [
-    "api._token_from_request",
-    "api.token_required"
-   ]
-  },
-  {
-   "id": "hub:auth",
-   "kind": "hub",
-   "name": "auth",
-   "module": "auth",
-   "funcs": [
-    "auth.hash_password",
-    "auth.login_required"
-   ]
   },
   {
    "id": "hub:db",
    "kind": "hub",
    "name": "db",
    "module": "db",
+   "area": "a1",
    "funcs": [
     "db.connect",
     "db.execute",
@@ -219,6 +231,7 @@
    "kind": "hub",
    "name": "models",
    "module": "models",
+   "area": "a1",
    "funcs": [
     "models.Note.from_row",
     "models.Note.to_dict",
@@ -235,20 +248,11 @@
    ]
   },
   {
-   "id": "hub:notes",
-   "kind": "hub",
-   "name": "notes",
-   "module": "notes",
-   "funcs": [
-    "notes._read_form",
-    "notes.get_owned_note"
-   ]
-  },
-  {
    "id": "notes.create",
    "kind": "route",
    "name": "POST /notes/new",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.create"
    ]
@@ -258,6 +262,7 @@
    "kind": "route",
    "name": "POST /notes/<int:note_id>/delete",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.delete"
    ]
@@ -267,8 +272,14 @@
    "kind": "route",
    "name": "POST /notes/<int:note_id>/edit",
    "module": "notes",
+   "area": "a2",
+   "merged": [
+    "hub:notes"
+   ],
    "funcs": [
-    "notes.edit"
+    "notes._read_form",
+    "notes.edit",
+    "notes.get_owned_note"
    ]
   },
   {
@@ -276,6 +287,7 @@
    "kind": "route",
    "name": "/",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.index"
    ]
@@ -285,6 +297,7 @@
    "kind": "route",
    "name": "POST /notes/<int:note_id>/share",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.share"
    ]
@@ -294,6 +307,7 @@
    "kind": "route",
    "name": "/share/<token>",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "models.get_note_by_share_token",
     "notes.shared"
@@ -304,6 +318,7 @@
    "kind": "route",
    "name": "POST /notes/<int:note_id>/unshare",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.unshare"
    ]
@@ -313,6 +328,7 @@
    "kind": "route",
    "name": "/notes/<int:note_id>",
    "module": "notes",
+   "area": "a2",
    "funcs": [
     "notes.view"
    ]
@@ -322,6 +338,7 @@
    "kind": "tests",
    "name": "test_app",
    "module": "tests.test_app",
+   "area": "tests",
    "funcs": [
     "tests.test_app.api_token",
     "tests.test_app.app",
@@ -369,26 +386,8 @@
    "n": 1
   },
   {
-   "a": "api.create_note",
-   "b": "hub:api",
-   "kind": "data",
-   "n": 1
-  },
-  {
    "a": "api.delete_note",
    "b": "api.list_notes",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "api.delete_note",
-   "b": "hub:api",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "api.list_notes",
-   "b": "hub:api",
    "kind": "data",
    "n": 1
   },
@@ -426,7 +425,7 @@
    "a": "auth.load_logged_in_user",
    "b": "auth.login",
    "kind": "data",
-   "n": 1
+   "n": 2
   },
   {
    "a": "auth.load_logged_in_user",
@@ -448,18 +447,6 @@
   },
   {
    "a": "auth.load_logged_in_user",
-   "b": "hub:auth",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "auth.load_logged_in_user",
-   "b": "hub:notes",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "auth.load_logged_in_user",
    "b": "notes.create",
    "kind": "data",
    "n": 1
@@ -467,6 +454,12 @@
   {
    "a": "auth.load_logged_in_user",
    "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.load_logged_in_user",
+   "b": "notes.edit",
    "kind": "data",
    "n": 1
   },
@@ -487,6 +480,36 @@
    "b": "auth.register",
    "kind": "data",
    "n": 2
+  },
+  {
+   "a": "auth.login",
+   "b": "auth.token",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "notes.create",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "notes.edit",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.login",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
   },
   {
    "a": "auth.login",
@@ -514,19 +537,7 @@
   },
   {
    "a": "auth.token",
-   "b": "hub:auth",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "auth.token",
    "b": "hub:models",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "auth.token",
-   "b": "hub:notes",
    "kind": "data",
    "n": 1
   },
@@ -539,6 +550,12 @@
   {
    "a": "auth.token",
    "b": "notes.delete",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "auth.token",
+   "b": "notes.edit",
    "kind": "data",
    "n": 1
   },
@@ -555,56 +572,20 @@
    "n": 1
   },
   {
-   "a": "hub:auth",
-   "b": "hub:notes",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "hub:auth",
-   "b": "notes.create",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "hub:auth",
-   "b": "notes.delete",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "hub:auth",
-   "b": "notes.index",
-   "kind": "data",
-   "n": 1
-  },
-  {
    "a": "hub:models",
    "b": "notes.shared",
    "kind": "data",
    "n": 1
   },
   {
-   "a": "hub:notes",
-   "b": "notes.create",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "hub:notes",
+   "a": "notes.create",
    "b": "notes.delete",
-   "kind": "data",
-   "n": 1
-  },
-  {
-   "a": "hub:notes",
-   "b": "notes.index",
    "kind": "data",
    "n": 1
   },
   {
    "a": "notes.create",
-   "b": "notes.delete",
+   "b": "notes.edit",
    "kind": "data",
    "n": 1
   },
@@ -616,6 +597,18 @@
   },
   {
    "a": "notes.delete",
+   "b": "notes.edit",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "notes.delete",
+   "b": "notes.index",
+   "kind": "data",
+   "n": 1
+  },
+  {
+   "a": "notes.edit",
    "b": "notes.index",
    "kind": "data",
    "n": 1
@@ -624,7 +617,7 @@
    "a": "api.create_note",
    "b": "errors.render_error",
    "kind": "error",
-   "n": 4
+   "n": 5
   },
   {
    "a": "api.delete_note",
@@ -639,13 +632,7 @@
    "n": 1
   },
   {
-   "a": "hub:api",
-   "b": "errors.render_error",
-   "kind": "error",
-   "n": 1
-  },
-  {
-   "a": "hub:notes",
+   "a": "notes.edit",
    "b": "errors.render_error",
    "kind": "error",
    "n": 2
@@ -658,19 +645,13 @@
   },
   {
    "a": "api.create_note",
-   "b": "hub:api",
-   "kind": "main",
-   "n": 1
-  },
-  {
-   "a": "api.create_note",
    "b": "hub:models",
    "kind": "main",
-   "n": 2
+   "n": 3
   },
   {
    "a": "api.delete_note",
-   "b": "hub:api",
+   "b": "api.create_note",
    "kind": "main",
    "n": 1
   },
@@ -682,7 +663,7 @@
   },
   {
    "a": "api.list_notes",
-   "b": "hub:api",
+   "b": "api.create_note",
    "kind": "main",
    "n": 1
   },
@@ -718,12 +699,6 @@
   },
   {
    "a": "auth.login",
-   "b": "hub:auth",
-   "kind": "main",
-   "n": 1
-  },
-  {
-   "a": "auth.login",
    "b": "hub:db",
    "kind": "main",
    "n": 4
@@ -736,7 +711,7 @@
   },
   {
    "a": "auth.register",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -754,7 +729,7 @@
   },
   {
    "a": "auth.token",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -766,12 +741,6 @@
   },
   {
    "a": "auth.token",
-   "b": "hub:models",
-   "kind": "main",
-   "n": 1
-  },
-  {
-   "a": "hub:api",
    "b": "hub:models",
    "kind": "main",
    "n": 1
@@ -783,14 +752,8 @@
    "n": 8
   },
   {
-   "a": "hub:notes",
-   "b": "hub:models",
-   "kind": "main",
-   "n": 1
-  },
-  {
    "a": "notes.create",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -802,13 +765,13 @@
   },
   {
    "a": "notes.create",
-   "b": "hub:notes",
+   "b": "notes.edit",
    "kind": "main",
    "n": 1
   },
   {
    "a": "notes.delete",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -820,31 +783,25 @@
   },
   {
    "a": "notes.delete",
-   "b": "hub:notes",
+   "b": "notes.edit",
    "kind": "main",
    "n": 1
   },
   {
    "a": "notes.edit",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
   {
    "a": "notes.edit",
    "b": "hub:models",
-   "kind": "main",
-   "n": 1
-  },
-  {
-   "a": "notes.edit",
-   "b": "hub:notes",
    "kind": "main",
    "n": 2
   },
   {
    "a": "notes.index",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -856,7 +813,7 @@
   },
   {
    "a": "notes.share",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -868,7 +825,7 @@
   },
   {
    "a": "notes.share",
-   "b": "hub:notes",
+   "b": "notes.edit",
    "kind": "main",
    "n": 1
   },
@@ -886,7 +843,7 @@
   },
   {
    "a": "notes.unshare",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
@@ -898,19 +855,19 @@
   },
   {
    "a": "notes.unshare",
-   "b": "hub:notes",
+   "b": "notes.edit",
    "kind": "main",
    "n": 1
   },
   {
    "a": "notes.view",
-   "b": "hub:auth",
+   "b": "auth.login",
    "kind": "main",
    "n": 1
   },
   {
    "a": "notes.view",
-   "b": "hub:notes",
+   "b": "notes.edit",
    "kind": "main",
    "n": 1
   },
@@ -924,13 +881,7 @@
    "a": "tests.test_app",
    "b": "auth.login",
    "kind": "main",
-   "n": 2
-  },
-  {
-   "a": "tests.test_app",
-   "b": "hub:auth",
-   "kind": "main",
-   "n": 2
+   "n": 4
   },
   {
    "a": "auth.login",
@@ -1033,6 +984,50 @@
    "b": "file:templates/notes/view.html",
    "kind": "ref",
    "n": 1
+  }
+ ],
+ "areas": [
+  {
+   "id": "a1",
+   "caption": "Notes",
+   "faces": [
+    "\ud83d\udd10",
+    "\ud83e\udde9",
+    "\u2699\ufe0f"
+   ]
+  },
+  {
+   "id": "a2",
+   "caption": "Notes \u00b7 Note",
+   "faces": [
+    "\ud83d\udcdd",
+    "\ud83d\udd17",
+    "\ud83d\udd10"
+   ]
+  },
+  {
+   "id": "a4",
+   "caption": "Login \u00b7 Register",
+   "faces": [
+    "\ud83d\udd10",
+    "\ud83e\udeaa",
+    "\ud83d\udeaa"
+   ]
+  },
+  {
+   "id": "files",
+   "caption": "Files",
+   "faces": [
+    "\ud83d\udcc4",
+    "\ud83d\udcc3"
+   ]
+  },
+  {
+   "id": "tests",
+   "caption": "Tests",
+   "faces": [
+    "\ud83e\uddea"
+   ]
   }
  ]
 }

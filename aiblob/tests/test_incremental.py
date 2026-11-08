@@ -1,4 +1,4 @@
-"""Incremental analysis (analyze(memo=...)) and the schema v3 / v4 delta timelines against a full recompute per step."""
+"""Incremental analysis (analyze(memo=...)) and the schema v3 / v4 / v5 delta timelines against a full recompute per step."""
 import json, os
 
 import pytest
@@ -30,9 +30,11 @@ def check(snapshots):
     assert len(inc) == len(full) == len(snapshots)
     v3 = {'schema': 3, 'steps': timeline.compact(full, 3)}
     assert dump(timeline.expand(json.loads(dump(v3)))) == dump(full)
-    v4 = {'schema': 4, 'steps': timeline.compact(full)}
+    v4 = {'schema': 4, 'steps': timeline.compact(full, 4)}
     assert dump(timeline.expand(json.loads(dump(v4)))) == dump(full)
-    return inc, v4
+    v5 = {'schema': 5, 'steps': timeline.compact(full)}
+    assert dump(timeline.expand(json.loads(dump(v5)))) == dump(full)
+    return inc, v5
 
 
 def sequence(edits):
@@ -100,7 +102,7 @@ def test_flask_session_incremental_equals_full():
     full = timeline.timeline(SESSION, APP, timings=False, full=True)
     v2 = timeline.timeline(SESSION, APP, timings=False, v2=True)
     assert dump(inc) == dump(full)
-    assert inc['schema'] == 4 and 'schema' not in v2
+    assert inc['schema'] == 5 and 'schema' not in v2
     assert dump(timeline.expand(json.loads(dump(inc)))) == dump(v2['steps'])
     assert len(dump(inc)) < len(dump(v2)) / 3
     v3 = dict(inc, schema=3, steps=timeline.compact(v2['steps'], 3))

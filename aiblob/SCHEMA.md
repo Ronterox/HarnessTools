@@ -129,6 +129,80 @@ only when `schema` >= 4 (a bare list of steps handed to `expand()` reads as v4),
   function whose keys only change order, is not re-sent and rebuilds with the previous value / key order. The
   analyzer never writes such changes (checked on every key path of the aigource map).
 
+## v5 (2026-11-08): merges, cuts, areas
+
+Top level `"schema": 5`. The blobs a step holds are no longer exactly the analyzer's: `areas.py` (applied by
+timeline.py to each step's analysis, before the deltas) folds small blobs into others and cuts pieces out of big
+ones, recounts the edges over the result, and puts every blob in an area. `timeline.py --no-smart` skips the folds
+and cuts (areas stay), for debugging and tests. The encoding is v4's plus the areas table; `expand()` and the
+page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `areas` rebuilds steps without it).
+
+- Blob fields (code, file and text blobs alike; re-sent like any other field when they change):
+  - `area`: the id of the blob's area at this step (`a<n>`, `tests` or `files`).
+  - `merged` (only on a blob something was folded into): `[{"id", "name", "emoji", "kind", "lines", "funcs": [qual, ...]}]`,
+    the folded-in blobs as the analyzer drew them, flattened (a blob that took a fold before folding itself lists
+    it too); `lines` / `funcs` are that blob's own, which now sit in this blob's `funcs`. `label.py` gives each
+    entry the `label` of its own functions.
+  - `cut` (only on a piece): the id of the blob it was cut from, present in the same step. A piece's id is
+    `<parent id>><root qual>` (the parent id may itself contain `>`, as in `main.<module>`: read `cut`, not the
+    id), `name` its root function's name, `kind` / `emoji` the parent's, `module` the root function's module.
+  - `size`, `complexity`, `errors`, `data` are the sums / union over the blob's functions after the move, as
+    analyze() computes them.
+- A piece's `module` is the module of its root function's file, so a method root (`app.Svc.run`) lands in `app`,
+  not in a module `app.Svc` that does not exist.
+- Folds (merges): a code blob under 20 lines (`areas.TINY`) folds into the biggest blob of its module (a C header
+  with its .c), else into the blob it shares the most call sites with (both directions), then the most data
+  symbols; tests only into tests, nothing into or out of file / text blobs. Never folded: routes, entries, error
+  handlers, hooks (the entry points a small app's map is made of) and cut parents. Smallest first (ties by id).
+- Cuts: a blob of 500+ lines or 50+ functions (never a tests blob) gives up callee-rooted pieces: dominator tree
+  over its own calls from its starts (root function, functions nothing in the blob calls, functions another
+  blob calls), candidates read like `CLang.split_entry` (start-level children at most one other function calls;
+  past one owning more than half, one level down; descending into the blob's own root function is free). A
+  candidate whose owned functions hold 10%+ of the blob's lines and 20+ lines, with a root of 3+ lines, is a piece.
+- Edges are analyze()'s count over the new blobs: call sites per pair (`main` / `error`), shared data symbols per
+  unordered pair (same `NOT_SHARED` and `ctx:` prefix rules), file literals per (blob, file) for `ref`. What
+  analyze() counted beyond the functions' own calls and `refs` (an `abort` to an error handler, module-level code)
+  stays with the blob that holds the original blob's id, or the blob it folded into. A cut parent's `ref` edge is
+  split one literal per function whose `refs` name the file, the rest staying with the parent; each part keeps
+  the parent's `via`. With no fold and no cut the edges are analyze()'s, unchanged.
+- Step-level `areas`, after `edges`: `[{"id", "caption", "faces": [emoji, ...]}]`, sorted by id, one entry per
+  area a blob of the step names. A full step carries the whole table; a delta step carries only the entries new
+  or changed since the previous step (`areas`) and the ids gone (`areas_remove`), each only when not empty.
+  Rebuild: the previous table, minus `areas_remove`, entries of `areas` replacing or adding by id, sorted by id.
+  `timeline.compact()` writes the table this way for any schema it is asked for, so steps round-trip.
+- Areas: code blobs are grouped by module stem (a C header with its .c): modules of one top directory (`src`,
+  `draft`, `.` for files at the root) are joined pairwise, most call sites between them per line of the smaller
+  first, while a join holds at most 9 blobs, down to min(7, ceil(code blobs / 9)) areas plus one per further top
+  directory. Past 12 areas (`areas.MAX_AREAS`) joins cross top directories, still under the cap, and when the cap
+  blocks every join it gives way: the best pairs keep joining until 12 code areas are left, so the top view never
+  shows more (TechnicalAnalysis, 397 code blobs: 31 areas without this). `tests` holds tests blobs and modules
+  under a test directory, `files` the file / text blobs. The joins use a heap of pair scores (O(n^2 log n) in
+  modules; 200 modules ~0.09 s, 400 ~0.4 s); the order of joins is the plain scan's, pair by pair.
+- Stability: a module keeps its area id from step to step. The grouping is recomputed only when the set of
+  modules or the call sites between them change; each fresh group is matched to the area it overlaps most (lines
+  + 1 per module, greedy). New modules join their group's area at once (a group no area matches gets a new id).
+  Existing modules move only when the fresh grouping is adopted wholesale (matched groups keep their ids), which
+  needs both: the same fresh grouping has come out on the step it first appeared and on each of the 40 steps after
+  it (`areas.HOLD`; adopted at the earliest on the 41st step it has held), or for half the session so far when that
+  is shorter, and it would change some area's existing modules by more than half of their lines
+  (`areas.REGROUP`, symmetric difference over union). The 12-area bound holds between regroups too: once 12 code
+  areas are in use, a new module whose group no area matches joins the area it shares the most call sites with
+  (then the smallest by lines, then by id) instead of opening a 13th, and an assignment still over 12 adopts the
+  fresh grouping at once, without the hold (150 modules added one per step: 12 areas, 0 regroups). Ids are never
+  reused. Measured: Flask demo 6 reassignments
+  (one regroup at step 13 of 18); aigource 96 blob reassignments in 6 regroups over 1,270 steps.
+- Captions and faces: `caption` is word frequency over the members' titles (label title, else name; an
+  unlabelled piece is skipped): count of blobs using a word x sqrt(their lines), generic words skipped
+  (`areas.GENERIC`), a second word when it scores at least half the first, joined by ` · `; `Tests` and `Files`
+  for those areas. `faces` are the top 3 member emojis by lines (label emoji, else heuristic; an unlabelled piece
+  takes its parent's label emoji). timeline.py writes them from names; `label.py` recomputes them from the labels
+  it applies (`areas.caption_table()`), so they follow the labels for free.
+- Labels (`label.py`): a blob's cache key leaves out functions folded in from a small blob, and a cut parent's
+  key also covers its pieces' own functions, so both keep the key (and label) of the blob the analyzer drew; a
+  piece has a key of its own and shows its root function's name and its parent's emoji until a live labelling
+  run labels it. On the aigource map every key the v4 labels cached still matches (1,130 distinct cache hits, 0
+  calls); the only uncached keys are the 192 versions of the 15 pieces.
+
 ## Sessions (2026-11-06)
 
 A timeline can merge several transcripts (`timeline.py a.jsonl b.jsonl ~/.claude/projects/<dir> ...`; a directory means

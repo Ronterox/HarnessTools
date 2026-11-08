@@ -29,18 +29,21 @@ def runs(tmp_path_factory):
 
 @pytest.fixture(scope='module')
 def tl(runs):
-    """The run's full state per step: timeline.json is schema v4 (deltas), expand() rebuilds each step."""
+    """The run's full state per step: timeline.json is schema v5 (deltas), expand() rebuilds each step."""
     data = json.loads(runs[0])
-    assert data['schema'] == 4
+    assert data['schema'] == 5
     return {'steps': timeline.expand(data)}
 
 
 def summary(step):
-    blobs = [{'id': b['id'], 'kind': b['kind'], 'name': b['name'], 'module': b['module'],
+    blobs = [{'id': b['id'], 'kind': b['kind'], 'name': b['name'], 'module': b['module'], 'area': b['area'],
+              **({'cut': b['cut']} if 'cut' in b else {}),
+              **({'merged': [m['id'] for m in b['merged']]} if 'merged' in b else {}),
               'funcs': sorted(f['qual'] for f in b['funcs'])} for b in step['blobs']]
     edges = [{k: e[k] for k in ('a', 'b', 'kind', 'n')} for e in step['edges']]
     return {'blobs': sorted(blobs, key=lambda b: b['id']),
-            'edges': sorted(edges, key=lambda e: (e['kind'], e['a'], e['b']))}
+            'edges': sorted(edges, key=lambda e: (e['kind'], e['a'], e['b'])),
+            'areas': step['areas']}
 
 
 def test_final_step_matches_golden(tl):

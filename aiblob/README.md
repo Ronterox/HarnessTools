@@ -14,7 +14,7 @@ make timeline                    # transcript -> web/timeline.json (replay.py, a
 cd web && python3 -m http.server 8790         # open http://localhost:8790/?step=18
 ```
 
-The aigource map (`web/timeline-aigource.json`, 14 MB, gitignored) is built locally from the real sessions,
+The aigource map (`web/timeline-aigource.json`, 15 MB, gitignored) is built locally from the real sessions,
 then labelled from the committed cache `demo/labels.aigource.json` (no GPU needed); open `?src=timeline-aigource.json`:
 
 ```
@@ -28,11 +28,20 @@ P=~/.claude/projects/-home-rontero-Documents-Projects-AIProjects-HarnessTools
 ```
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
-click a function for its snippet, Esc back, L legend.
+click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,
+remembered per browser, default off): blobs grouped into areas above the blob map; click or wheel into an area,
+drag to pan, Esc / Backspace / the breadcrumb go back up (Space stays play / pause, also with areas on). The top
+view never shows more than 12 areas: past that the 9-blob cap on joins gives way, and a session that grows
+module by module puts new modules into existing areas once 12 are in use. F toggles Follow (default off): during replay each step
+flies the camera to the area it edits (areas on) or the blob it edits (areas off). `?areas=1`, `?follow=1` and
+`?area=<id>` set them from the URL.
 Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
 
-web/timeline.json is schema v4 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
-the page rebuilds every step from those deltas. Analysis is incremental per step (only what an edit can affect
+web/timeline.json is schema v5 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
+the page rebuilds every step from those deltas. The blob map folds blobs under 20 lines into a neighbour
+(satellites on the page) and cuts blobs of 500+ lines at dominant callees (dashed pieces, a bite out of the
+parent), and puts every blob in an area (areas.py); `timeline.py --no-smart` keeps the analyzer's blobs, for
+debugging and tests. Analysis is incremental per step (only what an edit can affect
 is redone), so big repos stay usable: on TechnicalAnalysis (580 files, 71 steps) a step costs 0.22-0.37 s (p50,
 machine load dependent; --full: ~1.07 s) and the timeline is 6 MB (was 357 MB). `timeline.py --full` recomputes everything per step and `--v2` writes every step in full;
 both are for debugging and checking (`make test` asserts incremental == full, and expand(v3) == v2).

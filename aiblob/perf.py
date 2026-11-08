@@ -5,8 +5,8 @@
 
 Runs the same per-step pipeline as timeline.timeline() (timeline.analyzed_steps, incremental unless --full, then
 timeline.Compactor unless --v2) and logs one CSV row per step (flushed, so a killed run keeps what it measured):
-parse_ms / analyze_ms come from analyze()'s own stats, diff_ms is the rest of the step's analysis (the deltas of
-timeline.build_state + the prev_* maps), compact_ms the v4 delta encoding, ser_ms the step's JSON encoding,
+parse_ms / analyze_ms come from analyze()'s own stats, diff_ms is the rest of the step's analysis (areas.py's
+merges, cuts and areas, the deltas of timeline.build_state + the prev_* maps), compact_ms the v5 delta encoding, ser_ms the step's JSON encoding,
 json_bytes its size, sent_blobs the blobs the step carries. The summary (stdout and <csv>.summary.json) has total
 wall, p50/p95/max and mean-after-step-0 per-step ms, peak RSS, replay_ms and the page-side numbers: timeline.json
 size and blobs x steps / funcs x steps of the full states the page rebuilds. --page also loads the written
