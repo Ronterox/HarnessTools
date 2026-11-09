@@ -51,11 +51,12 @@ without a reload: each served step carries `lk` {blob id: kid} / `mk` {merged en
 key changed since the step before (kid: 16 hex of the key's sha1), and the layer {kid: label or null} holds every key
 whose label changed after a step showing it was labelled. A cache change (an answer of the worker, a label.py run, an
 edit) is read back from the file: the labeller replays only its plan, from the last snapshot (every 32 steps) before
-the first step a changed key is shown at, and the keys whose label changed go out as one "labels" event; the page
-relabels the blobs with those keys where they are (cost: the steps they are on). A kept label found at a later step
-for a key an earlier step shows (a `merged` entry going back to an earlier version) goes out the same way. So the
-page shows what `label.py T --cache LABELS --server http://127.0.0.1:1` writes with the cache as it is now, every step
-(aigource, a random half of its cache: 323 steps differ without the layer, none with it).
+the first step a changed key is shown at, on the units it kept per step (nothing is expanded or keyed again: on
+aigource a key first shown at step 0 costs ~0.05 s, not 1.2 s), and the keys whose label changed go out as one
+"labels" event; the page relabels the blobs with those keys where they are (cost: the steps they are on). A kept
+label found at a later step for a key an earlier step shows (a `merged` entry going back to an earlier version) goes
+out the same way. So the page shows what `label.py T --cache LABELS --server http://127.0.0.1:1` writes with the
+cache as it is now, every step (aigource, a random half of its cache: 323 steps differ without the layer, none with it).
 
 Asks (livelabel.py): only blobs changed at new steps, steps made after labelling was first enabled on the store
 (labelling.json, see Live); the worker's thread asks the model and merges each label into LABELS (lock, read again,
@@ -245,8 +246,11 @@ class Labeller:
     kid(key)} for the ids whose key differs from the previous step's. `applied` is what label.py would apply with the
     cache as it is now; when an entry of it changes after a step showing its key was labelled (a kept label found at a
     later step, a cache change), `overlay` gets {kid: shown label or None} and the page relabels every step showing it.
-    recache(new cache) replays only the plan (no labelling, no compaction) from the last snapshot before the first step
-    a changed key is shown at, so `applied`, the asks and the overlay are what a run from step 0 with that cache gives.
+    recache(new cache) replays only the plan from the last snapshot before the first step a changed key is shown at, so
+    `applied`, the asks and the overlay are what a run from step 0 with that cache gives. It replays the Keeper alone,
+    on `rows`: each step's units as it read them when the step was pushed (_row: nothing in them depends on the cache),
+    so no step is expanded, keyed or labelled again; only an ask replayed at a new step expands its step again (its blob
+    and context), from the snapshot before it.
 
     Asks (the worker's): steps where `boundary(i, ts)` holds are new. wants() -> {key: Want} for the blob identities
     (units with a blob) changed at a new step: the anchor of the identity's label when it was asked at a new step
@@ -262,7 +266,7 @@ class Labeller:
         self.heads, self.hist, self.i = {}, {}, 0
         self.track, self.boundary = True, boundary
         self.first, self.ukey, self.lk, self.mk = {}, {}, {}, {}
-        self.snaps, self.overlay = [], {}
+        self.snaps, self.overlay, self.rows, self.row, self.fns = [], {}, [], {}, {}
         self.asked, self.nu, self.since, self.arrived, self.turn, self.ets = {}, {}, {}, [], None, []
 
     def fork(self):
@@ -272,7 +276,7 @@ class Labeller:
         k = f.keeper = label.Keeper(self.at)
         k.state = {u: list(s) for u, s in self.keeper.state.items()}   # (an entry's list is changed in place)
         f.exp, f.comp = self.exp.fork(), copy.copy(self.comp)
-        f.track, f.overlay, f.heads = False, {}, dict(self.heads)
+        f.track, f.overlay, f.heads, f.fns, f.rows = False, {}, dict(self.heads), {}, None   # (rows: committed only)
         return f
 
     def head(self, b, at=None):
@@ -311,9 +315,27 @@ class Labeller:
         step['_keys'] = label.step_keys(step)
         return step
 
-    def _plan(self, i, step):
-        """The Keeper on step i (asks stand in as empty entries). -> (asks {key: blob}, kept keys)."""
-        asks = self.keeper.step(i, step, self.work)
+    def _row(self, step):
+        """The step's units as the Keeper reads them (label.units(), functions as label.plan_funcs(), a blob as its
+        id), kept for a replay: none of it depends on the cache. A unit whose key is the step before's is that step's
+        unit (the Keeper reads only its id and key), and a function is kept once (`fns`): a long session keeps little
+        more than a tuple per step (aigource, 1,270 steps: ~3 MB). This relies on unit ids being unique in a step, as
+        the analyzer makes them (blob ids; a piece is `parent>root`; a merged entry keeps the id of the blob folded in,
+        which the step no longer has)."""
+        prev, row, fns = self.row, [], self.fns
+        for uid, key, funcs, b in label.units(step):
+            u = prev.get(uid)
+            if u is None or u[1] != key:
+                if funcs is not None:
+                    funcs = tuple(fns.setdefault(f, f) for f in label.plan_funcs(funcs))
+                u = (uid, key, funcs, None if b is None else b['id'])
+            row.append(u)
+        self.row = {u[0]: u for u in row}
+        return tuple(row)
+
+    def _plan(self, i, row):
+        """The Keeper on step i's units (asks stand in as empty entries). -> (asks {key: blob id}, kept keys)."""
+        asks = self.keeper.step(i, None, self.work, us=row)
         for key in asks:
             self.work[key] = {}
         self.keeper.settle(self.work)
@@ -338,7 +360,12 @@ class Labeller:
         if self.track and i % SNAP == 0:
             self._snap(i, self.exp)
         step = self._expand(self.exp, raw)
-        asks, reused = self._plan(i, step)
+        row = self._row(step)
+        asks, reused = self._plan(i, row)
+        if self.track:
+            self.rows.append(row)
+            blobs = {b['id']: b for b in step['blobs']}
+            asks = {k: blobs[u] for k, u in asks.items()}
         ov = self.overlay
         for key in reused:
             src = self.work[key]['reused_from']
@@ -402,8 +429,9 @@ class Labeller:
 
     def recache(self, cache, raws):
         """The cache changed (an answer, another writer): replay the plan from the snapshot before the first step a
-        changed key is shown at, with `raws` the committed raw steps (dicts or lines). -> {kid: shown label or None}
-        for the keys shown so far whose applied label changed."""
+        changed key is shown at, on the units kept per step (rows: nothing is expanded or keyed again), with `raws`
+        the committed raw steps (dicts or lines: a replayed ask at a new step expands its step again, from the
+        snapshot before it). -> {kid: shown label or None} for the keys shown so far whose applied label changed."""
         changed = {k for k in self.cache.keys() | cache.keys() if self.cache.get(k) != cache.get(k)}
         if not changed:
             return {}
@@ -412,9 +440,7 @@ class Labeller:
         if seen:
             p = min(seen)
             j = max(n for n, s in enumerate(self.snaps) if s[0] <= p)
-            s0, exp, state, work = self.snaps[j]
-            del self.snaps[j + 1:]
-            exp = exp.fork()
+            s0, _, state, work = self.snaps[j]
             self.keeper = label.Keeper(self.at)
             self.keeper.state = {u: list(s) for u, s in state.items()}
             self.work = dict(work)
@@ -427,18 +453,20 @@ class Labeller:
         for k in changed & cache.keys():
             self.asked.pop(k, None)                                   # (answered: its blob is not needed any more)
         if seen:
+            at, cur = {sn[0]: n for n, sn in enumerate(self.snaps)}, []
             for i in range(s0, self.i):
-                if i % SNAP == 0 and i > s0:
-                    self._snap(i, exp)
-                raw = raws[i]
-                step = self._expand(exp, json.loads(raw) if isinstance(raw, str) else raw, at=i)
-                asks, _ = self._plan(i, step)
+                n = at.get(i)
+                if n is not None and i > s0:                          # (later snapshots: the replayed plan)
+                    self.snaps[n] = (i, self.snaps[n][1], {u: list(s) for u, s in self.keeper.state.items()},
+                                     dict(self.work))
+                asks, _ = self._plan(i, self.rows[i])
                 if asks and self._new(i):
-                    ctx = None
-                    for key, b in asks.items():
-                        if key not in self.asked:
-                            ctx = ctx or Ctx(step)
-                            self.asked[key] = (self._ask_blob(step, b), ctx)
+                    need = [k for k in asks if k not in self.asked]
+                    if need:
+                        step = self._step_at(i, raws, cur)
+                        ctx, blobs = Ctx(step), {b['id']: b for b in step['blobs']}
+                        for key in need:
+                            self.asked[key] = (self._ask_blob(step, blobs[asks[key]]), ctx)
         old, self.applied = self.applied, dict(cache)
         for k, v in self.work.items():
             src = v.get('reused_from')
@@ -451,6 +479,19 @@ class Labeller:
                 if a != b:
                     out[kid(k)] = b
         return out
+
+    def _step_at(self, i, raws, cur):
+        """Step i expanded again, with the file heads it was labelled with: from `cur` ([Expander, next position], the
+        last step so expanded, moved on) when it is not past i, else from the snapshot before i."""
+        n = max(n for n, s in enumerate(self.snaps) if s[0] <= i)
+        if not cur or not self.snaps[n][0] <= cur[1] <= i:
+            cur[:] = [self.snaps[n][1].fork(), self.snaps[n][0]]
+        exp, j = cur
+        for j in range(j, i + 1):
+            raw = raws[j]
+            step = self._expand(exp, json.loads(raw) if isinstance(raw, str) else raw, at=j)
+        cur[1] = i + 1
+        return step
 
     def wants(self):
         """{key: Want} the worker may ask now (class doc)."""

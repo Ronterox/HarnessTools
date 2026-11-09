@@ -441,7 +441,7 @@ only; history is never asked: a restart or rebuild never asks steps older than `
 - Residual risks:
   - a stalled resume (more than --settle between copied records) costs repeated rebuilds;
   - a writer dying in the middle of a rebuild leaves the server serving the old steps until the writer restarts;
-  - a label key first seen at step 0 costs ~2.3 s of poll-thread work;
+  - a label key first seen at step 0 costs ~2.3 s of poll-thread work (fixed: ~0.05 s, see Backlog, live);
   - a theoretical reorder of timeless steps (a step without ts takes the time of the step before it);
   - an Edit waiting on a permission prompt holds every later commit (the provisional tail still shows them);
   - before the writer has written head.json (during the `--seed-git` scan) the server computes `since` from the wall
@@ -450,5 +450,28 @@ only; history is never asked: a restart or rebuild never asks steps older than `
 ## Backlog, live
 - Label the 15 cut pieces (192 versions on aigource) by hand with `label.py --per-step`, only when asked: history is
   never relabelled automatically.
-- Per-step cost reuse (a cache change replays the labeller's plan from the last 32-step snapshot before the first
-  step showing a changed key, and relabels the steps that show it).
+- Per-step cost reuse: done (2026-11-09). A cache change replayed the labeller's plan from the last 32-step snapshot
+  before the first step showing a changed key, expanding and keying every step again. The labeller now keeps each
+  committed step's units as the Keeper reads them (`rows`: id, key, functions as (qual, hash, lines, delta lines),
+  the blob's id; a unit whose key is the step before's is that step's tuple, a function is kept once), so recache()
+  replays the Keeper alone, from the same snapshot; snapshots keep their expander and get the replayed plan in place.
+  Only an ask replayed at a new step expands that step again (its blob and context), from the snapshot before it.
+  label.Keeper.step takes the units (`us`), and its functions are plan_funcs() tuples, as for a step it reads itself.
+  Aigource, 1,270 steps, a random half of its cache, same machine, before -> after:
+  - recache of a key first shown at step 0: 1.21-1.29 s -> 0.05 s; at step 636: 0.90-0.96 s -> 0.04 s;
+  - in the server, a label written to the cache file -> its "labels" event (poll 0.05 s): 1.24-1.38 s -> 0.08-0.13 s;
+  - server RSS at 1,270 steps: 129 -> 132 MB when ready, 138 -> 136 MB after two step-0 changes (the old replay forked
+    expanders for its snapshots again); what the labeller holds (tracemalloc): 28.7 -> 31.5 MB;
+  - a push (step labelled as it comes) costs the same, within noise (1,270 pushes interleaved, 3 runs each);
+  - settled labels still equal label.py's with the same cache: 323 steps differ without the layer, 0 with it, and 0
+    after a recache of a key first shown late, at step 0, at step 636, and a removal.
+  label.py --per-step needed no change. Profiled against the tests' fake model on aigource with
+  demo/labels.aigource.json (the 15 cut pieces: 154 steps to label, 64 asks): run 4.2 s, resume 2.1 s on a calm
+  machine; under load 7.3 / 3.3 s before, 7.0 / 3.3 s after. The run's time outside the model is save_cache (149 saves
+  of the 785 KB cache, 55-66% of the profile) and one pass of expand + file heads + keys + units (~1.5 s), the resume
+  only that pass; none of it is per ask, so with the real model (~1.2 s an ask) the run spends its time asking.
+  Tests: test_replay_on_kept_units_is_a_full_replay (against the replay that expands every step: random cache changes
+  at random points, new steps from a random step on, on flask, the kept fixture, func_patch and 160 aigource steps,
+  SNAP 2 / 5 / 32), test_replay_expands_and_keys_no_step_already_seen (counts Expander.push and step_keys calls).
+  436 tests pass; 85 of 85 mutants killed (7 new on the rows; the phase-4 mutant on cutting snapshots back is now one
+  on the replayed snapshots keeping their old plan).

@@ -977,6 +977,227 @@ def test_recaches_keep_labels_as_a_fresh_labeller(tmp_path, monkeypatch):
     assert kept >= 3
 
 
+class FullReplay(liveserve.Labeller):
+    """recache() as it was before the rows: every step from the snapshot expanded and keyed again, the Keeper reading
+    the step itself (the reference of the replay on kept units)."""
+
+    def recache(self, cache, raws):
+        changed = {k for k in self.cache.keys() | cache.keys() if self.cache.get(k) != cache.get(k)}
+        if not changed:
+            return {}
+        self.cache = cache
+        seen = [self.first[k] for k in changed if k in self.first]
+        if seen:
+            j = max(n for n, s in enumerate(self.snaps) if s[0] <= min(seen))
+            s0, exp, state, work = self.snaps[j]
+            del self.snaps[j + 1:]
+            exp = exp.fork()
+            self.keeper = label.Keeper(self.at)
+            self.keeper.state = {u: list(s) for u, s in state.items()}
+            self.work = dict(work)
+        for work in [self.work] + [sn[3] for sn in self.snaps]:
+            for k in changed:
+                if k in cache:
+                    work[k] = cache[k]
+                else:
+                    work.pop(k, None)
+        for k in changed & cache.keys():
+            self.asked.pop(k, None)
+        if seen:
+            for i in range(s0, self.i):
+                if i % liveserve.SNAP == 0 and i > s0:
+                    self._snap(i, exp)
+                raw = raws[i]
+                step = self._expand(exp, json.loads(raw) if isinstance(raw, str) else raw, at=i)
+                asks = self.keeper.step(i, step, self.work)
+                for key in asks:
+                    self.work[key] = {}
+                self.keeper.settle(self.work)
+                if asks and self._new(i):
+                    ctx = None
+                    for key, b in asks.items():
+                        if key not in self.asked:
+                            ctx = ctx or liveserve.Ctx(step)
+                            self.asked[key] = (self._ask_blob(step, b), ctx)
+        old, self.applied = self.applied, dict(cache)
+        for k, v in self.work.items():
+            src = v.get('reused_from')
+            if src is not None and k not in cache and src in cache:
+                self.applied[k] = dict(cache[src], reused_from=src)
+        out = {}
+        for k in old.keys() | self.applied.keys():
+            if k in self.first:
+                a, b = liveserve.shown(old.get(k)), liveserve.shown(self.applied.get(k))
+                if a != b:
+                    out[liveserve.kid(k)] = b
+        return out
+
+
+def plan_state(lab):
+    """What a replay decides, comparable between two labellers: the Keeper, work, applied, the asks (blob and context
+    by value), the wants, and the snapshots' plan by position."""
+    asked = {k: (dumps(b), c.system, c.module_of, c.keys) for k, (b, c) in lab.asked.items()}
+    wants = {k: (dumps(w.blob), w.ctx.system, w.vis, w.pos, w.since, w.uids) for k, w in lab.wants().items()}
+    snaps = {sn[0]: (sn[2], sn[3]) for sn in lab.snaps}
+    return lab.keeper.state, lab.work, lab.applied, asked, wants, snaps
+
+
+def replay_cases():
+    """(name, head, lines, the full cache): the fixtures and a slice of aigource."""
+    head, lines = raw_timeline(FLASK)
+    with open(os.path.join(REPO, 'demo', 'labels.json'), encoding='utf-8') as fh:
+        yield 'flask', head, lines, json.load(fh)
+    vs = [['h0', 'h1', 'h2', 'h3'], ["h0'", 'h1', 'h2', 'h3'], ["h0'", "h1'", 'h2', 'h3'], ["h0'", "h1'", 'h2*', 'h3'],
+          ["h0'", "h1'", "h2*", "h3'"], ['h0*', "h1'", 'h2*', "h3'"], ['h0*', "h1+", 'h2*', "h3'"]] * 2
+    tl, _ = kept_fixture(vs)
+    head, lines = raw_timeline(tl)
+    yield 'kept', head, lines, {','.join(sorted(v)): {'emoji': '🔑', 'title': f'Keeper {n}', 'summary': 's',
+                                                    'risk': 'low'} for n, v in enumerate(vs)}
+    import test_func_patch as tf
+    head, lines = raw_timeline({'schema': 5, 'steps': timeline.compact(tf.fixture5())})
+    keys = {k for st in timeline.expand({'schema': 5, 'steps': [json.loads(l) for l in lines]})
+            for _, k, _, _ in label.units(st) if k}
+    yield 'func_patch', head, lines, {k: {'emoji': '🧩', 'title': f'Part {n}', 'summary': 's', 'risk': 'low'}
+                                      for n, k in enumerate(sorted(keys))}
+    head, lines = raw_timeline(AIG)
+    with open(os.path.join(REPO, 'demo', 'labels.aigource.json'), encoding='utf-8') as fh:
+        yield 'aigource', head, lines[:160], json.load(fh)
+
+
+@pytest.mark.parametrize('snap', [2, 5, 32])
+def test_replay_on_kept_units_is_a_full_replay(monkeypatch, snap):
+    # random cache changes (labels learnt, keys gone, titles renamed, keys first shown at step 0 among them) at random
+    # points, with new steps from a random step on: the replay on the units kept per step decides as the replay that
+    # expands and keys every step again (Keeper, work, applied, asks with their blob and context, wants, snapshots,
+    # the overlay), and the steps pushed after it are labelled the same
+    monkeypatch.setattr(liveserve, 'SNAP', snap)
+    rnd, again = random.Random(snap), 0
+    for name, head, lines, full in replay_cases():
+        keys = sorted(full)
+        for trial in range(3 if name == 'aigource' else 5):
+            new = rnd.randrange(len(lines))
+            bound = lambda i, ts, new=new: i >= new
+            cache = {k: full[k] for k in keys if rnd.random() < 0.5}
+            lab = liveserve.Labeller(head['root'], dict(cache), 0.2, head['schema'], bound)
+            ref = FullReplay(head['root'], dict(cache), 0.2, head['schema'], bound)
+            calls = []
+            step_at = lab._step_at
+            lab._step_at = lambda *a: calls.append(a[0]) or step_at(*a)
+            at = 0
+            for c in sorted(rnd.sample(range(1, len(lines)), min(4, len(lines) - 1))) + [len(lines)]:
+                for l in lines[at:c]:
+                    assert dumps(lab.push(json.loads(l), 0.0)) == dumps(ref.push(json.loads(l), 0.0))
+                assert lab.take_overlay() == ref.take_overlay()
+                at = c
+                for _ in range(rnd.randrange(1, 4)):
+                    cache = dict(cache)
+                    shown = sorted(k for k in lab.first if k)
+                    early = [k for k in shown if lab.first[k] == 0]
+                    pick = rnd.choice(early if early and rnd.random() < 0.3 else shown or keys)
+                    if pick in cache and rnd.random() < 0.5:
+                        del cache[pick]
+                    elif pick in cache:
+                        cache[pick] = dict(cache[pick], title=f'Renamed {trial}')
+                    else:
+                        cache[pick] = full.get(pick) or {'emoji': '🧪', 'title': 'Probe part', 'summary': 's',
+                                                         'risk': 'low'}
+                    for k in rnd.sample(keys, 3):                   # (and a few keys learnt or lost anywhere)
+                        if k in cache:
+                            del cache[k]
+                        else:
+                            cache[k] = full[k]
+                    assert lab.recache(dict(cache), lines[:c]) == ref.recache(dict(cache), lines[:c])
+                    got, want = plan_state(lab), plan_state(ref)
+                    assert got[:5] == want[:5], name
+                    assert all(got[5][p] == want[5][p] for p in got[5].keys() & want[5].keys()), name
+            again += len(calls)
+    assert again          # (some replays asked at a new step: its step was expanded again)
+
+
+def test_tail_forks_leave_the_rows_alone(monkeypatch):
+    # a tail labelled on a fork between commits, as the server does at every poll: the rows stay one per committed
+    # step, and a recache after it (keys first shown at step 0 and mid-way, a removal) plans as the full replay
+    monkeypatch.setattr(liveserve, 'SNAP', 4)
+    head, lines = raw_timeline(FLASK)
+    with open(os.path.join(REPO, 'demo', 'labels.json'), encoding='utf-8') as fh:
+        full = json.load(fh)
+    rnd = random.Random(3)
+    first = liveserve.Labeller(head['root'], {}, 0.2, head['schema'])
+    for l in lines:
+        first.push(json.loads(l), 0.0)
+    cache = {k: v for k, v in sorted(full.items()) if rnd.random() < 0.5 and first.first.get(k) != 0}
+    bound = lambda i, ts: i >= len(lines) // 2
+    lab = liveserve.Labeller(head['root'], dict(cache), 0.2, head['schema'], bound)
+    ref = FullReplay(head['root'], dict(cache), 0.2, head['schema'], bound)
+    for i, l in enumerate(lines):
+        assert dumps(lab.push(json.loads(l), 0.0)) == dumps(ref.push(json.loads(l), 0.0))
+        tl, tr = lab.fork(), ref.fork()
+        for t in lines[i + 1:i + 4]:
+            assert dumps(tl.push(json.loads(t))) == dumps(tr.push(json.loads(t)))
+        assert len(lab.rows) == lab.i == i + 1
+    assert lab.take_overlay() == ref.take_overlay()
+    shown = sorted(k for k in lab.first if k)
+    early = min((k for k in shown if k not in cache), key=lambda k: (lab.first[k], k))
+    mid = min((k for k in shown if k not in cache), key=lambda k: (abs(lab.first[k] - len(lines) // 2), k))
+    gone = min(k for k in shown if k in cache)
+    assert lab.first[early] == 0 and 0 < lab.first[mid]
+    for k in (early, mid, gone):
+        cache = dict(cache)
+        if k in cache:
+            del cache[k]
+        else:
+            cache[k] = full.get(k) or {'emoji': '🧪', 'title': 'Probe part', 'summary': 's', 'risk': 'low'}
+        assert lab.recache(dict(cache), lines) == ref.recache(dict(cache), lines)
+        assert len(lab.rows) == lab.i
+        got, want = plan_state(lab), plan_state(ref)
+        assert got[:5] == want[:5]
+        assert all(got[5][p] == want[5][p] for p in got[5].keys() & want[5].keys())
+
+
+def test_replay_expands_and_keys_no_step_already_seen(flask, monkeypatch):
+    # a cache change replays the plan on the kept units: no step is expanded or keyed again, keys first shown at step 0
+    # included; with new steps, only an ask replayed at one of them expands again, from the snapshot before it
+    head, lines = flask
+    with open(os.path.join(REPO, 'demo', 'labels.json'), encoding='utf-8') as fh:
+        full = json.load(fh)
+    n = {'push': 0, 'keys': 0}
+    push, step_keys = liveserve.Expander.push, label.step_keys
+
+    def counted_push(self, st):
+        n['push'] += 1
+        return push(self, st)
+
+    def counted_keys(st):
+        n['keys'] += 1
+        return step_keys(st)
+    monkeypatch.setattr(liveserve.Expander, 'push', counted_push)
+    monkeypatch.setattr(label, 'step_keys', counted_keys)
+    monkeypatch.setattr(liveserve, 'SNAP', 4)
+    for new in (None, len(lines) - 6):
+        lab = liveserve.Labeller(head['root'], {}, 0.2, head['schema'], None if new is None else lambda i, ts: i >= new)
+        for l in lines:
+            lab.push(json.loads(l), 0.0)
+        asked = {k: dumps(b) for k, (b, _) in lab.asked.items()}
+        assert bool(asked) == (new is not None)
+        shown = sorted(k for k in lab.first if k)
+        assert any(lab.first[k] == 0 for k in shown)
+        cache = {}
+        for k in sorted(shown, key=lambda k: (lab.first[k], k)) + sorted(full):     # (step-0 keys first)
+            cache = dict(cache, **{k: full.get(k) or {'emoji': '🧪', 'title': 'Probe part', 'summary': 's',
+                                                      'risk': 'low'}})
+            n['push'] = n['keys'] = 0
+            lab.recache(cache, lines)
+            assert n == {'push': 0, 'keys': 0}
+        assert not lab.asked
+        n['push'] = n['keys'] = 0
+        lab.recache({}, lines)                  # (every label lost: the new steps' asks are asked again)
+        assert {k: dumps(b) for k, (b, _) in lab.asked.items()} == asked
+        if new is None:
+            assert n == {'push': 0, 'keys': 0}
+        else:
+            assert 0 < n['push'] == n['keys'] <= len(lines) - max(sn[0] for sn in lab.snaps if sn[0] <= new)
+
+
 def test_a_tail_written_while_the_steps_are_read_goes_out_with_them(flask, cache, tmp_path):
     # the writer commits steps, then rewrites provisional.json while the server is reading them: the same poll serves
     # the steps with that tail (one event, no step shown first with no tail and then again with it)

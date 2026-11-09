@@ -146,20 +146,27 @@ def units(step):
     return out
 
 
-def changed_lines(prev, funcs, adjacent):
-    """Lines changed from `prev` ({qual: (hash, lines)}) to `funcs`: a function whose hash changed counts its
-    delta's added + removed lines (after a gap, or with no delta, its line-count difference, at least 1); an
-    added or removed function counts its whole length."""
-    n, cur = 0, set()
+def plan_funcs(funcs):
+    """A unit's functions as the Keeper reads them: ((qual, hash, lines, delta's added + removed), ...)."""
+    out = []
     for f in funcs:
-        cur.add(f["qual"])
-        old = prev.get(f["qual"])
+        d = f.get("delta") or {}
+        out.append((f["qual"], f["hash"], f["lines"], d.get("added", 0) + d.get("removed", 0)))
+    return tuple(out)
+
+
+def changed_lines(prev, funcs, adjacent):
+    """Lines changed from `prev` ({qual: (hash, lines)}) to `funcs` (plan_funcs()): a function whose hash changed
+    counts its delta's added + removed lines (after a gap, or with no delta, its line-count difference, at least 1);
+    an added or removed function counts its whole length."""
+    n, cur = 0, set()
+    for qual, h, lines, moved in funcs:
+        cur.add(qual)
+        old = prev.get(qual)
         if old is None:
-            n += f["lines"]
-        elif old[0] != f["hash"]:
-            d = f.get("delta") or {}
-            moved = d.get("added", 0) + d.get("removed", 0)
-            n += moved if adjacent and moved else max(1, abs(f["lines"] - old[1]))
+            n += lines
+        elif old[0] != h:
+            n += moved if adjacent and moved else max(1, abs(lines - old[1]))
     return n + sum(lines for q, (_, lines) in prev.items() if q not in cur)
 
 
@@ -177,22 +184,26 @@ class Keeper:
         self.asked = []  # (unit id, key, lines) asked at this step, for settle()
         self.reused = []
 
-    def step(self, i, step, cache, live=True):
+    def step(self, i, step, cache, live=True, us=None):
         """Step position `i`: hits and reuses update the state now (reuses are written into `cache`). -> {key: blob}
         to ask; call settle() once they are asked. Not `live` (outside the steps being labelled): nothing is
-        written or asked, an uncached key leaves its unit unlabelled."""
+        written or asked, an uncached key leaves its unit unlabelled. `us`: the step's units given instead of the
+        step, their functions as plan_funcs() (only those of a unit whose key changed since the step before are
+        read); a unit's blob is then whatever the caller put there (returned as the blob to ask)."""
         ask, self.reused = {}, []
-        for uid, key, funcs, blob in units(step):
+        for uid, key, funcs, blob in units(step) if us is None else us:
             st = self.state.get(uid)
             if not key:
                 continue
             if st and st[3] == key and st[5] == i - 1:
                 st[5] = i
                 continue
+            if us is None and funcs is not None:
+                funcs = plan_funcs(funcs)
             adjacent = st is not None and st[5] == i - 1
             chg = changed_lines(st[4], funcs, adjacent) if st and funcs is not None else 0
             anchor, at_lines, since = (st[0], st[1], st[2] + chg) if st else (None, 0, 0)
-            lines = sum(f["lines"] for f in funcs or ())
+            lines = sum(f[2] for f in funcs or ())
             entry = cache.get(key)
             if key in ask:  # another unit asks for it at this step
                 anchor = None
@@ -211,7 +222,7 @@ class Keeper:
                     ask.setdefault(key, blob)
                     self.asked.append((uid, key, lines))
                 anchor = None
-            self.state[uid] = [anchor, at_lines, since, key, {f["qual"]: (f["hash"], f["lines"]) for f in funcs or ()}, i]
+            self.state[uid] = [anchor, at_lines, since, key, {q: (h, n) for q, h, n, _ in funcs or ()}, i]
         return ask
 
     def settle(self, cache):
