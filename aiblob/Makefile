@@ -5,7 +5,7 @@ ROOT    ?=
 PERF_OUT  ?= demo/perf/perf.csv
 PERF_ARGS ?=
 
-.PHONY: timeline test perf serve live live-stop live-export live-verify
+.PHONY: timeline test perf serve live live-stop live-export live-verify live-serve live-serve-stop
 LABELS  ?= demo/labels.json
 
 # analyse, then put back the cached labels (port 1: no llama-server is asked; uncached blobs keep heuristic names)
@@ -38,3 +38,12 @@ live-export:
 
 live-verify:
 	$(PY) live.py verify $(NAME)
+
+# serve live/NAME to the page at http://127.0.0.1:$(LIVE_PORT)/ (labels: cache hits and kept labels, no model call),
+# e.g. make live-serve NAME=aigource LABELS=demo/labels.aigource.json
+LIVE_PORT ?= 8791
+live-serve:
+	$(PY) liveserve.py run $(NAME) --port $(LIVE_PORT) --labels $(LABELS)
+
+live-serve-stop:
+	$(PY) liveserve.py stop $(NAME)

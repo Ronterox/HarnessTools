@@ -35,7 +35,7 @@ the default; an added or removed function counts whole): the new version gets a 
 (a `--retry-failed` run can end with a label or so more than a clean run); in the whole-timeline mode, versions
 that would keep a label whose ask failed stay unlabelled until a later run labels it.
 
-Live map (live.py; no page or HTTP yet): it follows the transcripts as they are written and keeps a store in
+Live map (live.py): it follows the transcripts as they are written and keeps a store in
 live/NAME/: committed steps (steps.ndjson, exactly as a batch build writes them, never changed) and a provisional tail
 (provisional.json: what a batch build would add if the transcripts ended now), with a checkpoint for warm restarts:
 
@@ -46,6 +46,19 @@ live/NAME/: committed steps (steps.ndjson, exactly as a batch build writes them,
 .venv/bin/python live.py stop aigource                    # SIGTERM by the pid in live/aigource/live.pid
 .venv/bin/python timeline.py ... --no-timings --checkpoint live/aigource   # a batch build live then continues
 ```
+
+Live server (liveserve.py). With a writer running (`make live NAME=…`), `make live-serve NAME=… [LABELS=…]` serves the
+store at http://127.0.0.1:8791/ (`LIVE_PORT=`), which opens the page in live mode (`?live=1`; `?live=0` is the static
+page). New steps appear as they commit; steps not committed yet are drawn faded and lock in when committed. On the last
+step the page follows new steps (4×, a jump when more than 20 behind); elsewhere a "+N new" pill jumps to the newest.
+Blobs never move as steps come (new ones are placed beside the others); Re-layout lays the map out again. A rebuild of
+the store reloads the page at the same step. Labels are the cache's hits and kept labels (label.py's 20% rule), never
+a model call: the same names `label.py T --cache LABELS --server http://127.0.0.1:1` gives the export, but for one case
+by design: a folded-in `merged` blob whose functions go back to an earlier version keeps, on earlier steps, what was
+known then, where label.py shows the final cache's label everywhere (aigource: no difference with its full cache, 323
+merged labels on earlier steps with a random half of it; phase 4 will push labels back to earlier steps). The server runs without a writer too, binds
+127.0.0.1 only, refuses other Host names, and is stopped with `make live-serve-stop NAME=…` (pid in
+live/NAME/serve.pid). API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,

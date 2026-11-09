@@ -97,6 +97,16 @@ body.multi #empty { inset: 46px 0 138px; }
 #legend .grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 8px; }
 #legend .keys { font: 11px var(--mono); color: var(--mute); margin-top: 8px; line-height: 1.6; }
 #empty { position: fixed; inset: 46px 0 118px; display: grid; place-items: center; color: var(--mute); font: 13px var(--mono); pointer-events: none; }
+/* live mode (liveserve.py): a LIVE badge, Re-layout, the "+N new" pill; provisional steps are drawn faded */
+[hidden] { display: none !important; }
+.badge.live { color: var(--add); border-color: color-mix(in srgb, var(--add) 50%, transparent); display: inline-flex; align-items: center; gap: 6px; font-weight: 500; letter-spacing: .08em; }
+.badge.live i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: beat 1.6s ease-in-out infinite; }
+.badge.live.off { color: var(--mute); border-color: var(--line); } .badge.live.off i { animation: none; opacity: .5; }
+@keyframes beat { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+#newPill { position: fixed; right: 16px; bottom: 128px; z-index: 4; padding: 4px 12px; border-radius: 99px; font-weight: 600; letter-spacing: .03em;
+           color: var(--add); border-color: color-mix(in srgb, var(--add) 55%, transparent); background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 6px 18px rgba(0,0,0,.3); }
+body.multi #newPill { bottom: 148px; }
+.prov { color: var(--mute); font-style: italic; }
 </style>
 </head>
 <body>
@@ -106,6 +116,8 @@ body.multi #empty { inset: 46px 0 138px; }
   <nav id="crumbs" aria-label="Breadcrumb"></nav>
   <div class="meta" id="meta">loading…</div>
   <span class="badge" id="src"></span>
+  <span class="badge live" id="liveBadge" hidden title="live: steps are added as the session is written"><i></i>LIVE</span>
+  <button id="relayoutBtn" hidden title="Lay the map out again over every blob so far (live, new blobs are placed beside the others and nothing moves)">Re-layout</button>
   <button id="areasBtn" class="tog" aria-pressed="false" title="Areas: groups of blobs, one level above the blob map (A)">Areas <span class="k">A</span></button>
   <button id="followBtn" class="tog" aria-pressed="false" title="Follow: each step flies the camera to what it edits (F)">Follow <span class="k">F</span></button>
   <button id="legendBtn" aria-expanded="false" aria-controls="legend">Legend</button>
@@ -114,6 +126,7 @@ body.multi #empty { inset: 46px 0 138px; }
 <div id="empty">loading timeline…</div>
 <div id="tip" role="tooltip"></div>
 <div id="card" role="dialog" aria-label="Function detail"></div>
+<button id="newPill" hidden aria-live="polite" title="new steps since you left the end: jump to the newest"></button>
 <footer id="bar">
   <div id="status" aria-live="polite"><div class="l1" id="l1"></div><div id="said"></div></div>
   <div id="sess" aria-label="Sessions"></div>
@@ -170,7 +183,7 @@ const regionTint = (m, sl) => m === TEXT_REGION ? `hsl(210 6% ${sl.split(' ')[1]
 let STEPS = [], cur = 0, SRC = '';
 const IDX = [];            // per step: { blobs: Map id→blob, funcs: Map qual→func, owner: Map qual→blob id }
 async function load() {
-  const qs = new URLSearchParams(location.search), tries = qs.get('src') ? [qs.get('src')] : ['timeline.json', 'sample-timeline.json'];
+  const qs = new URLSearchParams(location.search), tries = LIVE ? ['live/timeline.json'] : qs.get('src') ? [qs.get('src')] : ['timeline.json', 'sample-timeline.json'];
   for (const url of tries) {
     try { const r = await fetch(url, { cache: 'no-store' }); if (r.ok) { SRC = url; return await r.json(); } } catch (e) { /* try next */ }
   }
@@ -199,33 +212,41 @@ function patchFuncs(s, base) {        // v4: removed quals go, a known qual merg
 }
 const cmpStr = (p, q) => p < q ? -1 : p > q ? 1 : 0;
 const edgeCmp = (p, q) => (EDGE_RANK[p.kind] ?? 4) - (EDGE_RANK[q.kind] ?? 4) || cmpStr(p.a, q.a) || cmpStr(p.b, q.b);
-function expandSteps(tl) {
+/* expander(tl): the same, one step at a time (live mode adds steps as they come): push(step) -> its full state;
+   fork() goes on from here without touching this one (the provisional tail is expanded on a fork) */
+function expander(tl, s) {
   const v3 = tl.schema >= 3, v4 = tl.schema >= 4;
-  let cur = new Map(), fresh = new Set(), edges = new Map(), areas = null;
-  return (tl.steps || []).map((st, i) => {
-    const sent = st.blobs || [];
-    let elist;
-    if (!v3 || st.full || i === 0 || st.edges) {          // a delta step never carries `edges`
-      areas = st.areas ? new Map(st.areas.map(a => [a.id, a])) : null;
-      cur = new Map(sent.map(b => [b.id, b])); fresh = new Set(cur.keys());
-      elist = st.edges || []; edges = new Map(elist.map(e => [edgeId(e), e]));
-    } else {
-      const gone = new Set(st.removed_blobs || []), next = new Map(), base = id => cur.has(id) ? (fresh.has(id) ? restBlob(cur.get(id)) : cur.get(id)) : null;
-      const byId = new Map(sent.map(b => [b.id, v4 ? patchFuncs(b, base(b.id)) : b]));
-      for (const [id, b] of cur) if (!gone.has(id)) next.set(id, byId.get(id) || (fresh.has(id) ? restBlob(b) : b));
-      for (const b of byId.values()) next.set(b.id, b);  // a blob already there keeps its place, a new one appends
-      cur = st.order ? new Map(st.order.map(id => [id, next.get(id)])) : next; fresh = new Set(byId.keys());
-      for (const e of st.edges_remove || []) edges.delete(edgeId(e));
-      for (const e of st.edges_add || []) edges.set(edgeId(e), e);
-      elist = [...edges.values()].sort(edgeCmp);
-      if (areas) { for (const id of st.areas_remove || []) areas.delete(id); for (const a of st.areas || []) areas.set(a.id, a); }
-    }
-    const out = { ...st, blobs: [...cur.values()], edges: elist };
-    delete out.removed_blobs; delete out.edges_add; delete out.edges_remove; delete out.order; delete out.full; delete out.areas_remove;
-    if (areas) out.areas = [...areas.keys()].sort(cmpStr).map(id => areas.get(id)); else delete out.areas;
-    return out;
-  });
+  s = s || { n: 0, cur: new Map(), fresh: new Set(), edges: new Map(), areas: null };
+  return {
+    push(st) {
+      const sent = st.blobs || [];
+      let elist;
+      if (!v3 || st.full || s.n === 0 || st.edges) {          // a delta step never carries `edges`
+        s.areas = st.areas ? new Map(st.areas.map(a => [a.id, a])) : null;
+        s.cur = new Map(sent.map(b => [b.id, b])); s.fresh = new Set(s.cur.keys());
+        elist = st.edges || []; s.edges = new Map(elist.map(e => [edgeId(e), e]));
+      } else {
+        const { cur, fresh, edges, areas } = s;
+        const gone = new Set(st.removed_blobs || []), next = new Map(), base = id => cur.has(id) ? (fresh.has(id) ? restBlob(cur.get(id)) : cur.get(id)) : null;
+        const byId = new Map(sent.map(b => [b.id, v4 ? patchFuncs(b, base(b.id)) : b]));
+        for (const [id, b] of cur) if (!gone.has(id)) next.set(id, byId.get(id) || (fresh.has(id) ? restBlob(b) : b));
+        for (const b of byId.values()) next.set(b.id, b);  // a blob already there keeps its place, a new one appends
+        s.cur = st.order ? new Map(st.order.map(id => [id, next.get(id)])) : next; s.fresh = new Set(byId.keys());
+        for (const e of st.edges_remove || []) edges.delete(edgeId(e));
+        for (const e of st.edges_add || []) edges.set(edgeId(e), e);
+        elist = [...edges.values()].sort(edgeCmp);
+        if (areas) { for (const id of st.areas_remove || []) areas.delete(id); for (const a of st.areas || []) areas.set(a.id, a); }
+      }
+      s.n++;
+      const out = { ...st, blobs: [...s.cur.values()], edges: elist };
+      delete out.removed_blobs; delete out.edges_add; delete out.edges_remove; delete out.order; delete out.full; delete out.areas_remove;
+      if (s.areas) out.areas = [...s.areas.keys()].sort(cmpStr).map(id => s.areas.get(id)); else delete out.areas;
+      return out;
+    },
+    fork() { return expander(tl, { ...s, edges: new Map(s.edges), areas: s.areas && new Map(s.areas) }); },
+  };
 }
+function expandSteps(tl) { const e = expander(tl); return (tl.steps || []).map(st => e.push(st)); }
 /* </expand> */
 /* ───────────────────────── sessions & git steps ─────────────────────────
    SCHEMA.md "Sessions": a step may carry session / agent / author ('git' = a commit that reconciles the snapshot, not AI
@@ -234,20 +255,27 @@ const isGit = s => s.author === 'git';
 const SESS_HUES = [210, 28, 150, 285, 52, 335, 182, 95];       // at most 8 session colours, cycling
 const sessCol = (ci, a = 1) => `hsl(${SESS_HUES[ci % SESS_HUES.length]} ${T.light ? 55 : 50}% ${T.light ? 45 : 62}% / ${a})`;
 let SESS = new Map(), GITS = [], BOUNDS = [], MULTI = false, SESS_ON = false, SESS_META = new Map();
-function indexSessions() {
-  SESS = new Map(); GITS = []; BOUNDS = [];
-  let prev, last = -1, sub = false;
-  STEPS.forEach((s, i) => {
-    if (isGit(s)) { GITS.push(i); s.tint = last; return; }
-    if (s.agent && s.agent !== 'main') sub = true;
-    const id = s.session || '';
-    let o = SESS.get(id); if (!o) SESS.set(id, o = { id, ci: SESS.size, n: 0, first: i });
-    o.n++; s.sci = s.tint = last = o.ci;
-    if (id !== prev) BOUNDS.push(i);       // first step of a run of one session: git steps never start or end one
-    prev = id;
-  });
-  SESS_ON = SESS.size > 1 || GITS.length > 0; MULTI = SESS_ON || sub;
+/* one step into the session index x ({ sess, gits, bounds, prev, last, sub }): live mode carries it on step by step */
+const sessIndex = () => ({ sess: new Map(), gits: [], bounds: [], prev: undefined, last: -1, sub: false });
+const sessFork = x => ({ ...x, sess: new Map([...x.sess].map(([k, o]) => [k, { ...o }])), gits: [...x.gits], bounds: [...x.bounds] });
+function sessStep(x, s, i) {
+  if (isGit(s)) { x.gits.push(i); s.tint = x.last; return; }
+  if (s.agent && s.agent !== 'main') x.sub = true;
+  const id = s.session || '';
+  let o = x.sess.get(id); if (!o) x.sess.set(id, o = { id, ci: x.sess.size, n: 0, first: i });
+  o.n++; s.sci = s.tint = x.last = o.ci;
+  if (id !== x.prev) x.bounds.push(i);       // first step of a run of one session: git steps never start or end one
+  x.prev = id;
+}
+function useSessions(x) {
+  SESS = x.sess; GITS = x.gits; BOUNDS = x.bounds;
+  SESS_ON = SESS.size > 1 || GITS.length > 0; MULTI = SESS_ON || x.sub;
   document.body.classList.toggle('multi', SESS_ON); BOTTOM = SESS_ON ? 138 : 118;
+}
+function indexSessions() {
+  const x = sessIndex();
+  STEPS.forEach((s, i) => sessStep(x, s, i));
+  useSessions(x);
 }
 const whoText = s => `${s.session || ''}${s.agent ? ' · ' + s.agent : ''}`;
 const fmtT = t => t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }) : '?';
@@ -267,37 +295,39 @@ function markSession() {
 }
 function normalize(tl) {
   SESS_META = new Map((Array.isArray(tl.sessions) ? tl.sessions : []).map(m => [m.id, m]));     // optional top-level `sessions`: legend tooltips
-  const zero = () => ({ added: 0, removed: 0, state: 'same' });
-  STEPS = expandSteps(tl).map((st, i) => {
-    st.idx ??= i; st.turn ??= 0; st.added ??= 0; st.removed ??= 0; st.blobs ||= []; st.edges ||= [];
-    const blobs = new Map(), funcs = new Map(), owner = new Map();
-    for (const b of st.blobs) {
-      b.funcs ||= []; b.data ||= []; b.delta ||= zero(); b.size = Math.max(1, b.size || 0); b.complexity ||= 0; b.errors ||= 0; b.module ||= b.id.split(/[:.]/)[0]; b.region = regionOf(b);
-      b.face = b.label?.emoji || b.emoji || (PAGE(b.kind) ? '' : '•'); b.title = b.label?.title || b.name;
-      if (PAGE(b.kind)) b.path ||= b.id.replace(/^file:/, '');
-      blobs.set(b.id, b);
-      for (const f of b.funcs) { f.delta ||= zero(); f.calls ||= []; f.refs ||= []; f.data ||= []; f.snippet ||= []; f.lines = Math.max(1, f.lines || 0); funcs.set(f.qual, f); owner.set(f.qual, b.id); }
-    }
-    // v5: a cut piece the labels do not know yet shows its root function's name with its parent's face
-    for (const b of st.blobs) if (b.cut && !b.label) { const p = blobs.get(b.cut); if (p?.label?.emoji) b.face = p.label.emoji; }
-    st.areas ||= []; st.areaMap = new Map(st.areas.map(a => [a.id, a]));
-    st.kids = new Map(); for (const b of st.blobs) if (b.cut) { if (!st.kids.has(b.cut)) st.kids.set(b.cut, []); st.kids.get(b.cut).push(b.id); }
-    st.edges = st.edges.filter(e => blobs.has(e.a) && blobs.has(e.b));
-    // a data symbol shared by more than 3 blobs is drawn as spokes from one small data node instead of an all-to-all mesh
-    const members = new Map();
-    for (const e of st.edges) if (e.kind === 'data') for (const v of e.via || []) { if (!members.has(v)) members.set(v, new Set()); members.get(v).add(e.a).add(e.b); }
-    const wide = new Set([...members].filter(([, m]) => m.size > 3).map(([v]) => v)), groups = new Map();
-    st.spokes = new Set(st.edges.filter(e => e.kind === 'data' && (e.via || []).length && e.via.every(v => wide.has(v))));   // per step: edges are shared between steps
-    for (const v of wide) {
-      const ids = [...members.get(v)].sort(), key = ids.join('\n');
-      if (!groups.has(key)) groups.set(key, { key, ids, syms: [] });
-      groups.get(key).syms.push(v);
-    }
-    st.dataNodes = [...groups.values()];
-    IDX[i] = { blobs, funcs, owner };
-    return st;
-  });
+  STEPS = expandSteps(tl).map(normalizeStep);
   buildStains(); indexSessions();
+}
+/* a step's defaults, per-step maps and data nodes (IDX[i]); blobs shared with other steps get the same values again */
+function normalizeStep(st, i) {
+  const zero = () => ({ added: 0, removed: 0, state: 'same' });
+  st.idx ??= i; st.turn ??= 0; st.added ??= 0; st.removed ??= 0; st.blobs ||= []; st.edges ||= [];
+  const blobs = new Map(), funcs = new Map(), owner = new Map();
+  for (const b of st.blobs) {
+    b.funcs ||= []; b.data ||= []; b.delta ||= zero(); b.size = Math.max(1, b.size || 0); b.complexity ||= 0; b.errors ||= 0; b.module ||= b.id.split(/[:.]/)[0]; b.region = regionOf(b);
+    b.face = b.label?.emoji || b.emoji || (PAGE(b.kind) ? '' : '•'); b.title = b.label?.title || b.name;
+    if (PAGE(b.kind)) b.path ||= b.id.replace(/^file:/, '');
+    blobs.set(b.id, b);
+    for (const f of b.funcs) { f.delta ||= zero(); f.calls ||= []; f.refs ||= []; f.data ||= []; f.snippet ||= []; f.lines = Math.max(1, f.lines || 0); funcs.set(f.qual, f); owner.set(f.qual, b.id); }
+  }
+  // v5: a cut piece the labels do not know yet shows its root function's name with its parent's face
+  for (const b of st.blobs) if (b.cut && !b.label) { const p = blobs.get(b.cut); if (p?.label?.emoji) b.face = p.label.emoji; }
+  st.areas ||= []; st.areaMap = new Map(st.areas.map(a => [a.id, a]));
+  st.kids = new Map(); for (const b of st.blobs) if (b.cut) { if (!st.kids.has(b.cut)) st.kids.set(b.cut, []); st.kids.get(b.cut).push(b.id); }
+  st.edges = st.edges.filter(e => blobs.has(e.a) && blobs.has(e.b));
+  // a data symbol shared by more than 3 blobs is drawn as spokes from one small data node instead of an all-to-all mesh
+  const members = new Map();
+  for (const e of st.edges) if (e.kind === 'data') for (const v of e.via || []) { if (!members.has(v)) members.set(v, new Set()); members.get(v).add(e.a).add(e.b); }
+  const wide = new Set([...members].filter(([, m]) => m.size > 3).map(([v]) => v)), groups = new Map();
+  st.spokes = new Set(st.edges.filter(e => e.kind === 'data' && (e.via || []).length && e.via.every(v => wide.has(v))));   // per step: edges are shared between steps
+  for (const v of wide) {
+    const ids = [...members.get(v)].sort(), key = ids.join('\n');
+    if (!groups.has(key)) groups.set(key, { key, ids, syms: [] });
+    groups.get(key).syms.push(v);
+  }
+  st.dataNodes = [...groups.values()];
+  IDX[i] = { blobs, funcs, owner };
+  return st;
 }
 /* recency of any change, additions included: only drives the pulse of edges between recently edited blobs */
 function spotsOf(get) {
@@ -321,24 +351,26 @@ const STAIN_SETTLE = 6, STAIN_FLOOR = 0.35, MAX_MARKS = 4;
 const isDeletion = (a, r) => r > 0 && a <= r / 4;
 function buildStains() {
   const live = new Map();     // 'f:'+qual (a function) · 'b:'+id (a blob without functions) · 'g:'+id+'|'+qual (removed function)
-  STEPS.forEach((st, i) => {
-    const { funcs } = IDX[i], prev = IDX[i - 1];
-    const stamp = (key, o, extra) => {
-      const d = o.delta; if (d.state !== 'changed' || !(d.removed > 0)) return;
-      live.set(key, { step: i, a: d.added, r: d.removed, del: isDeletion(d.added, d.removed), git: isGit(st), ...extra });
-    };
-    for (const [q, f] of funcs) stamp('f:' + q, f, { q, name: f.name });
-    for (const b of st.blobs) if (!b.funcs.length) stamp('b:' + b.id, b, { blob: b.id, name: b.name });
-    // removed functions: the analyzer's `delta.removed_funcs` when it lists them, else whatever vanished since the previous step
-    const gone = [], listed = st.blobs.some(b => Array.isArray(b.delta.removed_funcs));
-    if (listed) { for (const b of st.blobs) for (const q of b.delta.removed_funcs || []) gone.push([q, b.id, prev?.funcs.get(q)]); }
-    else if (prev) for (const [q, f] of prev.funcs) if (!funcs.has(q)) gone.push([q, prev.owner.get(q), f]);
-    for (const [q, bid, f] of gone) {
-      live.delete('f:' + q); const lines = f?.lines || 1, name = f?.name || q.slice(q.lastIndexOf('.') + 1);
-      live.set('g:' + bid + '|' + q, { step: i, a: 0, r: lines, del: true, gone: true, git: isGit(st), blob: bid, q, name, lines });
-    }
-    st.stains = new Map(live);
-  });
+  STEPS.forEach((st, i) => stainStep(live, st, i));
+}
+/* step i's stains from the live ones before it (live mode carries `live` on step by step) */
+function stainStep(live, st, i) {
+  const { funcs } = IDX[i], prev = IDX[i - 1];
+  const stamp = (key, o, extra) => {
+    const d = o.delta; if (d.state !== 'changed' || !(d.removed > 0)) return;
+    live.set(key, { step: i, a: d.added, r: d.removed, del: isDeletion(d.added, d.removed), git: isGit(st), ...extra });
+  };
+  for (const [q, f] of funcs) stamp('f:' + q, f, { q, name: f.name });
+  for (const b of st.blobs) if (!b.funcs.length) stamp('b:' + b.id, b, { blob: b.id, name: b.name });
+  // removed functions: the analyzer's `delta.removed_funcs` when it lists them, else whatever vanished since the previous step
+  const gone = [], listed = st.blobs.some(b => Array.isArray(b.delta.removed_funcs));
+  if (listed) { for (const b of st.blobs) for (const q of b.delta.removed_funcs || []) gone.push([q, b.id, prev?.funcs.get(q)]); }
+  else if (prev) for (const [q, f] of prev.funcs) if (!funcs.has(q)) gone.push([q, prev.owner.get(q), f]);
+  for (const [q, bid, f] of gone) {
+    live.delete('f:' + q); const lines = f?.lines || 1, name = f?.name || q.slice(q.lastIndexOf('.') + 1);
+    live.set('g:' + bid + '|' + q, { step: i, a: 0, r: lines, del: true, gone: true, git: isGit(st), blob: bid, q, name, lines });
+  }
+  st.stains = new Map(live);
 }
 /* per blob, the live stains grouped by the step that made them, oldest first (drawn bottom to top);
    beyond MAX_MARKS the oldest groups merge into one mark */
@@ -528,6 +560,63 @@ function layout() {
       .forEach((u, i) => { u.x = (i % cols) * cell; u.y = Math.floor(i / cols) * cell; });
   }
 }
+/* live mode: the steps from `from` on joined the map. Placed blobs keep their place and K stays; a new blob starts
+   among the blobs of its region (else of its area, else those it calls or is called by, else past the right edge
+   of the map) and is pushed clear of the others, which do not move. Re-layout (relayout()) starts over. */
+function layoutAdd(from) {
+  const fresh = [], regionMoved = new Set();
+  for (let i = from; i < STEPS.length; i++) {
+    for (const b of STEPS[i].blobs) {
+      let u = U.get(b.id);
+      if (!u) { u = { id: b.id, max: 1, first: i }; U.set(b.id, u); fresh.push(u); }
+      else if (u.module !== b.region) regionMoved.add(b.id);
+      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, b.size);
+      u.stem = (b.module || '').replace(/_h$/, ''); if (b.area) u.area = b.area;
+      u.R = radius(u.max);
+    }
+    for (const e of STEPS[i].edges) if (e.kind !== 'data') { const k = [e.a, e.b].sort().join('\n'); LINKS.set(k, Math.max(LINKS.get(k) || 0, e.n || 1)); }
+  }
+  for (let i = regionMoved.size ? 0 : from; i < STEPS.length; i++) for (const b of STEPS[i].blobs) b.region = U.get(b.id).module;
+  if (!fresh.length) return;
+  const isNew = new Set(fresh), placed = [...U.values()].filter(u => !isNew.has(u));
+  let x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const u of placed) { x1 = Math.max(x1, u.x + u.R); y0 = Math.min(y0, u.y); y1 = Math.max(y1, u.y); }
+  if (!placed.length) { x1 = 0; y0 = y1 = 310; }
+  for (const u of fresh) {
+    let near = placed.filter(o => o.module === u.module);
+    if (!near.length && u.area) near = placed.filter(o => o.area === u.area);
+    if (!near.length) for (const [k] of LINKS) { const [p, q] = k.split('\n'), o = p === u.id ? U.get(q) : q === u.id ? U.get(p) : null; if (o && o !== u && 'x' in o) near.push(o); }
+    const r = rng(hash(u.id));
+    if (near.length) {
+      let cx = 0, cy = 0, spread = 0;
+      for (const o of near) { cx += o.x / near.length; cy += o.y / near.length; spread += o.R * o.R; }
+      spread = Math.sqrt(spread) + u.R;
+      u.x = cx + (r() - 0.5) * spread; u.y = cy + (r() - 0.5) * spread;
+    } else { u.x = x1 + REGION_GAP + u.R; u.y = (y0 + y1) / 2 + (r() - 0.5) * 120; x1 = u.x + u.R; }
+    placed.push(u);
+  }
+  settle(fresh, [...U.values()], (a, b) => a.module === b.module ? 20 : REGION_GAP);
+}
+/* push `moving` clear of every node of `all` (pad(a, b) apart); only the moving ones move */
+function settle(moving, all, pad) {
+  const mov = new Set(moving);
+  for (let it = 0; it < 80; it++) {
+    let worst = 0;
+    for (const a of moving) for (const b of all) {
+      if (a === b) continue;
+      let dx = a.x - b.x, dy = a.y - b.y, d = Math.hypot(dx, dy);
+      if (d < 0.01) { const g = rng(hash(a.id + '|' + it))(); dx = Math.cos(g * TAU); dy = Math.sin(g * TAU); d = 1; }
+      const min = a.R + b.R + pad(a, b);
+      if (d >= min) continue;
+      const p = (min - d) / d * (mov.has(b) ? 0.5 : 1); a.x += dx * p; a.y += dy * p; worst = Math.max(worst, min - d);
+    }
+    if (worst < 0.5) break;
+  }
+}
+function relayout() {
+  U = new Map(); dnPos.clear(); layout(); layoutAreas();
+  VIEW0 = frameOf([...U.values()], 2.2); if (AREAS_ON) CAM = areaCam();
+}
 
 
 /* ───────────────────────── areas (schema v5) ─────────────────────────
@@ -552,31 +641,7 @@ function layoutAreas() {
   const list = [...AU.values()].sort((p, q) => p.first - q.first || cmpStr(p.id, q.id));
   list.forEach((a, k) => { a.hue = a.id === 'tests' ? 80 : a.id === 'files' ? 210 : AHUES[k % AHUES.length]; });
   // 1. members inside each area, clustered by module (a header with its .c), pulled together by their calls
-  for (const a of list) {
-    const ns = [...a.ids].map(id => { const u = U.get(id); return { id, R: u.R, mod: u.stem || u.module, x: 0, y: 0 }; });
-    const ml = new Map(); for (const n of ns) ml.set(n.mod, (ml.get(n.mod) || 0) + n.R * n.R);
-    const mods = [...ml.keys()].sort((p, q) => ml.get(q) - ml.get(p) || cmpStr(p, q));
-    const ring = 0.9 * Math.sqrt(ns.reduce((sum, n) => sum + (n.R + 24) ** 2, 0));
-    const anchor = new Map(mods.map((m, k) => {
-      if (k === 0) return [m, { x: 0, y: 0 }];
-      const ang = (k - 1) / Math.max(1, mods.length - 1) * TAU + (hash(m) % 100) / 200;
-      return [m, { x: Math.cos(ang) * ring, y: Math.sin(ang) * ring }];
-    }));
-    for (const n of ns) { const r = rng(hash(n.id)), an = anchor.get(n.mod); n.x = an.x + (r() - 0.5) * 60; n.y = an.y + (r() - 0.5) * 60; }
-    const at = new Map(ns.map(n => [n.id, n])), L = [];
-    for (const [k, c] of LINKS) { const [p, q] = k.split('\n'); if (at.has(p) && at.has(q)) L.push([at.get(p), at.get(q), c]); }
-    relax(ns, ns.length > 120 ? 160 : 380, () => {
-      for (const n of ns) { const an = anchor.get(n.mod); n.dx += (an.x - n.x) * 0.03; n.dy += (an.y - n.y) * 0.03; }
-      for (const [p, q, c] of L) spring(p, q, p.R + q.R + 44, 0.004 * Math.min(4, c));
-      collide(ns, (p, q) => p.mod === q.mod ? 34 : 54);      // room for the names under the blobs
-    });
-    let cx = 0, cy = 0, w = 0;
-    for (const n of ns) { cx += n.x * n.R * n.R; cy += n.y * n.R * n.R; w += n.R * n.R; }
-    cx /= w || 1; cy /= w || 1;
-    a.enc = 60;
-    for (const n of ns) { n.x -= cx; n.y -= cy; a.local.set(n.id, n); a.enc = Math.max(a.enc, Math.hypot(n.x, n.y) + n.R + 24); }
-    a.R = a.enc;
-  }
+  for (const a of list) areaLocal(a);
   // 2. areas on the app canvas, pulled together by the calls between their blobs
   const W = new Map();
   for (const [k, c] of LINKS) {
@@ -592,6 +657,69 @@ function layoutAreas() {
     for (const [p, q, c] of AL) spring(p, q, p.R + q.R + gap, 0.0004 * Math.min(40, Math.sqrt(c)));
     collide(list, () => gap * 1.2);
   });
+}
+/* an area's members at fixed places inside it (a.local: id -> {x, y, R}), its radius a.R */
+function areaLocal(a) {
+  const ns = [...a.ids].map(id => { const u = U.get(id); return { id, R: u.R, mod: u.stem || u.module, x: 0, y: 0 }; });
+  const ml = new Map(); for (const n of ns) ml.set(n.mod, (ml.get(n.mod) || 0) + n.R * n.R);
+  const mods = [...ml.keys()].sort((p, q) => ml.get(q) - ml.get(p) || cmpStr(p, q));
+  const ring = 0.9 * Math.sqrt(ns.reduce((sum, n) => sum + (n.R + 24) ** 2, 0));
+  const anchor = new Map(mods.map((m, k) => {
+    if (k === 0) return [m, { x: 0, y: 0 }];
+    const ang = (k - 1) / Math.max(1, mods.length - 1) * TAU + (hash(m) % 100) / 200;
+    return [m, { x: Math.cos(ang) * ring, y: Math.sin(ang) * ring }];
+  }));
+  for (const n of ns) { const r = rng(hash(n.id)), an = anchor.get(n.mod); n.x = an.x + (r() - 0.5) * 60; n.y = an.y + (r() - 0.5) * 60; }
+  const at = new Map(ns.map(n => [n.id, n])), L = [];
+  for (const [k, c] of LINKS) { const [p, q] = k.split('\n'); if (at.has(p) && at.has(q)) L.push([at.get(p), at.get(q), c]); }
+  relax(ns, ns.length > 120 ? 160 : 380, () => {
+    for (const n of ns) { const an = anchor.get(n.mod); n.dx += (an.x - n.x) * 0.03; n.dy += (an.y - n.y) * 0.03; }
+    for (const [p, q, c] of L) spring(p, q, p.R + q.R + 44, 0.004 * Math.min(4, c));
+    collide(ns, (p, q) => p.mod === q.mod ? 34 : 54);      // room for the names under the blobs
+  });
+  let cx = 0, cy = 0, w = 0;
+  for (const n of ns) { cx += n.x * n.R * n.R; cy += n.y * n.R * n.R; w += n.R * n.R; }
+  cx /= w || 1; cy /= w || 1;
+  a.enc = 60;
+  for (const n of ns) { n.x -= cx; n.y -= cy; a.local.set(n.id, n); a.enc = Math.max(a.enc, Math.hypot(n.x, n.y) + n.R + 24); }
+  a.R = a.enc;
+}
+/* live mode: areas and members new since step `from` (layoutAdd() ran). A new member starts among its module's
+   members (else on the area's rim) and is pushed clear of them; a new area is laid out inside and placed past the
+   others; nothing placed moves. */
+function areasAdd(from) {
+  const grown = new Map(), born = [];
+  for (let i = from; i < STEPS.length; i++) for (const b of STEPS[i].blobs) {
+    if (!b.area) continue;
+    let a = AU.get(b.area);
+    if (!a) { AU.set(b.area, a = { id: b.area, first: i, ids: new Set(), local: new Map() }); born.push(a); a.hue = a.id === 'tests' ? 80 : a.id === 'files' ? 210 : AHUES[(AU.size - 1) % AHUES.length]; }
+    if (a.ids.has(b.id)) continue;
+    a.ids.add(b.id);
+    if (!born.includes(a)) { if (!grown.has(a)) grown.set(a, []); grown.get(a).push(b.id); }
+  }
+  for (const [a, ids] of grown) {
+    const locals = [...a.local.values()], fresh = [];
+    for (const id of ids) {
+      const u = U.get(id), mod = u.stem || u.module, r = rng(hash(id)), same = locals.filter(n => n.mod === mod);
+      const n = { id, R: u.R, mod, x: 0, y: 0 };
+      if (same.length) { for (const o of same) { n.x += o.x / same.length; n.y += o.y / same.length; } n.x += (r() - 0.5) * 60; n.y += (r() - 0.5) * 60; }
+      else { const ang = r() * TAU; n.x = Math.cos(ang) * a.enc * 0.8; n.y = Math.sin(ang) * a.enc * 0.8; }
+      locals.push(n); fresh.push(n); a.local.set(id, n);
+    }
+    settle(fresh, locals, (p, q) => p.mod === q.mod ? 34 : 54);
+    for (const n of fresh) a.enc = Math.max(a.enc, Math.hypot(n.x, n.y) + n.R + 24);
+    a.R = a.enc;
+  }
+  if (!born.length) return;
+  const old = [...AU.values()].filter(a => !born.includes(a));
+  const meanR = old.reduce((s, a) => s + a.R, 0) / Math.max(1, old.length), gap = 0.35 * meanR + 30;
+  let far = old.reduce((m, a) => Math.max(m, Math.hypot(a.x, a.y) + a.R), 0);
+  for (const a of born) {
+    areaLocal(a);
+    const ang = rng(hash('area:' + a.id))() * TAU; far += gap + a.R;
+    a.x = Math.cos(ang) * far; a.y = Math.sin(ang) * far * 0.66; far += a.R;
+  }
+  settle(born, [...AU.values()], () => gap * 1.2);
 }
 /* an area's face at step i: big enough for the members present then, at their fixed places */
 function faceR(aid, i = cur) {
@@ -1375,17 +1503,21 @@ function drawTimeline() {
       }
     }
     for (let i = g.from; i <= g.to; i++) {
-      const s = STEPS[i], x = i * slot + ti * gap, c = s.added + s.removed, tw = Math.max(1.5, Math.min(slot - 2, 14)), cx = x + slot / 2;
+      const s = STEPS[i], x = i * slot + ti * gap, c = s.added + s.removed, tw = Math.max(1.5, Math.min(slot - 2, 14)), cx = x + slot / 2, pv = s.prov ? 0.32 : 1;
       ticks.push({ i, x0: x, x1: x + slot });
-      if (isGit(s)) { tctx.fillStyle = T.git; tctx.globalAlpha = i <= cur ? 1 : 0.6; tctx.fillRect(cx - 0.8, 14, 1.6, h - 17); tctx.globalAlpha = 1; continue; }
-      if (!c) { tctx.fillStyle = T.faint; tctx.fillRect(cx - tw / 2, base - 2, tw, 2); continue; }
+      if (isGit(s)) { tctx.fillStyle = T.git; tctx.globalAlpha = (i <= cur ? 1 : 0.6) * pv; tctx.fillRect(cx - 0.8, 14, 1.6, h - 17); tctx.globalAlpha = 1; continue; }
+      if (!c) { tctx.fillStyle = T.faint; tctx.globalAlpha = pv; tctx.fillRect(cx - tw / 2, base - 2, tw, 2); tctx.globalAlpha = 1; continue; }
       const H = 3 + (h - 22) * Math.log1p(c) / Math.log1p(maxC), ha = H * s.added / c;
-      tctx.globalAlpha = i <= cur ? 1 : 0.45;
+      tctx.globalAlpha = (i <= cur ? 1 : 0.45) * pv;
       tctx.fillStyle = T.add; tctx.fillRect(cx - tw / 2, base - ha, tw, ha);
       tctx.fillStyle = T.rem; tctx.fillRect(cx - tw / 2, base - H, tw, H - ha);
       tctx.globalAlpha = 1;
     }
   });
+  if (LIVE && NCOMMIT < n && ticks[NCOMMIT]) {    // the provisional tail: a dotted bracket over its steps
+    tctx.save(); tctx.strokeStyle = T.mute; tctx.lineWidth = 1; tctx.setLineDash([2, 3]); tctx.globalAlpha = 0.8;
+    tctx.beginPath(); tctx.moveTo(ticks[NCOMMIT].x0 + 0.5, h - 1); tctx.lineTo(ticks[NCOMMIT].x0 + 0.5, 1.5); tctx.lineTo(ticks[n - 1].x1 - 0.5, 1.5); tctx.lineTo(ticks[n - 1].x1 - 0.5, h - 1); tctx.stroke(); tctx.restore();
+  }
   const tk = ticks[cur]; if (!tk) return;
   const cx = (tk.x0 + tk.x1) / 2;
   tctx.fillStyle = T.ink; tctx.globalAlpha = 0.12; tctx.fillRect(tk.x0, 0, tk.x1 - tk.x0, h); tctx.globalAlpha = 1;
@@ -1396,14 +1528,16 @@ const tickAt = x => { for (const t of ticks) if (x < t.x1) return t.i; return ST
 /* ───────────────────────── step, status, playback ───────────────────────── */
 let playing = false, speed = 1, acc = 0;
 function setStep(i) {
-  i = clamp(i, 0, STEPS.length - 1); if (i === cur && stepAt) return;
+  i = clamp(i, 0, STEPS.length - 1);
+  if (LIVE && !AUTO) { TRACK = i === STEPS.length - 1; if (TRACK) NEWN = 0; livePill(); }
+  if (i === cur && stepAt) return;
   cur = i; stepAt = performance.now();
   const s = STEPS[i], time = s.ts ? new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' }) : '';
   const S = s.stats, res = S && S.calls > 0   // v2: how many calls the analyzer could place
     ? ` · <span title="${S.calls - S.unresolved} of ${S.calls} calls resolved">resolved ${Math.round(100 * (1 - S.unresolved / S.calls))}%</span>` : '';
   const git = isGit(s), who = MULTI && !git ? `<span class="who" title="${esc(whoText(s) + (s.seeded ? '\nbase seeded from outside the replayed edits' : ''))}"><i style="background:${sessCol(s.sci)}"></i>${esc(whoText(s))}</span>` : '',
     warn = s.applied === false ? '<span class="warn" role="img" aria-label="edit could not be applied to the snapshot" title="edit could not be applied to the snapshot">⚠</span>' : '',
-    tag = s.empty ? '<span class="dim">no change</span>' : '';
+    tag = (s.empty ? '<span class="dim">no change</span>' : '') + (s.prov ? '<span class="prov" title="provisional: not committed yet, it may still change">provisional</span>' : '');
   $('#l1').innerHTML = `<span class="tool${git ? ' git' : ''}">${esc(s.tool)}</span><span class="file">${esc(s.file || '—')}</span>${warn}${who}` +
     `<span class="add">+${s.added}</span><span class="rem">−${s.removed}</span><span class="dim">turn ${s.turn} · step ${i + 1}/${STEPS.length} · ${time}${res}</span>${tag}`;
   let said = s.said, j = i;               // an edit with no text before it: show what the same agent last said, marked as earlier
@@ -1424,7 +1558,7 @@ function setPlaying(p) {
                            : '<svg width="14" height="14" viewBox="0 0 14 14"><path d="M3 1.5l9 5.5-9 5.5z" fill="currentColor"/></svg>';
   $('#play').setAttribute('aria-label', p ? 'Pause' : 'Play');
 }
-function togglePlay() { if (!playing && cur >= STEPS.length - 1) setStep(0); setPlaying(!playing); }
+function togglePlay() { if (!playing && cur >= STEPS.length - 1 && !LIVE) setStep(0); setPlaying(!playing); }
 
 /* ───────────────────────── tooltip & interaction ───────────────────────── */
 const tip = $('#tip');
@@ -1570,6 +1704,8 @@ $('#next').onclick = () => { setPlaying(false); setStep(cur + 1); };
 $('#speed').onchange = e => { speed = +e.target.value; };
 $('#areasBtn').onclick = () => setAreas(!AREAS_ON);
 $('#followBtn').onclick = () => setFollow(!FOLLOW);
+$('#relayoutBtn').onclick = relayout;
+$('#newPill').onclick = () => { setPlaying(false); setStep(STEPS.length - 1); };
 $('#legendBtn').onclick = () => { const on = $('#legend').classList.toggle('on'); $('#legendBtn').setAttribute('aria-expanded', on); };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT') return;
@@ -1619,44 +1755,169 @@ function buildLegend() {
     <div class="keys">pure additions leave no stain: the blob grows instead<br>click blob → functions · click page → file card<br>space play · ← → step · esc back · L legend<br>A areas: click / wheel into an area, esc · breadcrumb · backspace up, drag pans<br>F follow: each step flies to the edited ${AREAS_ON ? 'area' : 'blob'}${SESS_ON ? '<br>g / G next / previous git step · s / S next / previous session' : ''}</div>`;
 }
 
+/* ───────────────────────── live mode ─────────────────────────
+   ?live=1 (liveserve.py redirects its root there): live/timeline.json, then live/events (server-sent events) add
+   steps as the writer commits them. STEPS = the committed steps (NCOMMIT of them) + the provisional tail, which is
+   drawn faded (its ticks and the map while one is shown) and replaced whole when it changes; a tail step that
+   commits locks in. Each step is expanded and indexed once, on from the last committed one (expander(), stainStep(),
+   sessStep()); the tail on forks of that state. A viewer on the last step follows new ones at 4× play speed (a
+   jump when more than 20 behind); anywhere else a "+N new" pill counts them. A rebuild (or another epoch) loads
+   the timeline again, at the same step when it still exists; blobs keep their places throughout (layoutAdd()). */
+const LIVE = new URLSearchParams(location.search).get('live') === '1';
+let NCOMMIT = 0, EPOCH = 0, LEXP = null, LSTAIN = null, LSESS = null, LTAIL = [], LHEAD = {}, ES = null, reloading = null;
+let BOOTED = false, TRACK = true, NEWN = 0, AUTO = false, autoAcc = 0, FADE = 0;
+function liveStart(data) {
+  SESS_META = new Map((Array.isArray(data.sessions) ? data.sessions : []).map(m => [m.id, m]));
+  LHEAD = data; EPOCH = data.live ? data.live.epoch : 0;
+  const had = STEPS.length;
+  STEPS = []; IDX.length = 0; NCOMMIT = 0; LTAIL = []; FACE_R.clear();
+  LEXP = expander(data); LSTAIN = new Map(); LSESS = sessIndex();
+  const n = data.live ? data.live.steps : data.steps.length;
+  liveApply(data.steps.slice(0, n), data.steps.slice(n), had);
+}
+function liveStep(ex, stains, ss, raw, prov) {
+  const i = STEPS.length, st = normalizeStep(ex.push(raw), i);
+  if (prov) st.prov = true;
+  STEPS.push(st); stainStep(stains, st, i); sessStep(ss, st, i);
+}
+/* committed steps after the NCOMMIT ones, then the whole tail after them (`had`: everything was reloaded, the page
+   had that many steps before) */
+function liveApply(committed, tail, had) {
+  const fresh = had !== undefined, was = fresh ? had : STEPS.length, wasN = NCOMMIT, oldTail = LTAIL;
+  const srcAt = cur >= wasN && cur - wasN < committed.length ? JSON.stringify(committed[cur - wasN]) : undefined;
+  LTAIL = tail.map(t => JSON.stringify(t));
+  STEPS.length = IDX.length = NCOMMIT;
+  for (const k of [...FACE_R.keys()]) if (k >= NCOMMIT) FACE_R.delete(k);
+  for (const raw of committed) liveStep(LEXP, LSTAIN, LSESS, raw, false);
+  NCOMMIT = STEPS.length;
+  const ex = LEXP.fork(), stains = new Map(LSTAIN), ss = sessFork(LSESS);
+  for (const raw of tail) liveStep(ex, stains, ss, raw, true);
+  useSessions(ss);
+  if (!BOOTED) {
+    if (STEPS.length) { boot(LHEAD); TRACK = cur === STEPS.length - 1; liveMeta(); }
+    else { $('#empty').textContent = 'live: waiting for the first step…'; $('#meta').textContent = `${LHEAD.session || ''} · ${LHEAD.root || ''} · live, no steps yet`; }
+    return;
+  }
+  layoutAdd(fresh ? 0 : wasN); areasAdd(fresh ? 0 : wasN);
+  VIEW0 = frameOf([...U.values()], 2.2);
+  buildSessions(); liveMeta();
+  // the viewer's step: clamped when the tail got shorter, shown again when it was provisional and changed
+  const last = STEPS.length - 1;
+  if (cur > last) liveShow(last, true);
+  else if (fresh) liveShow(cur, false);
+  else if (cur >= wasN) {
+    const now = srcAt !== undefined ? srcAt : LTAIL[cur - NCOMMIT];
+    liveShow(cur, now !== oldTail[cur - wasN]);
+  }
+  if (TRACK) { if (last - cur > 20) liveShow(last, true); }
+  else if (STEPS.length > was) NEWN += STEPS.length - was;
+  livePill();
+}
+/* setStep(i) again for a step whose content changed (flash: it plays its arrival again) without leaving TRACK */
+function liveShow(i, flash) {
+  const keep = stepAt; stepAt = 0; AUTO = true; setStep(i); AUTO = false;
+  if (!flash) stepAt = keep;
+}
+function autoStep(i) { AUTO = true; setStep(i); AUTO = false; }
+function liveTick(dt) {
+  FADE += ((STEPS[cur]?.prov ? 1 : 0) - FADE) * (1 - Math.exp(-dt * 6)); if (FADE < 0.005) FADE = 0;
+  if (TRACK && BOOTED && cur < STEPS.length - 1) {
+    autoAcc += dt * 1000;
+    if (autoAcc > 1100 / 4) { autoAcc = 0; autoStep(cur + 1); }    // (more than 20 behind: liveApply jumped)
+  } else autoAcc = 0;
+}
+function livePill() {
+  const p = $('#newPill'); if (!p) return;
+  p.hidden = !(LIVE && BOOTED && !TRACK && NEWN > 0);
+  p.textContent = `+${NEWN} new`;
+}
+function liveMeta() {
+  const tail = STEPS.length - NCOMMIT;
+  $('#meta').textContent = `${LHEAD.session || ''} · ${LHEAD.root || ''} · ${NCOMMIT} steps${tail ? ` + ${tail} provisional` : ''} · ${U.size} blobs over the session`;
+  $('#src').hidden = true; $('#liveBadge').hidden = false; $('#relayoutBtn').hidden = false;
+  tl.setAttribute('aria-valuemax', STEPS.length - 1);
+}
+function liveBadge(on) {
+  const b = $('#liveBadge'); b.classList.toggle('off', !on); b.hidden = false;
+  b.title = on ? `live: ${NCOMMIT} steps committed, ${STEPS.length - NCOMMIT} provisional` : 'live: no connection to the server (it retries)';
+}
+function liveConnect() {
+  if (ES) ES.close();
+  const es = ES = new EventSource(`live/events?epoch=${EPOCH}&from=${NCOMMIT}`);
+  const ours = d => { if (d.epoch === EPOCH) return true; liveReload(); return false; };
+  es.addEventListener('steps', e => {
+    const d = JSON.parse(e.data); if (!ours(d)) return;
+    const skip = NCOMMIT - d.from;
+    if (skip < 0) { liveReload(); return; }               // a gap: never expected, but never drawn wrong either
+    liveApply(d.steps.slice(skip), d.tail);
+  });
+  es.addEventListener('tail', e => { const d = JSON.parse(e.data); if (ours(d) && d.base === NCOMMIT) liveApply([], d.tail); });
+  es.addEventListener('rebuild', () => liveReload());
+  es.onopen = () => liveBadge(true);
+  es.onerror = () => liveBadge(false);
+}
+async function liveReload() {
+  if (reloading) { reloading.again = true; return; }
+  reloading = { again: true };
+  if (ES) { ES.close(); ES = null; }
+  try {
+    while (reloading.again) {
+      reloading.again = false;
+      const r = await fetch('live/timeline.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error(`live/timeline.json: ${r.status}`);
+      liveStart(await r.json());
+    }
+  } catch (e) { console.error(e); liveBadge(false); }
+  reloading = null;
+  liveConnect();
+}
+
 /* ───────────────────────── loop & boot ───────────────────────── */
 let lastT = performance.now();
 function frame(now) {
   const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
-  if (playing) { acc += dt * 1000 * speed; if (acc > 1100) { acc = 0; if (cur >= STEPS.length - 1) setPlaying(false); else setStep(cur + 1); } }
+  if (playing) { acc += dt * 1000 * speed; if (acc > 1100) { acc = 0; if (cur >= STEPS.length - 1) { if (!LIVE) setPlaying(false); } else if (!(LIVE && TRACK)) setStep(cur + 1); } }
+  if (LIVE) liveTick(dt);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH);
   if (STEPS.length) {
     updateVis(dt); if (!drill) moveCamera(dt); const t = now / 1000;
     drawMap(now, t);
     if (drill) drawDrill(now, t);
     else if (fileCard && !fileAt) placeFileCard();
+    if (FADE > 0.01) { ctx.save(); ctx.globalAlpha = 0.5 * FADE; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH); ctx.restore(); }   // a provisional step
     drawTimeline();
   }
   requestAnimationFrame(frame);
+}
+/* the map once there are steps (live mode: maybe later, when the first ones come) */
+function boot(data) {
+  BOOTED = true;
+  buildLegend(); buildSessions(); layout(); layoutAreas(); resize();
+  const qs = new URLSearchParams(location.search);
+  APP_NAME = String(data.root || '').replace(/\/+$/, '').split('/').pop() || 'app';
+  if (!AU.size) { $('#areasBtn').disabled = true; $('#areasBtn').title = 'this timeline has no areas (schema v5, timeline.py)'; }
+  // areas: remembered per browser (?areas=1 / 0 overrides for this visit); follow: off unless ?follow=1
+  setAreas(qs.has('areas') ? qs.get('areas') === '1' : store.get('aiblob.areas') === '1', qs.has('areas'));
+  setFollow(qs.get('follow') === '1');
+  AMIX = AREAS_ON ? 1 : 0;
+  $('#src').textContent = SRC; $('#src').classList.toggle('sample', SRC.startsWith('sample'));
+  $('#meta').textContent = `${data.session || ''} · ${data.root || ''} · ${STEPS.length} steps · ${U.size} blobs over the session`;
+  tl.setAttribute('aria-valuemax', STEPS.length - 1);
+  $('#empty').remove();
+  setStep(qs.has('step') ? +qs.get('step') : STEPS.length - 1);
+  if (AREAS_ON && qs.has('area') && AU.has(qs.get('area'))) openA = qs.get('area');
+  for (const [id, v] of VIS) { const h = homeOf(id, v.blob); v.x = h.x; v.y = h.y; }
+  VIEW = AREAS_ON ? areaCam() : camTarget(); CAM = null; crumbs();
+  if (qs.has('drill')) openDrill(qs.get('drill'));
 }
 (async () => {
   readTheme(); setPlaying(false); resize(); requestAnimationFrame(frame);
   try {
     const data = await load();
+    if (LIVE) { liveStart(data); liveConnect(); return; }
     normalize(data);
     if (!STEPS.length) throw new Error(`${SRC} has no steps`);
-    buildLegend(); buildSessions(); layout(); layoutAreas(); resize();
-    const qs = new URLSearchParams(location.search);
-    APP_NAME = String(data.root || '').replace(/\/+$/, '').split('/').pop() || 'app';
-    if (!AU.size) { $('#areasBtn').disabled = true; $('#areasBtn').title = 'this timeline has no areas (schema v5, timeline.py)'; }
-    // areas: remembered per browser (?areas=1 / 0 overrides for this visit); follow: off unless ?follow=1
-    setAreas(qs.has('areas') ? qs.get('areas') === '1' : store.get('aiblob.areas') === '1', qs.has('areas'));
-    setFollow(qs.get('follow') === '1');
-    AMIX = AREAS_ON ? 1 : 0;
-    $('#src').textContent = SRC; $('#src').classList.toggle('sample', SRC.startsWith('sample'));
-    $('#meta').textContent = `${data.session || ''} · ${data.root || ''} · ${STEPS.length} steps · ${U.size} blobs over the session`;
-    tl.setAttribute('aria-valuemax', STEPS.length - 1);
-    $('#empty').remove();
-    setStep(qs.has('step') ? +qs.get('step') : STEPS.length - 1);
-    if (AREAS_ON && qs.has('area') && AU.has(qs.get('area'))) openA = qs.get('area');
-    for (const [id, v] of VIS) { const h = homeOf(id, v.blob); v.x = h.x; v.y = h.y; }
-    VIEW = AREAS_ON ? areaCam() : camTarget(); CAM = null; crumbs();
-    if (qs.has('drill')) openDrill(qs.get('drill'));
+    boot(data);
   } catch (e) {
     $('#empty').textContent = String(e.message || e); $('#meta').textContent = 'no data';
     console.error(e);
