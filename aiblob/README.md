@@ -122,13 +122,16 @@ drag to pan, Esc / Backspace / the breadcrumb go back up (Space stays play / pau
 view never shows more than 12 areas: past that the 9-blob cap on joins gives way, and a session that grows
 module by module puts new modules into existing areas once 12 are in use. F toggles Follow (default off): during replay each step
 flies the camera to the area it edits (areas on) or the blob it edits (areas off). `?areas=1`, `?follow=1` and
-`?area=<id>` set them from the URL.
+`?area=<id>` set them from the URL. The drill-down of a blob still at the cut size (500+ lines or 50+ functions)
+shows its call clusters instead (clusters.py): a big emoji and a caption each, the functions as dots, one ribbon per
+cluster pair, neighbour blobs as pills on the rim, five dials and the growth curve top left; click a cluster to open
+it, / finds a function, Esc / Backspace go back up.
 Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
 
-web/timeline.json is schema v5 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
+web/timeline.json is schema v6 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
 the page rebuilds every step from those deltas. The blob map folds blobs under 20 lines into a neighbour
 (satellites on the page) and cuts blobs of 500+ lines at dominant callees (dashed pieces, a bite out of the
-parent), and puts every blob in an area (areas.py); `timeline.py --no-smart` keeps the analyzer's blobs, for
+parent), puts every blob in an area (areas.py) and gives a blob still that big its call clusters (clusters.py); `timeline.py --no-smart` keeps the analyzer's blobs, for
 debugging and tests. Analysis is incremental per step (only what an edit can affect
 is redone), so big repos stay usable: on TechnicalAnalysis (580 files, 71 steps) a step costs 0.22-0.37 s (p50,
 machine load dependent; --full: ~1.07 s) and the timeline is 6 MB (was 357 MB). `timeline.py --full` recomputes everything per step and `--v2` writes every step in full;

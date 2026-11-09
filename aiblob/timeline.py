@@ -15,10 +15,11 @@ whole-file delta. Parsed modules are cached by content hash, so a step only re-p
 analysis is incremental (analyze(memo=...)): a function's call resolution, data symbols and snippet are reused
 unless its module changed or a cross-module entry it looked up did. --full redoes all of it per step (same output).
 
-The file is schema v5: step 0 (and any step marked "full") carries the whole state, every other step only what
-changed, down to the functions of a re-sent blob and the entries of the areas table (compact() / expand() below).
-Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; --no-smart keeps them as analyzed,
-for debugging and tests), each with its `area`. --v2 writes every step in full instead. --no-timings writes 0 for
+The file is schema v6: step 0 (and any step marked "full") carries the whole state, every other step only what
+changed, down to the functions and clusters of a re-sent blob and the entries of the areas table (compact() /
+expand() below). Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; --no-smart keeps
+them as analyzed, for debugging and tests), each with its `area`, and a blob still at the cut size with its
+`clusters` (clusters.py). --v2 writes every step in full instead. --no-timings writes 0 for
 parse_ms / analyze_ms, so two runs on the same session are byte-identical. --diffs DIR also writes the texts the
 steps show (function bodies, file texts) for diffs inside blobs, as DIR/index.json.gz + DIR/s/<step>.json.gz
 (diffs.py, SCHEMA.md "Diffs"); the timeline is the same with or without it.
@@ -115,7 +116,8 @@ def build_state(result, prev_funcs, prev_members, files=None, prev_files=None):
                       'size': b['size'], 'complexity': b['complexity'], 'errors': b['errors'], 'data': b['data'],
                       **({'merged': b['merged']} if b.get('merged') else {}),
                       'delta': {'added': added, 'removed': removed, 'moved': moved, 'state': state,
-                                'removed_funcs': sorted(q for q in gone if q not in now)}, 'funcs': funcs})
+                                'removed_funcs': sorted(q for q in gone if q not in now)}, 'funcs': funcs,
+                      **({'clusters': b['clusters']} if 'clusters' in b else {})})
     edges = [{k: e[k] for k in ('a', 'b', 'kind', 'n', 'via') if k in e} for e in result['edges']]
     return blobs, edges
 
@@ -242,21 +244,35 @@ def rest(b):
     return dict(b, delta=_zero(b['delta']), funcs=[dict(f, delta=_zero(f['delta'])) if 'delta' in f else f
                                                    for f in b.get('funcs', [])])
 
-SCHEMA = 5
-FUNC_PATCH = ('funcs_remove', 'funcs_order')
+SCHEMA = 6
+FUNC_PATCH = ('funcs_remove', 'funcs_order', 'clusters_remove')
+
+def _cluster_ids(cl):
+    """The ids of a v6 `clusters` table, None when a patch cannot carry it (empty, an entry without an int id,
+    ids not increasing)."""
+    ids = [c.get('id') if isinstance(c, dict) else None for c in cl] if isinstance(cl, list) else []
+    if not ids or not all(type(i) is int for i in ids) or not all(map(operator.lt, ids, ids[1:])):
+        return None
+    return ids
 
 def _func_patch(b, base):
     """Blob b as a v4 delta step sends it: its `funcs` a patch on base's (the previous step's blob with zeroed
     deltas, None for a blob new to the state). A function of base that b no longer has is in `funcs_remove`; a new
     one is sent whole; a changed one as its qual plus the keys whose value differs (when its keys are base's, in
     order; otherwise it is removed and sent whole). `funcs_order` only when the order is not base's minus the
-    removed ones with the new ones appended. None when a patch cannot say it (a qual twice, a function without a
-    qual, b using the patch's key names): the step is then written in full."""
+    removed ones with the new ones appended. v6 `clusters`, when b has them and so does base: a patch on base's, the
+    entries new or changed (maybe none) and the ids gone in `clusters_remove`. None when a patch cannot say it (a
+    qual twice, a function without a qual, b using the patch's key names, a clusters table _cluster_ids() refuses):
+    the step is then written in full."""
+    if any(k in b for k in FUNC_PATCH):
+        return None
+    was = base.get('clusters') if base else None
+    if 'clusters' in b and _cluster_ids(b['clusters']) is None or was is not None and _cluster_ids(was) is None:
+        return None
     if 'funcs' not in b:
-        return b
+        return _cluster_patch(b, was)
     old, new = (base.get('funcs') or []) if base else [], b['funcs']
-    if any(k in b for k in FUNC_PATCH) or not all(isinstance(f, dict) and isinstance(f.get('qual'), str)
-                                                    for f in [*old, *new]):
+    if not all(isinstance(f, dict) and isinstance(f.get('qual'), str) for f in [*old, *new]):
         return None
     have, quals = {f['qual']: f for f in old}, [f['qual'] for f in new]
     now = set(quals)
@@ -285,12 +301,41 @@ def _func_patch(b, base):
             out['funcs_remove'] = gone
         if left + [f['qual'] for f in funcs if f['qual'] not in kept] != quals:
             out['funcs_order'] = quals
+    return _cluster_patch(out, was)
+
+def _cluster_patch(b, was):
+    """b with its v6 `clusters` as a patch on was (base's table): the entries new or changed, then `clusters_remove`
+    with the ids gone, when there is one. A blob without `clusters` has none: nothing to remove."""
+    if 'clusters' not in b or not was:
+        return b
+    old = {c['id']: c for c in was}
+    now = {c['id'] for c in b['clusters']}
+    gone = [i for i in old if i not in now]
+    out = {}
+    for k, v in b.items():
+        if k == 'clusters':
+            out[k] = [c for c in v if old.get(c['id']) != c]
+            if gone:
+                out['clusters_remove'] = gone
+        else:
+            out[k] = v
     return out
 
 def _apply_func_patch(sent, base):
     """The blob a v4 delta step's re-sent blob stands for (_func_patch() undone): a function the patch does not
-    name is base's, with base's zeroed delta."""
+    name is base's, with base's zeroed delta; v6 clusters are base's table minus `clusters_remove`, the sent
+    entries replacing or adding by id, sorted by id."""
+    was = base.get('clusters') if base else None
+    if 'clusters' in sent and was:
+        t = {c['id']: c for c in was}
+        for i in sent.get('clusters_remove', ()):
+            t.pop(i, None)
+        t.update((c['id'], c) for c in sent['clusters'])
+        sent = dict(sent, clusters=[t[i] for i in sorted(t)])
     if 'funcs' not in sent:
+        if 'clusters_remove' in sent:
+            sent = dict(sent)
+            del sent['clusters_remove']
         return sent
     fs = {f['qual']: f for f in ((base.get('funcs') or []) if base else [])}
     for q in sent.get('funcs_remove', ()):
@@ -304,14 +349,14 @@ def _apply_func_patch(sent, base):
     return b
 
 class Compactor:
-    """Full-state steps in, schema v5 (or v4, v3) steps out (one at a time, so a writer can stream).
+    """Full-state steps in, schema v6 (or v4, v3) steps out (one at a time, so a writer can stream).
 
     A blob is left out of a step when it equals the previous step's blob with zeroed deltas (rest()): its delta
     says `same` and nothing else about it changed. A blob whose delta is `same` but whose other fields changed
-    (a function's lines shifted, a call now resolves elsewhere) is sent again: in v3 in full, in v4 with its
-    blob fields in full and its `funcs` as a patch on that zeroed previous blob (_func_patch()). `order` is
-    written only when the blob order is not the previous one minus removed_blobs, with new ids appended as they
-    come in `blobs`. A step whose edges are not in edge_key() order is written in full. A step's `areas` table
+    (a function's lines shifted, a call now resolves elsewhere) is sent again: in v3 in full, in v4+ with its
+    blob fields in full but its `funcs` and `clusters` as patches on that zeroed previous blob (_func_patch()).
+    `order` is written only when the blob order is not the previous one minus removed_blobs, with new ids appended
+    as they come in `blobs`. A step whose edges are not in edge_key() order is written in full. A step's `areas` table
     (v5, any schema writes it when the steps have one) is whole on a full step; a delta step carries only the
     entries new or changed since the previous step (`areas`) and the ids gone (`areas_remove`), each only when not
     empty. A step whose table is not sorted by id is written in full."""
@@ -370,15 +415,16 @@ class Compactor:
         return out
 
 def compact(steps, schema=SCHEMA):
-    """Full-state steps -> schema v5 steps (v4 / v3 with schema=4 / 3: the same but for the function patches)."""
+    """Full-state steps -> schema v6 steps (v3 with schema=3: the same but for the function and cluster patches)."""
     c = Compactor(schema)
     return [c.push(s) for s in steps]
 
 def expand(tl):
     """A timeline (dict with 'steps', or the list of steps) -> the list of full-state steps, each shaped as
     schema v2 writes them (META, blobs, edges, stats). A step is full when it is step 0, is marked `full`, or
-    carries `edges` (v2 steps always do, v3 / v4 / v5 delta steps never do); a dict without "schema" >= 3 is all
-    full. A delta step's blobs carry function patches when the dict says "schema" >= 4, or for a bare list of steps.
+    carries `edges` (v2 steps always do, v3 / v4 / v5 / v6 delta steps never do); a dict without "schema" >= 3 is all
+    full. A delta step's blobs carry function (and v6 cluster) patches when the dict says "schema" >= 4, or for a
+    bare list of steps.
     The areas table (v5) is carried from step to step, patched by a delta step's `areas` / `areas_remove`; a file
     whose full steps have no `areas` (v3, v4) rebuilds steps without the key."""
     steps = tl['steps'] if isinstance(tl, dict) else tl
@@ -427,7 +473,7 @@ def expand(tl):
 def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False, steps=None, git_reconcile=False,
              smart=True, diffs=None):
     """The timeline dict for a session, or several merged (path: a transcript, a directory or a list of them, see
-    replay.transcripts()): schema v5 (compacted) unless v2. steps: replay.steps() already run on path. diffs: a
+    replay.transcripts()): schema v6 (compacted) unless v2. steps: replay.steps() already run on path. diffs: a
     diffs.Static that gets the texts as the steps are made (the dict is the same)."""
     files = replay.transcripts(path)
     root = os.path.abspath(root or session_root(files[0]) or '.')

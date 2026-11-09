@@ -102,7 +102,7 @@ def test_flask_session_incremental_equals_full():
     full = timeline.timeline(SESSION, APP, timings=False, full=True)
     v2 = timeline.timeline(SESSION, APP, timings=False, v2=True)
     assert dump(inc) == dump(full)
-    assert inc['schema'] == 5 and 'schema' not in v2
+    assert inc['schema'] == 6 and 'schema' not in v2
     assert dump(timeline.expand(json.loads(dump(inc)))) == dump(v2['steps'])
     assert len(dump(inc)) < len(dump(v2)) / 3
     v3 = dict(inc, schema=3, steps=timeline.compact(v2['steps'], 3))

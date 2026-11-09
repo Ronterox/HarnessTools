@@ -525,3 +525,39 @@ Plan: .omc/plans/aiblob-diffs.md (layout B, sink keyed by the existing hashes). 
   by the new code (CODE now includes diffs.py); a server following it rebuilds (epoch + 1) when diffs/steps.ndjson
   appears and serves the steps again as their file lines are written. liveserve reads the whole diffs/steps.ndjson
   when steps come (22 KB on aigource).
+
+## Clusters inside big blobs outcome (2026-11-09): schema v6
+Plan: .omc/plans/aiblob-clusters.md; the user picked draft variant A "Clusters" as it was, with the big emojis.
+- clusters.py, run by areas.Zoner after the areas (off with --no-smart): a code blob at the cut size (500+ lines or 50+
+  functions, not tests) gets `clusters` [{id, cap, emoji, funcs}]. The fresh grouping is the draft's Louvain and
+  post-steps ported bit for bit (rng(), visit order, tie order): on the draft's three viz_run snapshots (86 / 146 / 324
+  functions) the same 8 / 11 / 14 clusters, captions and emoji. Stability is areas.py's rule (HOLD, REGROUP, the cap;
+  the loose ends always id 0); the state is replaced each step, never written to, so a forked Zoner shares nothing.
+  label.py may later put `label: {title, emoji}` on a cluster; the page already shows it over the guess.
+- Encoding: a re-sent blob's `clusters` is an entry patch on the base's table (`clusters` changed entries, `[]` when
+  none; `clusters_remove`), in _func_patch / _apply_func_patch, so timeline.expand(), liveserve's Expander and the
+  page's patchFuncs all read it; a table a patch cannot carry sends the step in full.
+- Page: the drill-down of a blob with `clusters` is variant A (clDraw and friends in web/index.html), with the
+  limits as constants (CL_LINES 500, CL_FUNCS 50, CL_TANGLE 25%, CL_BRANCHY 5 of CL_BRANCHES 15+, CL_COUPLING 8);
+  others draw exactly as before (the plain drill-down of every blob of the sample, Flask and aigource timelines at
+  a few steps, HEAD page vs this one with a frozen clock: 177 of 177 pixel-identical). The step highlight reaches in:
+  a changed function pulses and so does its cluster. Against the draft: colours by cluster id (they hold across
+  steps), layouts warm-start from the places remembered per cluster and function, captions also split camelCase,
+  light-theme colours, a blob pill opens that blob, a hint line in the panel (the app has no keys footer), the
+  search box under the header; variants B and C, the notes and the snapshot buttons are not ported.
+- aigource (README build, --diffs): 1,270 steps, 28 blobs clustered on 5,143 blob-steps; 8.67 -> 8.93 MB (+2.9%;
+  whole tables 10.22 MB); build 2:57, max RSS 651 MB; expand(compact()) gives the steps back; the --diffs store
+  complete (3,878 hashes) and the timeline the same size as without it (byte identity is tested on c-mini and
+  Flask); every label still a cache hit (1,322). viz_run at steps 137 / 475 / 962: 8 / 11 / 14 clusters, no label
+  overlap open or closed.
+- Tests: tests/test_clusters.py (rng bit for bit with the page's, planted communities, the gates, captions, the same
+  output under 4 hash seeds, ids held while functions come and go, adoption only after HOLD, the cap, fork isolation,
+  entry patches and round trips through v3-v6 and the page expander, a table a patch cannot carry, c-mini with
+  lowered gates: incremental == full, live == batch with restarts, --diffs byte identity and a complete store);
+  tests/test_clusters_page.py (drill in, pulses, no label overlaps, open, pill hop, / search, Esc / Backspace, no
+  console errors). Flask has no blob at the cut size: its golden summary is unchanged, its timeline too but for
+  `schema`.
+- Risks: membership lags the fresh grouping between regroups (at viz_run step 137: handle input 21 functions where
+  a fresh grouping has 20); past ~500 functions an opened cluster holds 40-90 functions and names start hiding (the
+  draft's own note: a second level would be needed); the caption guess is English-keyword based until label.py
+  names clusters.

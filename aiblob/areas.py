@@ -1,7 +1,7 @@
-"""Merges, cuts and areas over one step's analysis (SCHEMA.md "v5").
+"""Merges, cuts and areas over one step's analysis (SCHEMA.md "v5"), and the clusters of big blobs ("v6").
 
-    zoner = areas.Zoner()                      # one per session: area ids and the cut memo live across steps
-    result = zoner.apply(analyze(snapshot))    # blobs cut / folded, edges recomputed, `areas` table added
+    zoner = areas.Zoner()                      # one per session: area ids, cluster ids and the cut memo live across steps
+    result = zoner.apply(analyze(snapshot))    # blobs cut / folded, edges recomputed, `areas` table added, `clusters`
 
 The blob map a step shows is the analyzer's blobs with two changes (both off with Zoner(smart=False)):
 - cuts: a blob of SPLIT_LINES lines or SPLIT_FUNCS functions (never a tests blob) gives up callee-rooted pieces.
@@ -42,12 +42,15 @@ smallest) instead of opening one, and an assignment still over MAX_AREAS adopts 
 Captions are word frequency over the member blobs' titles (label title, else name; an unlabelled piece is
 skipped), count x sqrt(lines), generic words skipped, a second word when it scores at least half as much;
 faces are the top 3 member emojis by lines. caption_table() recomputes them, e.g. after label.py sets labels.
+Last, a blob still at the cut size gets `clusters`, the call communities of its functions (clusters.py; off with
+Zoner(smart=False), like merges and cuts).
 """
 import heapq
 import math
 import re
 from collections import Counter, defaultdict
 
+import clusters
 from analyze import NOT_SHARED
 
 SPLIT_LINES, SPLIT_FUNCS = 500, 50
@@ -402,6 +405,7 @@ class Zoner:
         self.cut_memo = {}               # blob id -> (signature, pieces)
         self.succ_memo = {}              # qual -> (its `calls` list, the quals it names): analyze() reuses the list
         self.regroups = 0                # times the fresh grouping was adopted (reassigning existing modules)
+        self.cl_state = {}               # clusters.apply()'s state: replaced each step, never written to (fork())
 
     def apply(self, result):
         blobs = result['blobs']
@@ -409,6 +413,8 @@ class Zoner:
         new = self.reshape(blobs, mod_of_file) if self.smart else blobs
         edges = recount(blobs, result['edges'], new) if new is not blobs else result['edges']
         new = self.areas(new, mod_of_file)
+        if self.smart:
+            new, self.cl_state = clusters.apply(new, self.cl_state)
         return dict(result, blobs=new, edges=edges, areas=caption_table(new))
 
     # merges and cuts

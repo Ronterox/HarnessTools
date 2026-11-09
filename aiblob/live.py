@@ -10,7 +10,7 @@
 INPUTs are what timeline.py takes (transcripts and/or ~/.claude/projects/<dir>s). The store is live/NAME/ next to
 this file unless --store says otherwise:
 - head.json: inputs, root, flags; rest.json: with --seed-git, the untouched files frozen at the cold build.
-- steps.ndjson: committed steps, one per line, exactly as timeline.py --no-timings writes them (schema v5).
+- steps.ndjson: committed steps, one per line, exactly as timeline.py --no-timings writes them (schema v6).
 - provisional.json: {"gen", "base", "late", "w", "steps"}: the steps a batch build would add after the committed
   `base` ones if the transcripts ended now, as deltas continuing steps.ndjson; rewritten atomically when it changes
   (`gen` counts the versions; it starts over at 1 after a rebuild, which status.json's `rebuilds` counts).
@@ -71,8 +71,8 @@ from types import SimpleNamespace
 import diffs, replay, timeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CODE = ('replay.py', 'analyze.py', 'areas.py', 'timeline.py', 'live.py', 'lang_c.py', 'lang_go.py', 'lang_js.py',
-        'diffs.py')
+CODE = ('replay.py', 'analyze.py', 'areas.py', 'clusters.py', 'timeline.py', 'live.py', 'lang_c.py', 'lang_go.py',
+        'lang_js.py', 'diffs.py')
 VERSION = 2
 
 

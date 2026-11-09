@@ -237,6 +237,50 @@ page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `are
   verifier run on aigource). In the whole-timeline mode, versions that would keep the label of a key whose ask
   failed stay unlabelled until a later run labels that key.
 
+## v6 (2026-11-09): clusters inside big blobs
+
+Top level `"schema": 6`. A code blob still at the cut size after the folds and cuts (500+ lines or 50+ functions,
+`areas.SPLIT_LINES` / `areas.SPLIT_FUNCS`; never a tests blob, never with `timeline.py --no-smart`) carries the call
+communities of its functions, which the page's drill-down draws instead of every function. Everything else is v5;
+`expand()` and the page's `expandSteps()` read v3 to v6 (a file without clusters is a v5 file).
+
+- Blob field `clusters` (after `funcs`): `[{"id", "cap", "emoji", "funcs": [qual, ...]}]`, sorted by id, never
+  empty. Every function of the blob is in exactly one entry, `funcs` in the blob's order. `id` is an int, 0 for
+  the loose ends (functions with no call inside the blob; `cap` "loose ends", 🧷), others from 1, never reused
+  for that blob while it stays clustered. `cap` is 1-2 words and `emoji` one emoji, both guessed from the names
+  (below). Reserved: `label: {"title", "emoji"}` on an entry, for `label.py` to name clusters later (not written
+  yet); the page shows it over `cap` / `emoji`.
+- Grouping (`clusters.py`, the approved page draft's, bit for bit): Louvain modularity over the blob's own calls,
+  undirected, weighted by call sites (resolution 1.3; the visit order shuffled by the page's `rng()` seeded 7);
+  functions with no call inside the blob are the loose ends; a single-function community joins the one it has the
+  most call sites with per sqrt(its lines); then the smallest by lines joins its best-linked one the same way (the
+  loose ends when it has no link) until at most round(1.1 x sqrt(functions)) clusters are left, clamped to 6..14,
+  loose ends included. Deterministic: nothing depends on dict order of unordered data or the hash seed.
+- Stability: a blob's clusters keep their ids and members from step to step, as areas do. The fresh grouping is
+  recomputed only when the blob's functions, their lines or the calls between them changed; each fresh group is
+  matched to the cluster it overlaps most (lines + 1 per function, greedy; the loose ends always to 0). A function
+  new to the blob joins its fresh group's cluster (an unmatched group opens one; at the cap, it joins the cluster
+  it has the most call sites with, then the smallest, then the lowest id); a function gone leaves; the others move
+  only when the fresh grouping is adopted wholesale (matched groups keep their ids, others get new ones), which
+  needs both: the same fresh grouping has come out on each of the 40 steps after the one it first came out on
+  (`areas.HOLD`; or half the blob's clustered steps so far, when shorter), and it would change some cluster's
+  members by more than half of their lines (`areas.REGROUP`); or at once, when the clusters would exceed the cap.
+  A blob that drops under the cut size forgets its clusters (ids start again from 1 if it comes back).
+- Captions: the members' first name word (split at `_`, other non-alphanumerics and camelCase humps; `tl` ->
+  `timeline` and the draft's other abbreviations) weighted by sqrt(lines) + 1, when it covers half the cluster;
+  else the best-connected member's first two words; a caption another cluster took gets the hub's words. Emoji: the
+  first keyword of `clusters.EMO` in the caption, else in the hub's and the four biggest members' names, else 🧩.
+- Encoding: a full step's blobs carry `clusters` whole. A delta step's sent blob (v4 rules) carries it as a patch
+  on the base's table when the base had one: `clusters` holds only the entries new or changed (`[]` when none),
+  `clusters_remove` (only when not empty) the ids gone. Rebuild: the base's table minus `clusters_remove`, the
+  sent entries replacing or adding by id, sorted by id; `clusters_remove` is not part of the rebuilt blob. Without
+  a base table `clusters` is whole; a sent blob without `clusters` has none. The writer sends the step in full when
+  a table cannot be patched (ids not ints, not increasing, an empty table, a blob with a key `clusters_remove`).
+  v3 (`compact(steps, 3)`) sends the table whole with the blob, like any field.
+- Measured on the aigource map (1,270 steps, README build with --diffs): 28 blobs get clusters on 5,143 blob-steps;
+  the file grows 8.67 -> 8.93 MB (+2.9%; whole tables on every re-sent blob would be 10.22 MB). Clustering costs
+  ~2 ms per clustered blob-step; build 2:57, max RSS 651 MB (650 MB before). `--diffs` leaves the file as it was.
+
 ## Sessions (2026-11-06)
 
 A timeline can merge several transcripts (`timeline.py a.jsonl b.jsonl ~/.claude/projects/<dir> ...`; a directory means

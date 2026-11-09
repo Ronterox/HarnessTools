@@ -85,6 +85,15 @@ body.multi #empty { inset: 46px 0 138px; }
 #card .sum { margin: 3px 0 0; font-size: 14px; }
 #card pre { margin: 10px 0 8px; padding: 8px 10px; border-radius: 6px; background: var(--bg); border-left: 3px solid var(--mix);
             font: 12px/1.55 var(--mono); white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+#clsearch { position: fixed; top: 56px; right: 16px; z-index: 4; }
+#clq { width: 220px; height: 30px; padding: 0 10px 0 28px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: 13px var(--mono); }
+#clq:focus-visible { outline: 2px solid var(--mix); outline-offset: 2px; }
+#clsearch::before { content: '⌕'; position: absolute; left: 9px; top: 4px; color: var(--mute); font-size: 16px; }
+#clsugg { position: absolute; top: 34px; right: 0; display: none; flex-direction: column; gap: 3px; min-width: 220px; }
+#clsugg.on { display: flex; }
+#clsugg button { text-align: left; padding: 3px 9px; font: 12px var(--mono); background: var(--panel); border-radius: 99px; display: flex; gap: 8px; align-items: center; }
+#clsugg button.on { border-color: var(--mix); color: var(--mix); }
+#clsugg button i { font-style: normal; width: 9px; height: 9px; border-radius: 50%; flex: none; }
 #legend { position: fixed; top: 56px; right: 16px; z-index: 4; width: 300px; padding: 12px 14px; border-radius: 10px; display: none;
           background: color-mix(in srgb, var(--panel) 96%, transparent); border: 1px solid var(--line); font-size: 14px; }
 #legend.on { display: block; }
@@ -133,6 +142,7 @@ body.multi #newPill { bottom: 148px; }
 <aside id="legend" aria-label="Legend"></aside>
 <div id="empty">loading timeline…</div>
 <div id="tip" role="tooltip"></div>
+<div id="clsearch" hidden><input id="clq" type="search" placeholder="find a function  /" aria-label="Find a function in this blob" autocomplete="off"><div id="clsugg"></div></div>
 <div id="card" role="dialog" aria-label="Function detail"></div>
 <button id="newPill" hidden aria-live="polite" title="new steps since you left the end: jump to the newest"></button>
 <footer id="bar">
@@ -197,19 +207,26 @@ async function load() {
   }
   throw new Error('no timeline.json or sample-timeline.json next to this page');
 }
-/* <expand> schema v3 / v4 / v5 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only
+/* <expand> schema v3 / v4 / v5 / v6 (SCHEMA.md): step 0 and steps marked `full` carry the whole state, the others only
    what changed. Rebuild every step's full state in order, as timeline.expand() does: a blob a step does not send is
    the previous one with zeroed deltas (one copy, shared by the following steps until it changes), kept in its place;
    new blobs append unless the step gives `order`; edges are re-sorted the way the analyzer writes them. In v4 a
-   sent blob's `funcs` is a patch on that zeroed previous blob's (patchFuncs). v5's areas table is carried along,
-   patched by a delta step's `areas` / `areas_remove`, sorted by id; a file whose full steps have none rebuilds
-   steps without it. A file without `schema` >= 3 has every step full. perf.py --page and tests/test_func_patch.py
+   sent blob's `funcs` is a patch on that zeroed previous blob's (patchFuncs), and in v6 its `clusters` too, by id.
+   v5's areas table is carried along, patched by a delta step's `areas` / `areas_remove`, sorted by id; a file whose
+   full steps have none rebuilds steps without it. A file without `schema` >= 3 has every step full. perf.py --page and tests/test_func_patch.py
    run this block in node. */
 const EDGE_RANK = { main: 0, error: 1, data: 2, ref: 3 };
 const zeroDelta = d => { const z = {}; for (const k in d) z[k] = k === 'state' ? 'same' : Array.isArray(d[k]) ? [] : 0; return z; };
 const restBlob = b => b.delta ? { ...b, delta: zeroDelta(b.delta), funcs: (b.funcs || []).map(f => f.delta ? { ...f, delta: zeroDelta(f.delta) } : f) } : b;
 const edgeId = e => e.a + '\n' + e.b + '\n' + e.kind;
 function patchFuncs(s, base) {        // v4: removed quals go, a known qual merges its sent keys, a new one appends
+  if ('clusters' in s && base && base.clusters) {           // v6: the base's clusters minus clusters_remove, sent ones by id
+    const t = new Map(base.clusters.map(c => [c.id, c]));
+    for (const id of s.clusters_remove || []) t.delete(id);
+    for (const c of s.clusters) t.set(c.id, c);
+    s = { ...s, clusters: [...t.keys()].sort((p, q) => p - q).map(id => t.get(id)) };
+  }
+  if ('clusters_remove' in s) { s = { ...s }; delete s.clusters_remove; }
   if (!('funcs' in s)) return s;
   const fs = new Map(((base && base.funcs) || []).map(f => [f.qual, f]));
   for (const q of s.funcs_remove || []) fs.delete(q);
@@ -449,15 +466,15 @@ function stainSpot(owner, m, R, size) {
   return { dx: Math.cos(ang) * off, dy: Math.sin(ang) * off, r, seed: hash(owner + '#' + m.key) };
 }
 /* pigment, not light: a blotchy wash with a darker dried rim, like a coffee ring */
-function drawStain(c, x, y, r, m, seed, now) {
-  const col = m.git ? T.git : m.del ? T.rem : T.mix, age = cur - m.step, a = stainAlpha(age);
+function drawStain(c, x, y, r, m, seed, now, k = 1) {          // k: a dimming the caller wants on top
+  const col = m.git ? T.git : m.del ? T.rem : T.mix, age = cur - m.step, a = stainAlpha(age) * k;
   const p = age === 0 ? clamp((now - stepAt) / 420, 0, 1) : 1, rr = r * (0.55 + 0.45 * (1 - Math.pow(1 - p, 3)));
   c.save();
   const g = c.createRadialGradient(x, y, 0, x, y, rr * 1.15);
   g.addColorStop(0, col + '40'); g.addColorStop(0.62, col + '75'); g.addColorStop(1, col + 'C8');
   c.globalAlpha = a; c.fillStyle = g; blobPath(c, x, y, rr, seed, 0, 2.4); c.fill();
-  c.globalAlpha = Math.min(1, a * 1.15); c.strokeStyle = col; c.lineWidth = clamp(rr * 0.07, 1, 2.4); c.stroke();
-  if (age === 0 && p < 1) { c.globalAlpha = 0.7 * (1 - p); c.lineWidth = 1.5; blobPath(c, x, y, rr * (1.1 + 0.5 * p), seed, 0, 2.4); c.stroke(); }
+  c.globalAlpha = Math.min(k, a * 1.15); c.strokeStyle = col; c.lineWidth = clamp(rr * 0.07, 1, 2.4); c.stroke();
+  if (age === 0 && p < 1) { c.globalAlpha = 0.7 * (1 - p) * k; c.lineWidth = 1.5; blobPath(c, x, y, rr * (1.1 + 0.5 * p), seed, 0, 2.4); c.stroke(); }
   c.restore();
 }
 function stainTip(m, where) {
@@ -1054,8 +1071,8 @@ const lineW = cx => 1.2 + Math.min(7.5, 1.05 * Math.sqrt(cx));
 
 /* edges: a gently bowed curve, trimmed at both blob outlines, sampled as a polyline */
 const BOW = { main: 0.07, error: 0.2, data: -0.15, ref: 0.1, deferred: 0.12 };
-function curve(A, B, rA, rB, kind, arrow) {
-  const off = BOW[kind] ?? 0, mx = (A.x + B.x) / 2 - (B.y - A.y) * off, my = (A.y + B.y) / 2 + (B.x - A.x) * off, pts = [];
+function curve(A, B, rA, rB, kind, arrow, bow) {
+  const off = bow ?? BOW[kind] ?? 0, mx = (A.x + B.x) / 2 - (B.y - A.y) * off, my = (A.y + B.y) / 2 + (B.x - A.x) * off, pts = [];
   for (let i = 0; i <= 32; i++) {
     const t = i / 32, u = 1 - t, x = u * u * A.x + 2 * u * t * mx + t * t * B.x, y = u * u * A.y + 2 * u * t * my + t * t * B.y;
     if (Math.hypot(x - A.x, y - A.y) > rA + 1 && Math.hypot(x - B.x, y - B.y) > rB + (arrow ? 3 : 1)) pts.push([x, y]);
@@ -1422,8 +1439,11 @@ function drawDrill(now, t) {
   const b = IDX[cur].blobs.get(drill.id) || VIS.get(drill.id)?.blob, { C, RR } = drillGeo();
   const open = clamp((now - drill.t0) / 260, 0, 1), ease = 1 - Math.pow(1 - open, 3);
   ctx.save(); ctx.globalAlpha = 0.9 * ease; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH); ctx.restore();
+  drill.cv = !!b?.clusters?.length && IDX[cur].blobs.has(drill.id);
   if (!b) return;
-  const present = IDX[cur].blobs.has(drill.id), col = kindColors(b.kind), R = RR * (0.85 + 0.15 * ease);
+  const present = IDX[cur].blobs.has(drill.id);
+  if (drill.cv) { drill.nodes = drill.chips = drill.stains = drill.edges = []; if (drill.sel) { drill.sel = null; hideCard(); } clDraw(now, t, b); return; }
+  const col = kindColors(b.kind), R = RR * (0.85 + 0.15 * ease);
   ctx.save(); ctx.globalAlpha = ease;
   blobPath(ctx, C.x, C.y, R, hash(drill.id), t, 0.35); ctx.fillStyle = col.fill; ctx.fill();
   ctx.lineWidth = lineW(b.complexity) * 1.4; ctx.strokeStyle = col.stroke; blobPath(ctx, C.x, C.y, R, hash(drill.id), t, 0.35); ctx.stroke();
@@ -1572,6 +1592,585 @@ function placeAround(items, circles) {
     ctx.globalAlpha = it.alpha; ctx.fillStyle = T.ink; ctx.font = `600 ${it.fs}px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(it.name, best.x, best.y + 0.5); ctx.restore();
   }
+}
+/* ───────────────────────── clusters inside a big blob ─────────────────────────
+   SCHEMA.md v6: a blob at the cut size (CL_LINES lines or CL_FUNCS functions, clusters.py) comes with `clusters`, the
+   call communities of its functions, and its drill-down shows those instead of every function (the approved draft,
+   variant A). Each cluster is a sub-blob: a big emoji on a hollow centre, a 1-2 word caption with its function count,
+   its functions as a ring of dots (size = lines, stain inside, green halo = edited in the last RECENCY steps, a pulsing
+   ring = this step, white ring = new). One ribbon per cluster pair carries every call between them (arrow toward the
+   side that receives more; the heaviest pairs red-orange). The blob's neighbours are pills on the rim, toward the
+   clusters they link to, in two rows; the rest fold into "+N more blobs". Top left: the face, five dials against their
+   limits (lines, functions, tangle = share of the inside calls that cross clusters, branchy = functions with
+   CL_BRANCHES+ branches, coupling = neighbour blobs) and the growth curve (functions per step, the cut line dashed).
+   Click a cluster to open it: its functions as named blobs with their calls, the other clusters and the outside blobs
+   as pills (a cluster pill hops there, a blob pill opens that blob); click a function to pin its callers (teal) and
+   callees (light). / finds a function; Esc / Backspace go back up. The step highlight reaches in: a function this
+   step changed pulses, and so does its cluster. Cluster ids hold from step to step (clusters.py) and so do colours and
+   places (CL_MEM), so stepping keeps the arrangement. A blob without `clusters` keeps the drill-down above. */
+const CL_LINES = 500, CL_FUNCS = 50, CL_TANGLE = 0.25, CL_BRANCHY = 5, CL_BRANCHES = 15, CL_COUPLING = 8;
+const WR = 1000;            // world radius of the blob; screen scale = RR / WR
+const CL_HUES = [205, 28, 150, 285, 52, 335, 182, 112, 250, 12, 90, 315, 230, 0, 165, 60];
+const clFill = h => T.light ? `hsl(${h} 55% 92%)` : `hsl(${h} 30% 17%)`, clStroke = h => T.light ? `hsl(${h} 50% 42%)` : `hsl(${h} 60% 62%)`,
+  clInk = h => T.light ? `hsl(${h} 60% 28%)` : `hsl(${h} 70% 80%)`;
+const clCallee = () => T.light ? '#3B5470' : '#C4D4E6', clCaller = () => T.light ? '#16867B' : '#5FD0C5';
+const clStainCol = m => m.git ? T.git : m.del ? T.rem : T.mix;
+const clip = (n, max) => { n = String(n); return n.length > max ? n.slice(0, max - 1).trimEnd() + '…' : n; };
+const emo = (e, x, y, size, alpha = 1) => drawEmoji(e, x, y, size, ctx.globalAlpha * alpha);
+const CL_MEM = new Map();   // blob id → { at: cluster id → {x, y}, dots: qual → {x, y, c}, open: cluster id → Map(qual → {x, y}) }
+const clMem = id => { let m = CL_MEM.get(id); if (!m) CL_MEM.set(id, m = { at: new Map(), dots: new Map(), open: new Map() }); return m; };
+let CS = null, CWHY = [], CX = [];
+const CQ = { q: '', match: new Set(), sugg: [], i: 0 };
+const CL_PANEL = { x0: 0, x1: 290, y0: TOP, y1: TOP + 272 };     // the panel's corner, kept clear of labels
+const clState = () => drill.ca ||= { open: null, t0: 0, hov: null, hovF: null, sel: null, hits: [], boxes: [] };
+
+/* the drilled blob at this step, prepared once: its functions with their calls inside and out, recency, stains,
+   the clusters in list order (loose ends last, then by lines), the calls within and between them, the dials */
+function clPrep(b) {
+  if (CS && CS.b === b && CS.cur === cur) return CS;
+  const owner = IDX[cur].owner, blobs = IDX[cur].blobs;
+  const F = b.funcs.map((f, i) => ({ i, f, q: f.qual, n: f.name, file: f.file, s: f.start, L: f.lines, br: f.branches || 0, er: f.errors || 0,
+    snip: (f.snippet || []).slice(0, 3), d: f.delta, out: [], inn: [], extOut: new Map(), extIn: new Map(), heat: 0, recent: [] }));
+  const byQ = new Map(F.map(x => [x.q, x]));
+  for (const x of F) {
+    const m = new Map();
+    for (const c of x.f.calls) {
+      const y = byQ.get(c.to);
+      if (y) { if (y === x) continue; let o = m.get(y.i); if (!o) m.set(y.i, o = { t: y.i, n: 0, err: 0, def: 0 }); o.n++; if (c.error) o.err = 1; if (c.deferred) o.def = 1; }
+      else { const ob = owner.get(c.to); if (ob) x.extOut.set(ob, (x.extOut.get(ob) || 0) + 1); }
+    }
+    x.out = [...m.values()];
+  }
+  for (const x of F) for (const o of x.out) F[o.t].inn.push({ t: x.i, n: o.n, err: o.err, def: o.def });
+  for (const ob of STEPS[cur].blobs) if (ob.id !== b.id) for (const f of ob.funcs) for (const c of f.calls) { const y = byQ.get(c.to); if (y) y.extIn.set(ob.id, (y.extIn.get(ob.id) || 0) + 1); }
+  for (const x of F) {
+    for (let k = 0; k <= RECENCY && cur - k >= 0; k++) { const g = IDX[cur - k].funcs.get(x.q); if (g && g.delta.added + g.delta.removed > 0) x.recent.push([k, g.delta.added, g.delta.removed]); }
+    for (const [k] of x.recent) x.heat = Math.max(x.heat, 1 - k / (RECENCY + 1));
+    x.now = x.recent.some(r => r[0] === 0); x.mark = funcMark(x.q); x.deg = x.out.length + x.inn.length;
+  }
+  const adj = F.map(() => new Map());
+  for (const x of F) for (const o of x.out) { adj[x.i].set(o.t, (adj[x.i].get(o.t) || 0) + o.n); adj[o.t].set(x.i, (adj[o.t].get(x.i) || 0) + o.n); }
+  // the clusters as clusters.py sent them (a function they do not list joins the loose ends); colour by id
+  const lines = ids => ids.reduce((s, i) => s + F[i].L, 0), seen = new Set(), list = [];
+  for (const c of b.clusters) {
+    const ids = []; for (const q of c.funcs || []) { const x = byQ.get(q); if (x && !seen.has(x.i)) { seen.add(x.i); ids.push(x.i); } }
+    if (ids.length) list.push({ id: c.id, cap: c.label?.title || c.cap, e: c.label?.emoji || c.emoji, ids });
+  }
+  const rest = F.filter(x => !seen.has(x.i)).map(x => x.i);
+  if (rest.length) { const lo = list.find(c => c.id === 0); if (lo) lo.ids.push(...rest); else list.push({ id: 0, cap: 'loose ends', e: '🧷', ids: rest }); }
+  list.sort((p, q) => (p.id === 0) - (q.id === 0) || lines(q.ids) - lines(p.ids) || p.id - q.id);
+  const of = new Array(F.length);
+  list.forEach((c, ci) => {
+    c.i = ci; c.ids.sort((p, q) => F[q].L - F[p].L); c.lines = lines(c.ids); c.n = c.ids.length; for (const i of c.ids) of[i] = ci;
+    c.hue = c.id === 0 ? 210 : CL_HUES[(c.id - 1) % CL_HUES.length];
+    c.stained = c.ids.filter(i => F[i].mark).length; c.heat = Math.max(0, ...c.ids.map(i => F[i].heat)); c.now = c.ids.some(i => F[i].now);
+    c.br = c.ids.reduce((s, i) => s + F[i].br, 0); c.inner = 0;
+  });
+  const W = new Map(); let inside = 0, across = 0;
+  for (const x of F) for (const o of x.out) {
+    const a = of[x.i], c = of[o.t];
+    if (a === c) { inside += o.n; list[a].inner += o.n; continue; }
+    across += o.n; const k = a < c ? a + ',' + c : c + ',' + a; let w = W.get(k); if (!w) W.set(k, w = { a: Math.min(a, c), b: Math.max(a, c), ab: 0, ba: 0, err: 0 });
+    if (a < c) w.ab += o.n; else w.ba += o.n; if (o.err) w.err++;
+  }
+  // neighbour blobs: every edge of this blob, and the calls in and out
+  const near = new Map(), nb = id => { let o = near.get(id); const ob = blobs.get(id); if (!o && ob) near.set(id, o = { id, t: ob.title, e: ob.face, kind: ob.kind, region: ob.region, edges: {}, calls_out: 0, calls_in: 0 }); return o; };
+  for (const e of STEPS[cur].edges) if (e.a === b.id || e.b === b.id) { const o = nb(e.a === b.id ? e.b : e.a); if (o) o.edges[e.kind] = (o.edges[e.kind] || 0) + (e.n || 1); }
+  for (const x of F) { for (const [id, n] of x.extIn) { const o = nb(id); if (o) o.calls_in += n; } for (const [id, n] of x.extOut) { const o = nb(id); if (o) o.calls_out += n; } }
+  const weight = o => Object.values(o.edges).reduce((s, n) => s + n, 0) + o.calls_in;
+  const nearL = [...near.values()].sort((p, q) => weight(q) - weight(p));
+  const growth = []; for (let j = 0; j <= cur; j++) { const bj = IDX[j].blobs.get(b.id); if (bj) growth.push([j, bj.funcs.length]); }
+  const ghosts = [...STEPS[cur].stains.values()].filter(s => s.gone && s.blob === b.id).map(s => ({ q: s.q, n: s.name, L: s.lines, step: s.step, git: !!s.git }));
+  const tangle = across / Math.max(1, inside + across), branchy = F.filter(x => x.br >= CL_BRANCHES).length;
+  const M = [
+    { k: 'lines', e: '📏', v: b.size, lim: CL_LINES, f: v => v + ' L', why: `lines · aiblob cuts a blob at ${CL_LINES} (areas.py)` },
+    { k: 'funcs', e: '🧩', v: F.length, lim: CL_FUNCS, f: v => v + ' fn', why: `functions · aiblob cuts at ${CL_FUNCS} (areas.py)` },
+    { k: 'tangle', e: '🕸️', v: tangle, lim: CL_TANGLE, f: v => Math.round(v * 100) + '%', why: `calls that cross between call-clusters (limit ${Math.round(CL_TANGLE * 100)}%)` },
+    { k: 'branchy', e: '🌀', v: branchy, lim: CL_BRANCHY, f: v => v + ' fn', why: `functions with ${CL_BRANCHES}+ branches (limit ${CL_BRANCHY})` },
+    { k: 'coupling', e: '🔌', v: nearL.length, lim: CL_COUPLING, f: v => v + ' blobs', why: `other blobs wired to this one (limit ${CL_COUPLING})` },
+  ].map(m => ({ ...m, r: m.v / m.lim }));
+  const area = STEPS[cur].areaMap.get(b.area);
+  CS = { b, cur, funcs: F, byQ, adj, near: nearL, nearMap: near, growth, ghosts, M, cl: { list, of, W: [...W.values()], inside, across },
+         blob: { id: b.id, t: b.title, e: b.face, kind: b.kind, where: area?.caption || b.region } };
+  const A = clState(); A.hov = A.hovF = null;
+  if (A.open != null && !list.some(c => c.id === A.open)) { A.open = null; A.sel = null; }
+  if (A.sel != null && !byQ.has(A.sel)) A.sel = null;
+  if (CQ.q) clSearch();
+  return CS;
+}
+const clGauge = r => r >= 1 ? T.rem : r >= 0.7 ? T.mix : T.add;
+function clGeo() {
+  const H = VH - TOP - BOTTOM, RR = Math.max(150, Math.min((VW - 600) / 2, H / 2 - 64));
+  return { C: { x: Math.max(RR + 300, VW / 2 + 70), y: TOP + H / 2 + 6 }, RR };
+}
+/* the panel top left: blob face and title, the verdict, five dials, the growth curve */
+function clWhy(now) {
+  const sn = CS, b = sn.blob, x0 = 20; let y = TOP + 18;
+  ctx.save();
+  ctx.fillStyle = T.bg; ctx.globalAlpha = 0.82; ctx.beginPath(); ctx.roundRect(8, TOP + 6, 282, 266, 10); ctx.fill(); ctx.globalAlpha = 1; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  emo(b.e, x0 + 13, y + 9, 24);
+  ctx.fillStyle = T.ink; ctx.font = `700 22px ${SANS}`; ctx.fillText(clip(b.t, 22), x0 + 34, y + 17);
+  y += 30; ctx.font = `11px ${MONO}`; ctx.fillStyle = T.mute; ctx.fillText(clip(`${b.kind} · ${b.where} · ${b.id}`, 44), x0, y + 6);
+  y += 22;
+  const over = sn.M.filter(m => m.r >= 1), worst = sn.M.slice(0, 2).sort((p, q) => q.r - p.r)[0];
+  ctx.font = `700 15px ${SANS}`; ctx.fillStyle = over.length ? T.rem : T.add;
+  ctx.fillText(over.length ? `${worst.r.toFixed(1)}× the cut size · ${over.length}/5 over` : 'within limits', x0, y + 8);
+  y += 22;
+  CWHY = [];
+  sn.M.forEach((m, i) => {
+    const cx = x0 + 22 + i * 47, cy = y + 22, r = 17, a0 = Math.PI * 0.75, span = Math.PI * 1.5, col = clGauge(m.r);
+    ctx.lineCap = 'round'; ctx.lineWidth = 4; ctx.strokeStyle = T.line; ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + span); ctx.stroke();
+    ctx.strokeStyle = col; ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + span * Math.max(0.02, clamp(m.r / 2, 0, 1))); ctx.stroke();
+    if (m.r > 2) { ctx.globalAlpha = 0.25 + 0.2 * Math.sin(now / 300); ctx.lineWidth = 9; ctx.beginPath(); ctx.arc(cx, cy, r, a0, a0 + span); ctx.stroke(); ctx.globalAlpha = 1; }
+    ctx.strokeStyle = T.ink; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(cx, cy - r - 4); ctx.lineTo(cx, cy - r + 3); ctx.stroke();    // the limit
+    emo(m.e, cx, cy, 15);
+    ctx.font = `10px ${MONO}`; ctx.fillStyle = m.r >= 1 ? col : T.mute; ctx.textAlign = 'center'; ctx.fillText(m.f(m.v), cx, cy + r + 12);
+    CWHY.push({ x: cx, y: cy, r: r + 6, m });
+  });
+  y += 62;
+  // growth: functions over the steps the blob has been there, the cut line dashed
+  const G = sn.growth, w = 228, h = 34, maxN = Math.max(CL_FUNCS + 10, ...G.map(g => g[1])), s0 = G[0][0], s1 = cur;
+  const X = s => x0 + (s - s0) / Math.max(1, s1 - s0) * w, Y = n => y + h - n / maxN * h;
+  ctx.beginPath(); ctx.moveTo(X(G[0][0]), y + h); for (const g of G) ctx.lineTo(X(g[0]), Y(g[1])); ctx.lineTo(X(G[G.length - 1][0]), y + h); ctx.closePath();
+  const gr = ctx.createLinearGradient(0, y, 0, y + h); gr.addColorStop(0, T.rem + '66'); gr.addColorStop(1, T.rem + '08'); ctx.fillStyle = gr; ctx.fill();
+  ctx.strokeStyle = T.rem; ctx.lineWidth = 1.4; ctx.beginPath(); G.forEach((g, i) => i ? ctx.lineTo(X(g[0]), Y(g[1])) : ctx.moveTo(X(g[0]), Y(g[1]))); ctx.stroke();
+  ctx.setLineDash([3, 3]); ctx.strokeStyle = T.ink; ctx.globalAlpha = 0.6; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(x0, Y(CL_FUNCS)); ctx.lineTo(x0 + w, Y(CL_FUNCS)); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
+  ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.textAlign = 'left';
+  ctx.fillText(`📈 ${G[0][1]} → ${G[G.length - 1][1]} fn`, x0, y + h + 13); ctx.textAlign = 'right'; ctx.fillText(`steps ${s0 + 1}–${s1 + 1}`, x0 + w, y + h + 13);
+  CWHY.push({ x: x0 + w / 2, y: y + h / 2, r: 0, box: [x0, y, x0 + w, y + h + 14], growth: true });
+  ctx.textAlign = 'left'; ctx.fillText(drill.ca.open != null ? 'click a function to pin · esc / ⌫ back · / find' : 'click a cluster to open · esc back · / find', x0, y + h + 31);
+  ctx.restore();
+}
+function clWhyTip(h) {
+  if (h.growth) { const G = CS.growth, cross = G.find(g => g[1] >= CL_FUNCS);
+    return `<b>📈 growth</b> <span class="k">functions per step</span><div>${G[0][1]} functions at step ${G[0][0] + 1}, ${G[G.length - 1][1]} now${cross ? `; past the ${CL_FUNCS}-function cut line since step ${cross[0] + 1}` : ''}.</div>`; }
+  const m = h.m;
+  return `<b>${m.e} ${m.f(m.v)}</b> <span class="k">${m.r >= 1 ? m.r.toFixed(1) + '× the limit' : Math.round(m.r * 100) + '% of the limit'}</span><div>${esc(m.why)}</div>`;
+}
+/* pills on the rim: placed toward what they link to, two rows, the rest folded into "+N" */
+function clPlacePills(items, C, R, maxTier = 2, reserved = []) {
+  ctx.font = `600 13px ${SANS}`;
+  const placed = [], over = [];
+  for (const it of items) {
+    const big = it.hue != null && it.e; it.txt = big ? clip(it.t, 20) : `${it.e ? it.e + ' ' : ''}${clip(it.t, 20)}`; it.w = ctx.measureText(it.txt).width + 18 + (big ? 30 : 0); it.h = big ? 34 : 22;
+    let ok = null;
+    for (let tier = 0; tier < maxTier && !ok; tier++) for (let k = 0; k < 24 && !ok; k++) {
+      const da = (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 0.07, a = it.ang + da, rr = R + 38 + tier * 34;
+      const x = C.x + Math.cos(a) * (rr + Math.abs(Math.cos(a)) * it.w * 0.32), y = C.y + Math.sin(a) * rr;
+      const box = { x0: x - it.w / 2 - 4, x1: x + it.w / 2 + 4, y0: y - it.h / 2 - 2, y1: y + it.h / 2 + 2 };
+      if (box.x0 < 8 || box.x1 > VW - 8 || box.y0 < TOP + 4 || box.y1 > VH - BOTTOM - 4) continue;
+      if (hitRect(box, [CL_PANEL, ...reserved])) continue;             // keep clear of the panel (and the open header)
+      if (placed.some(p => box.x0 < p.x1 && box.x1 > p.x0 && box.y0 < p.y1 && box.y1 > p.y0)) continue;
+      ok = { ...box, x, y, a };
+    }
+    if (ok) { Object.assign(it, ok); placed.push(it); } else over.push(it);
+  }
+  return { placed, over };
+}
+function clPill(it, alpha = 1) {
+  const cc = it.hue != null ? { fill: clFill(it.hue), stroke: clStroke(it.hue), text: clInk(it.hue) } : kindColors(it.kind, it.region);
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.font = `600 13px ${SANS}`;
+  ctx.fillStyle = cc.fill; ctx.strokeStyle = cc.stroke; ctx.lineWidth = 1.4; ctx.setLineDash(it.dataOnly ? [1, 3.5] : []);
+  const h = it.h || 22; ctx.beginPath(); ctx.roundRect(it.x - it.w / 2, it.y - h / 2, it.w, h, h / 2); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = it.hue != null ? cc.text : PAGE(it.kind) ? '#17202A' : T.ink; ctx.textBaseline = 'middle';
+  if (h > 22) { emo(it.e, it.x - it.w / 2 + 21, it.y, 24); ctx.textAlign = 'left'; ctx.fillText(it.txt, it.x - it.w / 2 + 38, it.y + 1); }
+  else { ctx.textAlign = 'center'; ctx.fillText(it.txt, it.x, it.y + 1); }
+  ctx.restore();
+}
+const hitRect = (r, list) => list.some(p => r.x0 < p.x1 && r.x1 > p.x0 && r.y0 < p.y1 && r.y1 > p.y0);
+const rectHitsCircle = (r, c) => { const dx = clamp(c.x, r.x0, r.x1) - c.x, dy = clamp(c.y, r.y0, r.y1) - c.y; return dx * dx + dy * dy < c.r * c.r; };
+function clLabel(txt, x, y, fs, alpha, plate, col) {
+  ctx.save(); ctx.globalAlpha *= alpha; ctx.font = `600 ${fs}px ${SANS}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (plate) { const w = ctx.measureText(txt).width; ctx.fillStyle = T.bg; ctx.globalAlpha *= 0.82; ctx.beginPath(); ctx.roundRect(x - w / 2 - 4, y - fs * 0.62 - 1, w + 8, fs * 1.24 + 2, 4); ctx.fill(); ctx.globalAlpha /= 0.82; }
+  ctx.fillStyle = col || T.ink; ctx.fillText(txt, x, y + 0.5); ctx.restore();
+}
+/* a function in the drill language: fill, stain clipped inside, outline by branches, new = white ring, recency = a
+   green halo fading over RECENCY steps, edited this step = a pulsing ring; the step highlight pulses around it */
+function clFunc(f, x, y, r, t, now, o = {}) {
+  const seed = hash(f.q), col = o.col || kindColors(CS.blob.kind), a = o.alpha ?? 1, fp = pulseAt(FPULSES, 'f:' + f.q, now);
+  r *= pulseScale(fp);
+  const dust = r < 5.5, shape = rr => dust ? (ctx.beginPath(), ctx.arc(x, y, rr, 0, TAU)) : blobPath(ctx, x, y, rr, seed, t * 1.3);
+  if (fp) drawPulse(ctx, fp, x, y, r, shape, a, true);
+  ctx.save(); ctx.globalAlpha *= a;
+  if (f.heat > 0) {
+    const g = ctx.createRadialGradient(x, y, r * 0.8, x, y, r + 10 + 8 * f.heat); g.addColorStop(0, T.add + Math.round(0x70 * f.heat).toString(16).padStart(2, '0')); g.addColorStop(1, T.add + '00');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r + 10 + 8 * f.heat, 0, TAU); ctx.fill();
+  }
+  if (dust) {             // a plain dot, its stain colour inside, its recency as a ring
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fillStyle = f.mark ? clStainCol(f.mark) : col.stroke; ctx.globalAlpha *= f.mark ? 0.35 + 0.65 * stainAlpha(cur - f.mark.step) : 0.75; ctx.fill();
+    if (f.now) { ctx.globalAlpha = a; ctx.strokeStyle = T.add; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 2.5 + 1.5 * Math.sin(now / 200), 0, TAU); ctx.stroke(); }
+    if (o.ring) { ctx.globalAlpha = a; ctx.strokeStyle = o.ring; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r + 3, 0, TAU); ctx.stroke(); }
+  } else {
+    blobPath(ctx, x, y, r, seed, t * 1.3); ctx.fillStyle = col.fill; ctx.fill();
+    if (f.mark) { const s = stainSpot(f.q, f.mark, r, f.L); ctx.save(); ctx.clip(); drawStain(ctx, x + s.dx, y + s.dy, s.r, f.mark, s.seed, now, ctx.globalAlpha); ctx.restore(); }
+    ctx.lineWidth = Math.min(lineW(f.br), r * 0.35); ctx.strokeStyle = col.stroke; blobPath(ctx, x, y, r, seed, t * 1.3); ctx.stroke();
+    if (f.d.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; blobPath(ctx, x, y, r + 4, seed, t * 1.3); ctx.stroke(); }
+    if (f.now) { ctx.strokeStyle = T.add; ctx.lineWidth = 2; ctx.globalAlpha = a * (0.6 + 0.4 * Math.sin(now / 220)); blobPath(ctx, x, y, r + 5, seed, t * 1.3); ctx.stroke(); ctx.globalAlpha = a; }
+    if (o.ring) { ctx.strokeStyle = o.ring; ctx.lineWidth = 2.2; blobPath(ctx, x, y, r + 7, seed, t * 1.3); ctx.stroke(); }
+  }
+  ctx.restore();
+  if (fp) drawPulse(ctx, fp, x, y, r, shape, a, false);
+}
+/* a cluster holding functions this step changed pulses with them: modified when one was, else created */
+function clPulse(c, now) {
+  let best = null;
+  for (const i of c.ids) { const p = pulseAt(FPULSES, 'f:' + CS.funcs[i].q, now); if (p && (!best || (p.kind === 'mod') > (best.kind === 'mod') || p.kind === best.kind && p.a > best.a)) best = p; }
+  return best && { ...best, grow: false };
+}
+/* a function removed from the blob: a red ghost stain with its name struck through */
+function clGhost(g, x, y, r, now, alpha = 1, named = true) {
+  const m = { step: g.step, a: 0, r: g.L, del: true, git: g.git, key: g.step }, gp = pulseAt(FPULSES, 'g:' + g.q, now);
+  ctx.save(); ctx.globalAlpha *= alpha; drawStain(ctx, x, y, r, m, hash('ghost#' + g.q), now, ctx.globalAlpha);
+  if (gp) drawPulse(ctx, gp, x, y, r, rr => { ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); }, ctx.globalAlpha, false);
+  if (!named) { ctx.restore(); return; }          // no free floor for its name: the stain alone, named on hover
+  ctx.globalAlpha *= stainAlpha(cur - g.step); ctx.font = `600 11px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const tw = ctx.measureText(g.n).width; ctx.fillText(g.n, x, y); ctx.fillStyle = g.git ? T.git : T.rem; ctx.fillRect(x - tw / 2 - 2, y - 0.5, tw + 4, 1.4);
+  ctx.restore();
+}
+function clFuncTip(f) {
+  const m = f.mark, ext = f.extIn.size + f.extOut.size;
+  let churn = 0; for (let j = 0; j <= cur; j++) { const g = IDX[j].funcs.get(f.q); if (g && g.delta.added + g.delta.removed > 0) churn++; }
+  const rec = f.recent.length ? `<div class="add">edited ${f.recent.map(r => r[0] ? r[0] + ' steps ago' : 'this step').join(', ')}</div>` : '';
+  const st = m ? `<div style="color:${clStainCol(m)}">${m.del ? 'deletion' : 'rewrite'} stain · step ${m.step + 1} · <span class="add">+${m.a}</span> <span class="rem">−${m.r}</span></div>` : '';
+  return `<b>${esc(f.n)}</b> <span class="k">${esc(f.file)}:${f.s}</span>
+    <div class="k">${f.L} L · ${f.br} branches${f.er ? ` · ${f.er} error exits` : ''} · ← ${f.inn.length} callers · ${f.out.length} callees →${ext ? ` · ${ext} outside` : ''} · touched in ${churn} steps</div>
+    ${rec}${st}${f.d.state === 'new' ? '<div><b>new this step</b></div>' : ''}
+    ${f.snip.length ? `<pre>${f.snip.map(s => esc(s.length > 52 ? s.slice(0, 51) + '…' : s)).join('\n')}</pre>` : ''}`;
+}
+function clPillTip(p) {
+  const e = Object.entries(p.edges || {}).map(([k, n]) => `${n} ${k}`).join(' · ');
+  return `<b>${esc(p.e || '')} ${esc(p.t)}</b> <span class="k">${esc(p.hue != null ? 'cluster' : KIND_LABEL[p.kind] || p.kind)}</span>${e ? `<div class="k">${e} · ${p.calls_out || 0} calls out · ${p.calls_in || 0} calls in</div>` : ''}${p.links ? `<div class="k">${p.links.length} links to this cluster's functions</div>` : ''}<div class="k">click to open</div>`;
+}
+/* force helpers: collide circles, keep inside a disc */
+function relaxCircles(nodes, R, iters, opts = {}) {
+  const pad = opts.pad ?? 6, links = opts.links || [], centre = opts.centre ?? 0.004, hole = opts.hole || 0;
+  for (let it = 0; it < iters; it++) {
+    const cool = 1 - it / iters;
+    for (const n of nodes) { n.vx = -n.x * centre; n.vy = -n.y * centre; }
+    for (const [a, b, w, want] of links) {
+      const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy) || 1, f = (d - want) / d * w;
+      a.vx += dx * f; a.vy += dy * f; b.vx -= dx * f; b.vy -= dy * f;
+    }
+    for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+      const a = nodes[i], b = nodes[j], dx = b.x - a.x, dy = b.y - a.y, min = a.r + b.r + pad, d2 = dx * dx + dy * dy;
+      if (d2 < min * min) { const d = Math.sqrt(d2) || 0.01, p = (min - d) / d * 0.5; a.vx -= dx * p; a.vy -= dy * p; b.vx += dx * p; b.vy += dy * p; }
+    }
+    for (const n of nodes) {
+      n.x += n.vx * (0.3 + 0.7 * cool); n.y += n.vy * (0.3 + 0.7 * cool);
+      const d = Math.hypot(n.x, n.y), lim = Math.max(0, R - n.r - pad);
+      if (d > lim) { n.x *= lim / d; n.y *= lim / d; }
+      if (hole && d < hole + n.r && d > 0.01 && R - n.r - pad > hole + n.r) { const k = (hole + n.r) / d; n.x *= k; n.y *= k; }
+    }
+  }
+}
+/* the overview: clusters relaxed in the blob by size and calls, their functions as dots ringed round the emoji;
+   a place remembered for the blob is where it starts from */
+function clLayout(sn) {
+  if (sn.LA) return sn.LA;
+  const F = sn.funcs, cl = sn.cl.list, mem = clMem(sn.b.id), total = F.reduce((s, f) => s + f.L, 0);
+  const kc = Math.sqrt(0.42 * WR * WR / total), R = rng(11);
+  const nodes = cl.map((c, i) => { const a = i / cl.length * TAU + R() * 0.3, d = i ? 420 + R() * 200 : 60, p = mem.at.get(c.id);
+    return { c, r: Math.max(130, kc * Math.sqrt(c.lines)), x: p ? p.x : Math.cos(a) * d, y: p ? p.y : Math.sin(a) * d }; });
+  const links = sn.cl.W.map(w => [nodes[w.a], nodes[w.b], 0.004 * Math.log1p(w.ab + w.ba), nodes[w.a].r + nodes[w.b].r + 70]);
+  relaxCircles(nodes, WR - 30, 500, { pad: 64, links, centre: 0.006 });
+  const kd = kc * 0.52;
+  for (const n of nodes) {
+    const ids = n.c.ids, hole = n.r * 0.5;           // the emoji's hole: dots ring around it
+    const dots = ids.map((i, k) => { const f = F[i], a = k * 2.39996 + 0.5, t = Math.sqrt((k + 0.5) / ids.length), rr = hole + (n.r * 0.88 - hole) * t, p = mem.dots.get(f.q), here = p && p.c === n.c.id;
+      return { f, r: Math.max(7, kd * Math.sqrt(f.L)), x: here ? p.x : Math.cos(a) * rr, y: here ? p.y : Math.sin(a) * rr }; });
+    const scale = Math.min(1, Math.sqrt(0.5 * (n.r * n.r - hole * hole) / dots.reduce((s, d) => s + d.r * d.r, 0)));
+    for (const d of dots) d.r = Math.max(7, d.r * scale);
+    relaxCircles(dots, n.r - 6, 120, { pad: 5, centre: 0.002, hole });
+    n.dots = dots;
+    mem.at.set(n.c.id, { x: n.x, y: n.y });
+    for (const d of dots) mem.dots.set(d.f.q, { x: d.x, y: d.y, c: n.c.id });
+  }
+  return sn.LA = { nodes };
+}
+/* an opened cluster: its functions spread over the blob, linked by their calls */
+function clLayoutOpen(sn, ci) {
+  sn.LAO ||= new Map(); if (sn.LAO.has(ci)) return sn.LAO.get(ci);
+  const F = sn.funcs, c = sn.cl.list[ci], total = c.lines, big = F[c.ids[0]].L, mem = clMem(sn.b.id), pm = mem.open.get(c.id) || new Map();
+  const kf = Math.min(Math.sqrt(0.13 * WR * WR / total), 0.22 * WR / Math.sqrt(big));
+  const R = rng(ci + 3);
+  const nodes = c.ids.map(i => { const a = R() * TAU, d = R() * WR * 0.6, p = pm.get(F[i].q); return { f: F[i], r: Math.max(30, kf * Math.sqrt(F[i].L)), x: p ? p.x : Math.cos(a) * d, y: p ? p.y : Math.sin(a) * d }; });
+  const byI = new Map(nodes.map(n => [n.f.i, n])), links = [];
+  for (const n of nodes) for (const o of n.f.out) { const m = byI.get(o.t); if (m) links.push([n, m, 0.01, n.r + m.r + 120]); }
+  relaxCircles(nodes, WR - 70, 600, { pad: clamp(700 / Math.sqrt(nodes.length), 90, 170), links, centre: 0.002 });
+  mem.open.set(c.id, new Map(nodes.map(n => [n.f.q, { x: n.x, y: n.y }])));
+  const L = { nodes, byI }; sn.LAO.set(ci, L); return L;
+}
+function clDraw(now, t, b) {
+  const sn = clPrep(b), A = clState(), { C, RR } = clGeo(), s = RR / WR, LA = clLayout(sn), F = sn.funcs;
+  A.hits = []; A.boxes = []; CX = [];
+  const ci = A.open != null ? sn.cl.list.findIndex(c => c.id === A.open) : -1;
+  const P = n => ({ x: C.x + n.x * s, y: C.y + n.y * s });
+  // the blob itself: kind colours, outline thickened by its total complexity, as on the app map
+  const col = kindColors(b.kind, b.region);
+  ctx.save();
+  blobPath(ctx, C.x, C.y, RR, hash(b.id), t, 0.35); ctx.fillStyle = col.fill; ctx.fill();
+  ctx.lineWidth = lineW(b.complexity) * 1.2; ctx.strokeStyle = col.stroke; ctx.stroke();
+  ctx.restore();
+  if (ci >= 0) { clDrawOpen(now, t, C, RR, s, ci, clamp((now - A.t0) / 320, 0, 1)); clWhy(now); return; }
+  const hov = A.hov, sel = A.sel != null ? sn.byQ.get(A.sel) : null;
+  const related = new Set(hov != null ? sn.cl.W.filter(w => w.a === hov || w.b === hov).flatMap(w => [w.a, w.b]) : []);
+  const ghostCircles = clGhostsFree(LA.nodes.map(n => ({ x: n.x, y: n.y, r: n.r })), C, s, now);
+  // cluster sub-blobs, their dots
+  for (const n of LA.nodes) {
+    const c = n.c, p = P(n), r = n.r * s, dim = hov != null && hov !== c.i && !related.has(c.i) ? 0.35 : 1, seed = hash('cl' + c.id), cp = clPulse(c, now);
+    const shape = rr => blobPath(ctx, p.x, p.y, rr, seed, t * 0.8, 0.8);
+    if (cp) drawPulse(ctx, cp, p.x, p.y, r, shape, dim, true);
+    ctx.save(); ctx.globalAlpha = dim;
+    shape(r); ctx.fillStyle = clFill(c.hue); ctx.fill();
+    ctx.lineWidth = clamp(1 + Math.sqrt(c.br) * 0.22, 1.5, 6); ctx.strokeStyle = clStroke(c.hue); ctx.stroke();
+    if (c.heat > 0) { ctx.globalAlpha = dim * (0.4 + 0.6 * c.heat) * (c.now ? 0.65 + 0.35 * Math.sin(now / 220) : 1); ctx.strokeStyle = T.add; ctx.lineWidth = 2; shape(r + 6); ctx.stroke(); }
+    ctx.restore();
+    if (cp) drawPulse(ctx, cp, p.x, p.y, r, shape, dim, false);
+    for (const d of n.dots) {
+      const q = { x: p.x + d.x * s, y: p.y + d.y * s }, dr = Math.max(2.4, d.r * s);
+      clFunc(d.f, q.x, q.y, dr, t, now, { col: { fill: clFill(c.hue), stroke: clStroke(c.hue) }, alpha: dim, ring: A.hovF === d.f.i || sel === d.f || clHitQ(d.f) ? T.mix : null });
+      A.hits.push({ f: d.f, x: q.x, y: q.y, r: Math.max(dr, 5), ci: c.i });
+    }
+    A.hits.push({ c, x: p.x, y: p.y, r, ci: c.i, cluster: true });
+  }
+  // bundles: one ribbon per cluster pair, width by calls, arrow toward the side that receives more
+  const maxW = Math.max(1, ...sn.cl.W.map(w => w.ab + w.ba));
+  for (const w of sn.cl.W) {
+    const a = LA.nodes[w.a], b2 = LA.nodes[w.b], tot = w.ab + w.ba, on = hov == null || hov === w.a || hov === w.b;
+    const [from, to] = w.ab >= w.ba ? [a, b2] : [b2, a];
+    const pts = curve(P(from), P(to), from.r * s, to.r * s, 'main', true, 0.12);
+    const width = 1.2 + 8 * Math.sqrt(tot / maxW), hot = tot / maxW > 0.45, al = on ? (hov != null ? 0.9 : 0.35 + 0.5 * tot / maxW) : 0.05;
+    strokeEdge(ctx, pts, 'main', width + 4, al * 0.7, false, T.bg);          // a dark casing: the ribbon reads over the dots
+    strokeEdge(ctx, pts, 'main', width, al, true, hot ? T.err : null);
+    if (w.err) strokeEdge(ctx, pts, 'error', 1.4, on ? 0.9 : 0.06, false);
+    if (hov != null && on && pts.length > 4) { const m = pts[pts.length >> 1]; clLabel(String(tot), m[0], m[1], 11, 1, true, T.ink); }
+  }
+  // outside blobs as pills, each wired to the clusters it calls or is called by
+  const pillItems = sn.near.map(o => {
+    let sx = 0, sy = 0, tw = 0; const per = new Map();
+    for (const f of F) { const w = (f.extOut.get(o.id) || 0) + (f.extIn.get(o.id) || 0); if (!w) continue; const n = LA.nodes[sn.cl.of[f.i]]; per.set(n, (per.get(n) || 0) + w); sx += n.x * w; sy += n.y * w; tw += w; }
+    return { ...o, ang: tw ? Math.atan2(sy, sx) : hash(o.id) % 628 / 100, per, w: tw || 1, dataOnly: Object.keys(o.edges).length === 1 && 'data' in o.edges };
+  }).sort((p, q) => q.w - p.w);
+  const { placed: pills, over } = clPlacePills(pillItems, C, RR);
+  for (const it of pills) for (const [n, w] of it.per) { const p = P(n), pts = curve(p, { x: it.x, y: it.y }, n.r * s, 12, 'main', false, 0.05); strokeEdge(ctx, pts, 'main', 0.8 + 0.4 * Math.sqrt(w), hov == null ? 0.1 : hov === n.c.i ? 0.7 : 0.03, false); }
+  for (const it of pills) { clPill(it, hov == null || [...it.per.keys()].some(n => n.c.i === hov) ? 1 : 0.4); A.hits.push({ pill: it, x0: it.x0, x1: it.x1, y0: it.y0, y1: it.y1 }); A.boxes.push(it); }
+  clOverflow(over, C, RR, pills);
+  // cluster faces on top: emoji in the hole, caption under it (big clusters) or beside the cluster; never overlapping
+  const placed = [CL_PANEL, ...CX, ...pills.map(p => ({ x0: p.x0, x1: p.x1, y0: p.y0, y1: p.y1 }))], circles = LA.nodes.map(n => ({ ...P(n), r: n.r * s, n }));
+  for (const n of [...LA.nodes].sort((p, q) => q.r - p.r)) {
+    const c = n.c, p = P(n), r = n.r * s, dim = hov != null && hov !== c.i && !related.has(c.i) ? 0.35 : 1;
+    const es = clamp(r * 0.62, 30, 80), inner = r >= 70, ey = p.y - (inner ? r * 0.14 : 0);
+    ctx.save(); ctx.globalAlpha = dim * 0.7; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.arc(p.x, ey, es * 0.6, 0, TAU); ctx.fill(); ctx.restore();
+    emo(c.e, p.x, ey, es, dim);
+    ctx.font = `700 14px ${SANS}`; const cap = c.cap, tw = ctx.measureText(cap).width + 30;
+    const cands = [];
+    if (inner && tw < r * 1.4) cands.push([p.x, ey + es * 0.58 + 15, true]);
+    const d = r + 12, dg = r * 0.74 + tw / 2;
+    cands.push([p.x, p.y + d], [p.x, p.y - d], [p.x + r + tw / 2 + 4, p.y], [p.x - r - tw / 2 - 4, p.y], [p.x + dg * 0.75, p.y + r * 0.8], [p.x - dg * 0.75, p.y + r * 0.8], [p.x + dg * 0.75, p.y - r * 0.8], [p.x - dg * 0.75, p.y - r * 0.8], [p.x, p.y + es * 0.9, true]);      // last resort: across its own middle
+    let done = false;
+    for (const [x, y, own] of cands) {
+      const box = { x0: x - tw / 2, x1: x + tw / 2, y0: y - 10, y1: y + 10 };
+      if (hitRect(box, placed) || circles.some(o => o.n !== n && rectHitsCircle(box, o)) || ghostCircles.some(o => rectHitsCircle(box, o))) continue;
+      if (!own && rectHitsCircle(box, { ...p, r: r - 2 })) continue;
+      placed.push(box); A.boxes.push(box); done = true;
+      ctx.save(); ctx.globalAlpha = dim; ctx.fillStyle = clFill(c.hue); ctx.strokeStyle = clStroke(c.hue); ctx.lineWidth = 1.2;
+      ctx.beginPath(); ctx.roundRect(box.x0, box.y0, tw, 20, 10); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = clInk(c.hue); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.font = `700 14px ${SANS}`; ctx.fillText(cap, box.x0 + 9, y + 0.5);
+      ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.textAlign = 'right'; ctx.fillText(c.n, box.x1 - 7, y + 1);
+      ctx.restore(); break;
+    }
+    if (!done) done = clSmallCap(c, p, r, ey, es, dim, placed, circles, n);
+    c.capShown = done;
+  }
+  clWhy(now);
+}
+/* last resort for a caption with no room around its cluster: smaller, on a dark plate across the cluster's own dots
+   (under the emoji first), still clear of every other label; clear of other clusters when it can be */
+function clSmallCap(c, p, r, ey, es, dim, placed, circles, n) {
+  ctx.font = `700 12px ${SANS}`; const tw = ctx.measureText(c.cap).width + 24, h = 16;
+  const ys = [ey + es * 0.58 + 10, p.y + r * 0.5, p.y - r * 0.5, p.y, p.y + r * 0.8, p.y - r * 0.8], xs = [0, -0.4, 0.4];
+  for (const strict of [true, false]) for (const y of ys) for (const k of xs) {
+    const x = p.x + k * r, box = { x0: x - tw / 2, x1: x + tw / 2, y0: y - h / 2, y1: y + h / 2 };
+    if (hitRect(box, placed) || strict && circles.some(o => o.n !== n && rectHitsCircle(box, o))) continue;
+    placed.push(box); drill.ca.boxes.push(box);
+    ctx.save(); ctx.globalAlpha = dim; ctx.fillStyle = T.bg; ctx.globalAlpha = dim * 0.85; ctx.beginPath(); ctx.roundRect(box.x0, box.y0, tw, h, h / 2); ctx.fill();
+    ctx.globalAlpha = dim; ctx.strokeStyle = clStroke(c.hue); ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = clInk(c.hue); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(c.cap, box.x0 + 7, y + 0.5);
+    ctx.font = `9px ${MONO}`; ctx.fillStyle = T.mute; ctx.textAlign = 'right'; ctx.fillText(c.n, box.x1 - 6, y + 1);
+    ctx.restore(); return true;
+  }
+  return false;
+}
+function clOverflow(over, C, RR, pills = []) {
+  if (!over.length) return;
+  const txt = `+${over.length} more blobs`; ctx.save(); ctx.font = `600 13px ${SANS}`; const w = ctx.measureText(txt).width + 18;
+  let x = C.x + RR * 0.72, y = C.y + RR + 34;
+  for (let k = 0; k < 60; k++) {      // first free spot below the blob, moving round from bottom-right
+    const a = Math.PI * (0.3 + k * 0.02), rr = RR + 38 + (k % 3) * 30, px = C.x + Math.cos(a) * rr, py = Math.min(C.y + Math.sin(a) * rr, VH - BOTTOM - 14);
+    const box = { x0: px - w / 2 - 4, x1: px + w / 2 + 4, y0: py - 13, y1: py + 13 };
+    if (box.x1 < VW - 8 && !hitRect(box, pills)) { x = px; y = py; break; }
+  }
+  ctx.fillStyle = T.panel; ctx.strokeStyle = T.rem; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.4;
+  ctx.beginPath(); ctx.roundRect(x - w / 2, y - 11, w, 22, 11); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
+  ctx.fillStyle = T.rem; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(txt, x, y + 1); ctx.restore();
+  const box = { over, x0: x - w / 2, x1: x + w / 2, y0: y - 11, y1: y + 11 };
+  CX.push(box); drill.ca.boxes.push(box);
+}
+/* removed functions on the free floor between the clusters, named when there is room */
+function clGhostsFree(obst, C, s, now) {
+  const sn = CS; sn.ghostPos ||= sn.ghosts.map(g => {
+    const r = Math.max(34, 9 * Math.sqrt(g.L)), re = Math.max(r, g.n.length * 11) + 20, R = rng(hash('ghost:' + g.q)); let best = null, bd = -Infinity;   // re: room for its struck-through name
+    for (let k = 0; k < 160; k++) { const a = R() * TAU, d = Math.sqrt(R()) * (WR - re - 60), x = Math.cos(a) * d, y = Math.sin(a) * d;
+      const free = Math.min(...obst.map(o => Math.hypot(o.x - x, o.y - y) - o.r - re), 1e9); if (free > bd) { bd = free; best = { x, y, r, named: free >= 0 }; } }
+    obst.push({ ...best, r: re }); return best;
+  });
+  return sn.ghosts.map((g, i) => { const p = sn.ghostPos[i], x = C.x + p.x * s, y = C.y + p.y * s, r = Math.max(12, p.r * s); clGhost(g, x, y, r, now, 0.9, p.named);
+    drill.ca.hits.push({ ghost: g, x, y, r: Math.max(r, 10) }); if (!p.named) return { x, y, r: 0 }; const w = g.n.length * 3.2; return { x, y, r: Math.max(r, w) + 4 }; });
+}
+function clDrawOpen(now, t, C, RR, s, ci, open) {
+  const sn = CS, A = drill.ca, F = sn.funcs, c = sn.cl.list[ci], L = clLayoutOpen(sn, ci), P = n => ({ x: C.x + n.x * s, y: C.y + n.y * s });
+  // the opened cluster fills the blob: tinted disc, the parent blob's rim kept underneath
+  const R = RR * (0.94 + 0.06 * open);
+  ctx.save(); ctx.globalAlpha = open;
+  blobPath(ctx, C.x, C.y, R - 8, hash('cl' + c.id), t * 0.6, 0.4); ctx.fillStyle = clFill(c.hue); ctx.fill(); ctx.lineWidth = 3; ctx.strokeStyle = clStroke(c.hue); ctx.stroke();
+  ctx.restore();
+  const selF = A.sel != null ? sn.byQ.get(A.sel) : null, sel = A.hovF ?? (selF ? selF.i : null), near1 = new Set();
+  if (sel != null) { near1.add(sel); for (const o of F[sel].out) near1.add(o.t); for (const o of F[sel].inn) near1.add(o.t); }
+  const alphaOf = i => sel == null || near1.has(i) ? 1 : 0.28;
+  // calls inside the cluster
+  for (const n of L.nodes) for (const o of n.f.out) {
+    const m = L.byI.get(o.t); if (!m) continue;
+    const k = o.def ? 'deferred' : o.err ? 'error' : 'main', on = sel == null || sel === n.f.i || sel === m.f.i;
+    strokeEdge(ctx, curve(P(n), P(m), n.r * s, m.r * s, k, true), k, 1.2 + 0.5 * Math.sqrt(o.n), open * (on ? (sel == null ? 0.5 : 0.95) : 0.06), true, sel != null && on ? (sel === n.f.i ? clCallee() : clCaller()) : null);
+  }
+  // other clusters and outside blobs on the rim, wired to the functions that call them or are called by them
+  const per = new Map(), items = [];
+  const link = (k, base, l) => { if (!per.has(k)) per.set(k, { ...base, links: [] }); per.get(k).links.push(l); };
+  for (const n of L.nodes) {
+    for (const o of n.f.out) { const cj = sn.cl.of[o.t]; if (cj !== ci) link('c' + cj, { kind: 'cl', cj }, { n, out: true, w: o.n, err: o.err }); }
+    for (const o of n.f.inn) { const cj = sn.cl.of[o.t]; if (cj !== ci) link('c' + cj, { kind: 'cl', cj }, { n, out: false, w: o.n, err: o.err }); }
+    for (const [b, w] of n.f.extOut) link(b, { kind: 'ext', b }, { n, out: true, w });
+    for (const [b, w] of n.f.extIn) link(b, { kind: 'ext', b }, { n, out: false, w });
+  }
+  const LA = clLayout(sn), me = LA.nodes[ci];
+  for (const [k, v] of per) {
+    const w = v.links.reduce((a, l) => a + l.w, 0);
+    let ang, base;
+    if (v.kind === 'cl') { const o = LA.nodes[v.cj], oc = sn.cl.list[v.cj]; ang = Math.atan2(o.y - me.y, o.x - me.x); base = { t: oc.cap, e: oc.e, hue: oc.hue, ci: v.cj }; }
+    else { const o = sn.nearMap.get(v.b); if (!o) continue; let sx = 0, sy = 0; for (const l of v.links) { sx += l.n.x; sy += l.n.y; } ang = Math.atan2(sy, sx); base = { t: o.t, e: o.e, kind: o.kind, region: o.region, id: o.id, edges: o.edges, calls_in: o.calls_in, calls_out: o.calls_out }; }
+    items.push({ ...base, key: k, ang, w, links: v.links });
+  }
+  items.sort((p, q) => (p.hue == null) - (q.hue == null) || q.w - p.w);
+  ctx.font = `700 16px ${SANS}`; const head = c.cap, hw = ctx.measureText(head).width + 116, hy = C.y - R + 30;
+  const headBox = { x0: C.x - hw / 2, x1: C.x + hw / 2, y0: hy - 22, y1: hy + 22 };
+  const { placed: pills, over } = clPlacePills(items, C, R, 2, [headBox]);
+  for (const it of pills) for (const l of it.links) {
+    const p = P(l.n), q = { x: it.x, y: it.y }, on = sel == null || sel === l.n.f.i;
+    const pts = l.out ? curve(p, q, l.n.r * s, 12, 'main', true, 0.08) : curve(q, p, 12, l.n.r * s, 'main', true, 0.08);
+    strokeEdge(ctx, pts, l.err ? 'error' : 'main', 0.9 + 0.4 * Math.sqrt(l.w), open * (on ? (sel == null ? 0.28 : 0.9) : 0.04), true, it.hue != null ? clStroke(it.hue) : null);
+  }
+  for (const it of pills) { clPill(it, open * (sel == null || it.links.some(l => l.n.f.i === sel) ? 1 : 0.35)); A.hits.push({ pill: it, x0: it.x0, x1: it.x1, y0: it.y0, y1: it.y1 }); A.boxes.push(it); }
+  clOverflow(over, C, R, pills);
+  // function blobs, named inside when the name fits, else beside with collision avoidance, else on hover only
+  const circles = L.nodes.map(n => ({ ...P(n), r: n.r * s + 2, f: n.f }));
+  for (const n of L.nodes) { const p = P(n); clFunc(n.f, p.x, p.y, n.r * s, t, now, { alpha: open * alphaOf(n.f.i), ring: selF === n.f || A.hovF === n.f.i || clHitQ(n.f) ? T.mix : null }); A.hits.push({ f: n.f, x: p.x, y: p.y, r: n.r * s }); }
+  // the open cluster's own face, top centre
+  ctx.save(); ctx.globalAlpha = open; ctx.font = `700 16px ${SANS}`;
+  ctx.fillStyle = clFill(c.hue); ctx.strokeStyle = clStroke(c.hue); ctx.lineWidth = 1.6; ctx.beginPath(); ctx.roundRect(C.x - hw / 2, hy - 22, hw, 44, 22); ctx.fill(); ctx.stroke();
+  emo(c.e, C.x - hw / 2 + 28, hy, 34); ctx.fillStyle = clInk(c.hue); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(head, C.x - hw / 2 + 52, hy + 0.5);
+  ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.textAlign = 'right'; ctx.fillText(c.n + ' fn', C.x + hw / 2 - 10, hy + 1); ctx.restore();
+  A.boxes.push(headBox);
+  clFuncLabels(L.nodes.map(n => ({ f: n.f, ...P(n), r: n.r * s, alpha: open * alphaOf(n.f.i), force: n.f.i === sel || near1.has(n.f.i) && sel != null })), circles, 0,
+    [headBox, ...CX, ...pills.map(p => ({ x0: p.x0, x1: p.x1, y0: p.y0, y1: p.y1 }))]);
+}
+/* names: inside when they fit, else below / above / right / left of the node; a name that would overlap another
+   name or another node is hidden (it shows on hover). Priority: pinned and its calls, recent, stained, big. */
+function clFuncLabels(items, circles, minR = 0, reserved = []) {
+  const placed = [CL_PANEL, ...reserved];
+  const pri = it => (it.force ? 1e9 : 0) + it.f.heat * 400 + (it.f.mark ? 50 : 0) + it.r * 3;
+  for (const it of items.sort((a, b) => pri(b) - pri(a))) {
+    if (it.r < minR && !it.force) continue;
+    const name = clip(it.f.n, 20), fs = clamp(it.r * 0.34, 11, 15);
+    ctx.font = `600 ${fs}px ${SANS}`; const tw = ctx.measureText(name).width;
+    if (tw < it.r * 1.72 && it.r >= 15) {
+      const box = { x0: it.x - tw / 2, x1: it.x + tw / 2, y0: it.y - fs * 0.6 - 4, y1: it.y + fs * 0.6 + 8 };
+      if (!hitRect(box, placed)) {
+        placed.push(box); drill.ca.boxes.push(box);
+        clLabel(name, it.x, it.y - 4, fs, it.alpha, !!it.f.mark);
+        ctx.save(); ctx.globalAlpha *= it.alpha; ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(`${it.f.L}L`, it.x, it.y + fs * 0.7); ctx.restore();
+        continue;
+      }
+    }
+    const w = tw + 8, h = fs + 4, r = it.r + 3, q = r * 0.72;
+    const cands = [[it.x, it.y + r + h / 2], [it.x, it.y - r - h / 2], [it.x + r + w / 2, it.y], [it.x - r - w / 2, it.y],
+      [it.x + q + w / 2, it.y + q + h / 2], [it.x - q - w / 2, it.y + q + h / 2], [it.x + q + w / 2, it.y - q - h / 2], [it.x - q - w / 2, it.y - q - h / 2]];
+    for (const [x, y] of cands) {
+      const box = { x0: x - w / 2, x1: x + w / 2, y0: y - h / 2, y1: y + h / 2 };
+      if (box.y0 < TOP + 2 || box.y1 > VH - BOTTOM - 2 || box.x0 < 2 || box.x1 > VW - 2) continue;
+      if (hitRect(box, placed) || circles.some(c => c.f !== it.f && rectHitsCircle(box, c))) continue;
+      placed.push(box); drill.ca.boxes.push(box); clLabel(name, x, y, fs, it.alpha, true); break;
+    }
+  }
+}
+function clHitAt(x, y) {
+  const A = drill.ca;
+  for (const w of CWHY) if (w.box ? x >= w.box[0] && x <= w.box[2] && y >= w.box[1] && y <= w.box[3] : Math.hypot(x - w.x, y - w.y) < w.r) return { why: w };
+  for (const h of CX) if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) return { over: h.over };
+  const list = A.hits;
+  for (let k = list.length - 1; k >= 0; k--) { const h = list[k]; if (h.pill) { if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) return h; continue; } if (h.cluster) continue; if (h.ghost) { if (Math.hypot(x - h.x, y - h.y) <= h.r) return h; continue; } if (Math.hypot(x - h.x, y - h.y) <= h.r + 2) return h; }
+  if (A.open == null) for (const h of list) if (h.cluster && Math.hypot(x - h.x, y - h.y) <= h.r) return h;
+  return null;
+}
+function clMove(x, y) {
+  const A = drill.ca, h = clHitAt(x, y);
+  A.hov = null; A.hovF = null;
+  cv.style.cursor = h && !h.why && !h.over && !h.ghost ? 'pointer' : 'default';
+  if (!h) { hideTip(); return; }
+  if (h.why) { showTip(clWhyTip(h.why), x, y); return; }
+  if (h.over) { showTip(`<b>+${h.over.length} more</b> <span class="k">no room on the rim</span><div>${h.over.slice(0, 18).map(o => `<span class="sym">${esc(o.e || '')} ${esc(clip(o.t, 18))}</span>`).join('')}</div>`, x, y); return; }
+  if (h.pill) { showTip(clPillTip(h.pill), x, y); return; }
+  if (h.ghost) { showTip(`<b style="color:var(--rem)">removed: ${esc(h.ghost.n)}</b> <span class="k">${h.ghost.L} L · step ${h.ghost.step + 1}</span>`, x, y); return; }
+  if (h.cluster) { A.hov = h.ci; const c = h.c, F = CS.funcs;
+    showTip(`<b>${esc(c.e)} ${esc(c.cap)}</b> <span class="k">${c.n} fn · ${c.lines} L · ${c.inner} calls inside · ${c.stained} stained</span><div>${c.ids.slice(0, 8).map(i => `<span class="sym">${esc(F[i].n)}</span>`).join('')}${c.n > 8 ? `<span class="sym">+${c.n - 8}</span>` : ''}</div><div class="k">click to open</div>`, x, y); return; }
+  if (h.f) { A.hovF = h.f.i; if (A.open == null) A.hov = h.ci; showTip(clFuncTip(h.f), x, y); }
+}
+function clClick(x, y) {
+  const A = drill.ca, h = clHitAt(x, y), { C, RR } = clGeo();
+  const go = c => { A.open = c.id; A.t0 = performance.now(); hideTip(); };
+  if (h?.pill && h.pill.ci == null && h.pill.id) { const ob = IDX[cur].blobs.get(h.pill.id); if (ob && PAGE(ob.kind)) showFileCard(h.pill.id, { x: (h.pill.x0 + h.pill.x1) / 2, y: h.pill.y1 }); else openDrill(h.pill.id); crumbs(); return; }
+  if (A.open == null) {
+    if (h && (h.cluster || h.ci != null)) { go(CS.cl.list[h.ci]); A.sel = h.f ? h.f.q : null; return; }
+    if (!h && Math.hypot(x - C.x, y - C.y) > RR * 1.05) { closeDrill(); crumbs(); }
+    return;
+  }
+  if (h?.pill && h.pill.ci != null) { go(CS.cl.list[h.pill.ci]); A.sel = null; return; }
+  if (h?.f) { A.sel = A.sel === h.f.q ? null : h.f.q; return; }
+  if (!h && Math.hypot(x - C.x, y - C.y) > RR) { A.open = null; A.sel = null; }
+}
+/* the search box shows with the clusters view and gives way to the legend (both sit top right) */
+function clSearchShow() { const box = $('#clsearch'), want = !!drill?.cv && !$('#legend').classList.contains('on'); if (box.hidden === want) box.hidden = !want; }
+/* / finds a function of the blob: matches ring in yellow, Enter (or a suggestion) opens its cluster and pins it */
+const clHitQ = f => CQ.q && CQ.match.has(f.q);
+const clFuzzy = (name, q) => { if (name.includes(q)) return 100 - name.indexOf(q) - name.length * 0.1; let j = 0; for (const ch of name) if (ch === q[j]) j++; return j === q.length ? 10 - name.length * 0.1 : -1; };
+function clSearch() {
+  CQ.q = $('#clq').value.trim().toLowerCase(); CQ.match = new Set(); CQ.sugg = [];
+  if (CQ.q && CS) { const sc = CS.funcs.map(f => [f, clFuzzy(f.n.toLowerCase(), CQ.q)]).filter(x => x[1] >= 0).sort((a, b) => b[1] - a[1] || b[0].L - a[0].L); CQ.sugg = sc.slice(0, 6).map(x => x[0]); for (const [f] of sc) CQ.match.add(f.q); }
+  CQ.i = 0; clSugg();
+}
+function clSugg() {
+  const box = $('#clsugg'); box.innerHTML = ''; box.classList.toggle('on', CQ.sugg.length > 0 && document.activeElement === $('#clq'));
+  CQ.sugg.forEach((f, k) => { const b = document.createElement('button'), c = CS.cl.list[CS.cl.of[f.i]]; b.className = k === CQ.i ? 'on' : '';
+    b.innerHTML = `<i style="background:${clStroke(c.hue)}"></i>${esc(f.n)} <span class="dim">${f.L}L</span>`; b.onmousedown = ev => { ev.preventDefault(); clJump(f); }; box.appendChild(b); });
+}
+function clJump(f) {
+  if (!drill?.cv || !CS) return;
+  const A = clState(); A.open = CS.cl.list[CS.cl.of[f.i]].id; A.t0 = performance.now(); A.sel = f.q;
+  $('#clq').blur(); $('#clsugg').classList.remove('on');
+}
+function clSearchKey(e) {
+  if (e.key === 'Escape') { $('#clq').value = ''; clSearch(); $('#clq').blur(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { CQ.i = clamp(CQ.i + (e.key === 'ArrowDown' ? 1 : -1), 0, Math.max(0, CQ.sugg.length - 1)); clSugg(); e.preventDefault(); }
+  else if (e.key === 'Enter' && CQ.sugg[CQ.i]) clJump(CQ.sugg[CQ.i]);
 }
 function showCard(n) {
   const card = $('#card');
@@ -1750,6 +2349,7 @@ function zoomNotes(b) {
 function onMove(ev) {
   if (dragged(ev)) return;
   mouse = { x: ev.clientX, y: ev.clientY };
+  if (drill?.cv) { clMove(mouse.x, mouse.y); return; }
   if (drill) {
     const ch = drill.chips.find(c => mouse.x > c.x0 && mouse.x < c.x1 && mouse.y > c.y0 && mouse.y < c.y1);
     const st = ch ? null : (drill.stains || []).slice().reverse().find(s => Math.hypot(s.x - mouse.x, s.y - mouse.y) < s.r);
@@ -1794,6 +2394,7 @@ function onClick(ev) {
   const x = ev.clientX, y = ev.clientY;
   if (drag && drag.moved) { drag = null; return; }      // the end of a pan, not a click
   drag = null;
+  if (drill?.cv) { clClick(x, y); return; }
   if (drill) {
     const ch = drill.chips.find(c => x > c.x0 && x < c.x1 && y > c.y0 && y < c.y1);
     if (ch) {
@@ -1852,6 +2453,12 @@ $('#newPill').onclick = () => { setPlaying(false); setStep(STEPS.length - 1); };
 $('#legendBtn').onclick = () => { const on = $('#legend').classList.toggle('on'); $('#legendBtn').setAttribute('aria-expanded', on); };
 addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT') return;
+  if (e.target === $('#clq')) { clSearchKey(e); return; }
+  if (drill?.cv && !e.ctrlKey && !e.metaKey && !e.altKey) {      // the clusters view: / finds, Esc / Backspace go up a level
+    if (e.key === '/') { e.preventDefault(); $('#clq').focus(); return; }
+    if ((e.key === 'Escape' || e.key === 'Backspace') && drill.ca?.open != null) { e.preventDefault(); drill.ca.open = null; drill.ca.sel = null; hideTip(); return; }
+    if (e.key === 'Backspace') { e.preventDefault(); closeDrill(); crumbs(); return; }
+  }
   if (e.key === 'Escape') { if (drill) { closeDrill(); crumbs(); } else if (fileCard) hideCard(); else if (!(AREAS_ON && areaUp())) $('#legend').classList.remove('on'); }
   else if (e.key === 'Backspace' && AREAS_ON) { e.preventDefault(); areaUp(); }
   else if ((e.key === 'a' || e.key === 'A') && !e.ctrlKey && !e.metaKey && !e.altKey) $('#areasBtn').click();
@@ -1867,6 +2474,9 @@ addEventListener('keydown', e => {
     if (to != null) { setPlaying(false); setStep(to); }
   }
 });
+$('#clq').addEventListener('input', clSearch);
+$('#clq').addEventListener('focus', clSugg);
+$('#clq').addEventListener('blur', () => setTimeout(() => $('#clsugg').classList.remove('on'), 120));
 $('#sess').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { setPlaying(false); setStep(+b.dataset.i); } });
 addEventListener('resize', resize);
 lightQ.addEventListener('change', readTheme);
@@ -2131,6 +2741,7 @@ function frame(now) {
     drawMap(now, t);
     if (drill) drawDrill(now, t);
     else if (fileCard && !fileAt) placeFileCard();
+    clSearchShow();
     if (FADE > 0.01) { ctx.save(); ctx.globalAlpha = 0.5 * FADE; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH); ctx.restore(); }   // a provisional step
     drawTimeline();
   }
