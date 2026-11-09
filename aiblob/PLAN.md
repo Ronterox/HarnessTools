@@ -475,3 +475,53 @@ only; history is never asked: a restart or rebuild never asks steps older than `
   SNAP 2 / 5 / 32), test_replay_expands_and_keys_no_step_already_seen (counts Expander.push and step_keys calls).
   436 tests pass; 85 of 85 mutants killed (7 new on the rows; the phase-4 mutant on cutting snapshots back is now one
   on the replayed snapshots keeping their old plan).
+
+## Diffs inside blobs, data side outcome (2026-11-09)
+Plan: .omc/plans/aiblob-diffs.md (layout B, sink keyed by the existing hashes). The page part is drafted separately.
+- diffs.py: BodySink (Analyzer.sink; a fork shares it, pickling drops it) stores every function body, every changed
+  file / text blob text and each seeded base once, by sha1[:10], and leaves a file line per step `{f, seed, sq}`.
+  `sq` is new against the plan: a seeded file's function bodies in its base, by qual, from the analyzer's own parse
+  of the base (the review round: the first version sliced them by a line diff, wrong for 12 of 81 on aigource), so
+  a seeded function diffs against its own base body; the line-diff slice stays as a fallback for a base that does
+  not parse (`sqa`: approximate quals). replay.Step.before: {rel: base} only when the base
+  differs from the snapshot (aigource: 3 of the 7 seeded steps; the other 4 are Read-merges onto the snapshot).
+- Static `timeline.py --diffs DIR` / `live.py export --diffs DIR`: index.json.gz + s/<step>.json.gz, gzip mtime 0,
+  chunks sorted by hash, so both write the same bytes for the same steps. Live: diffs/bodies.ndjson (append-only, its
+  hashes are the seen set at start, a half line cut), diffs/steps.ndjson (truncated / cut back after steps.ndjson,
+  checked by the checkpoint's `dlast`), diffs/tail.json (last two tails, keyed by a digest of their lines).
+  liveserve: `fv` on served steps (a step waits for its file line; a tail whose lines are not in tail.json is read
+  again), `/live/bodies?h=` (<= 256, 400 on bad input), `"diffs"` in "live". Contract and reference reader:
+  SCHEMA.md "Diffs", diffs.Reader.range_texts().
+- aigource (frozen copy of both project dirs, 1,270 steps, README build line): timeline.json byte-identical with and
+  without --diffs (and sessions-out); 3,878 texts (3,495 bodies, 307 file / seed texts, 76 parsed base bodies),
+  10.85 MB raw (bodies 5.31, file texts 5.49); every `sq` equals the analysis of its step's snapshot with the base
+  (76 of 76, 66 of them `same`); layout B 925 chunks, 3.71 MB gz (max 86 KB, median 1.9 KB), index 34 KB gz;
+  live pack 11.3 MB raw, diffs/steps.ndjson 22 KB. Plan: 3,866 texts, 3.67 MB gz, index ~31 KB. Max RSS static
+  647.4 -> 648.7 MB, live cold build (`timeline.py --checkpoint`) 890.2 -> 890.7 MB; wall time within noise
+  (static 120.8 -> 118.2 s, live 132.1 -> 118.5 s, a loaded machine); timed in-process: BodySink.step 0.36 s and the
+  chunk writes (gzip) 0.81 s of a 101 s build. The live export's
+  diffs equal the static build's except the file lines of steps 66-67, where the live timeline itself differs from
+  batch (--seed-git's untouched files frozen at the cold build, as designed; base and new code alike).
+- Tests: tests/test_diffs.py (byte identity Flask / js-mini / c-mini, store completeness, range_texts against replay
+  snapshots for random (a, b) on fixtures and random sessions, seeded base, moves / renames / deletes, file-blob
+  rules); test_live.py live_diffs_* (complete at every tick with restarts, Flask and a random session, seeded + git
+  steps, rebuild, cut-back, a mismatching file-lines file, a crash mid-commit, tail lines; live export == static and
+  the reader live == static); test_liveserve.py (fv served, every hash served, unknown / bad / capped / Host, a step
+  waiting for its file line, a tail waiting for its lines). 6 new mutants (missed flush before a step / before the
+  tail, a body not stored, a stale cut-back, a wrong seed base, a step served before its file line) killed.
+- Review round (REQUEST CHANGES): sq from the parsed base (CRLF, form feed, U+2028, JS callbacks / arrows now
+  `same`), the fallback slice splits at \n only; Pack checks the file every call and each line read against its hash
+  (a recreated, cut or corrupt pack: read again once, else null, never an error); a tail is never served without
+  its file lines; a seed counts only up to the step that first shows the qual / path. 10 more mutants killed (tail
+  digest ignored, a copy taken as a rename, renames not once, Entry.matches without `before`, a seed equal to the
+  snapshot, sq by line diff only, splitlines, Pack trusting its index, a tail without its lines, a seed after the
+  key was made). Two of the review's were equivalent and are gone or kept as is: the slice's deleted-run clause
+  (a run deleted inside a function is always between mapped lines; removed) and scanning only for unknown hashes
+  (the hash check gives the same answers; the per-call scan stays).
+- Found on the way, not changed: Analyzer.fork() goes through __getstate__ (copy.copy), so a fork starts with an
+  empty parse cache and the memo copy, not the shared cache the docstring says (tail forks re-parse what they touch).
+  The sink is set again in fork() for that reason.
+- Risks: provisional texts never committed stay in the pack (once each); a store from before diffs is rebuilt cold
+  by the new code (CODE now includes diffs.py); a server following it rebuilds (epoch + 1) when diffs/steps.ndjson
+  appears and serves the steps again as their file lines are written. liveserve reads the whole diffs/steps.ndjson
+  when steps come (22 KB on aigource).

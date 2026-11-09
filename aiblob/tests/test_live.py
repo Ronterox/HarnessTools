@@ -1196,3 +1196,219 @@ def test_idle_time_counts_from_when_the_writer_found_a_file_not_its_mtime(tmp_pa
     w.tick(sec(ts(9)))
     assert w.reasons == [] and w.n == 2
     exported_equals_batch(store, str(proj), ROOT)
+
+
+# -- diffs (diffs.py): the store's texts and file lines -------------------------------------------------------------
+def _diffs_complete(store):
+    """Every hash the store's steps (committed and provisional) and their file lines name is in diffs/bodies.ndjson,
+    which holds each hash once. -> the file lines."""
+    import diffs
+    _, lines, prov = live.read_store(store)
+    fvs = diffs.store_fvs(store, lines, prov)
+    hs = {h for l, fv in zip(lines + prov, fvs) for h in diffs.step_hashes(json.loads(l), fv)}
+    got = diffs.Pack(os.path.join(store, 'diffs', 'bodies.ndjson')).get(sorted(hs))
+    assert not [h for h in hs if got[h] is None], [h for h in hs if got[h] is None][:5]
+    packed = [l[2:12] for l in open(os.path.join(store, 'diffs', 'bodies.ndjson'), 'rb')]
+    assert len(packed) == len(set(packed))
+    return fvs
+
+
+def _check_diffs(store):
+    """A `between` for follow(): the store as the last tick left it."""
+    return lambda k, now: os.path.exists(os.path.join(store, 'head.json')) and _diffs_complete(store)
+
+
+def _tree(d):
+    return {os.path.relpath(os.path.join(p, f), d): open(os.path.join(p, f), 'rb').read()
+            for p, _, fs in os.walk(d) for f in fs}
+
+
+def _diffs_equal_static(tmp_path, store, proj, root, **kw):
+    """live.py export --diffs == timeline.py --diffs on the same inputs, byte for byte."""
+    import diffs
+    rs = replay.steps(proj, root, **kw)
+    dw = diffs.Static(str(tmp_path / 'static-diffs'))
+    timeline.timeline(proj, root, timings=False, steps=rs, diffs=dw)
+    dw.close()
+    diffs.export_store(store, str(tmp_path / 'live-diffs'))
+    assert _tree(tmp_path / 'live-diffs') == _tree(tmp_path / 'static-diffs')
+    committed = [json.loads(l) for l in open(os.path.join(store, 'diffs', 'steps.ndjson'))]
+    assert committed == dw.fv[:len(committed)] and len(committed) == len(live.read_store(store)[1])
+    with open(tmp_path / 'static.json', 'w', encoding='utf-8') as fh:     # the reader, live and static: the same
+        fh.write(live.export_text(store))
+    rl, rs_ = diffs.load_live(store), diffs.load_static(str(tmp_path / 'static.json'), str(tmp_path / 'static-diffs'))
+    n = len(rl.steps)
+    for a, b in {(0, n - 1), (n - 1, n - 1), (n // 2, n - 1), (0, n // 2)} if n else ():
+        for bid in {x['id'] for st in (rl.steps[a - 1] if a else {'blobs': []}, rl.steps[b]) for x in st['blobs']}:
+            assert rl.range_texts(a, b, bid) == rs_.range_texts(a, b, bid)
+
+
+def test_live_diffs_complete_at_every_tick_with_restarts(tmp_path):
+    src, _ = _mixed(tmp_path / 'src')
+    store = str(tmp_path / 'store')
+    w, store, proj = follow(tmp_path, src, ROOT, restarts=4, between=_check_diffs(store))
+    _diffs_complete(store)
+    _diffs_equal_static(tmp_path, store, proj, ROOT)
+
+
+@pytest.mark.parametrize('src', ['flask', 'random'])
+def test_live_diffs_complete_at_every_tick_on_real_and_random_sessions(tmp_path, src):
+    import randsession
+    if src == 'flask':
+        if not os.path.isdir(FLASK):
+            pytest.skip('recorded demo session not on this machine')
+        proj, root = FLASK, APP
+    else:
+        proj, root = randsession.random_project(random.Random(26), str(tmp_path / 'g'))
+        root = root or ROOT
+    store = str(tmp_path / 'store')
+    w, store, copy = follow(tmp_path, proj, root, restarts=3, check_every=10, seed=26, between=_check_diffs(store))
+    assert len(_diffs_complete(store)) == w.n
+    _diffs_equal_static(tmp_path, store, copy, root)
+
+
+def test_live_diffs_of_seeded_and_git_steps(tmp_path):
+    """--seed-git and --git-reconcile: seeded bases and git steps live, each tick complete; the file lines are a
+    static build's."""
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    env = lambda at: {'GIT_AUTHOR_DATE': at, 'GIT_COMMITTER_DATE': at, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
+                      'GIT_COMMITTER_NAME': 't', 'GIT_COMMITTER_EMAIL': 't@t', 'HOME': str(tmp_path), 'PATH': '/usr/bin:/bin'}
+    git = lambda at, *cmd: subprocess.run(['git', '-C', str(repo), *cmd], check=True, env=env(at), capture_output=True)
+    (repo / 'a.py').write_text('def f():\n    return 1\n\n\ndef g():\n    return 2\n')
+    (repo / 'notes.md').write_text('old\n')
+    git(ts(0), 'init', '-q')
+    git(ts(0), 'add', '.')
+    git(ts(0), 'commit', '-qm', 'base')
+    root = str(repo)
+    src = tmp_path / 'src'
+    write_lines(src / f'{SID}.jsonl', [
+        msg('user', 'go', ts=ts(1)),
+        msg('assistant', [tool('e1', 'Edit', file_path=f'{root}/a.py', old_string='return 1', new_string='return 3')],
+            ts=ts(2), cwd=root),
+        dict(result('e1'), timestamp=ts(2, 1)),
+        msg('assistant', [tool('e2', 'Edit', file_path=f'{root}/notes.md', old_string='old', new_string='new')],
+            ts=ts(4), cwd=root),
+        dict(result('e2'), timestamp=ts(4, 1)),
+        msg('assistant', [tool('w1', 'Write', file_path=f'{root}/b.py', content='b = 1\n')], ts=ts(9), cwd=root),
+        dict(result('w1'), timestamp=ts(9, 1))])
+
+    def meanwhile(k, now):
+        if now >= sec(ts(5)) and not (repo / 'c.py').exists():
+            (repo / 'a.py').write_text('def f():\n    return 3\n\n\ndef g():\n    return 2\n')
+            (repo / 'c.py').write_text('c = 1\n')
+            git(ts(5), 'add', '.')
+            git(ts(5), 'commit', '-qm', 'made while live')
+        check(k, now)
+    store = str(tmp_path / 'store')
+    check = _check_diffs(store)
+    w, store, proj = follow(tmp_path, str(src), root, seed_git=True, git_reconcile=True, restarts=1, between=meanwhile)
+    fvs = _diffs_complete(store)
+    assert [sorted(fv.get('seed', {})) for fv in fvs[:2]] == [['a.py'], ['notes.md']] and 'a.f' in fvs[0]['sq']
+    _diffs_equal_static(tmp_path, store, proj, root, seed_git=True, git_reconcile=True, rest=_rest(store))
+
+
+def test_live_diffs_after_a_rebuild(tmp_path):
+    """A rebuild truncates the file lines with the steps and writes them again; the pack is kept (no text twice)."""
+    import diffs
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    write_lines(proj / f'{SID}.jsonl', [
+        msg('user', 'go', ts=ts(0)),
+        msg('assistant', [tool('w', 'Write', file_path=f'{ROOT}/a.py', content='def a():\n    return 1\n')], ts=ts(1)),
+        dict(result('w'), timestamp=ts(1, 1))])
+    w = live.Writer(store, [str(proj)], ROOT, lag=5, scan=0, alive=lambda: set(), prov_every=0)
+    w.start(sec(ts(3)))
+    _diffs_complete(store)
+    size = os.path.getsize(os.path.join(store, 'diffs', 'bodies.ndjson'))
+    write_lines(proj / SID / 'subagents' / 'agent-s.jsonl', [
+        msg('user', 'sub', ts=ts(4), isSidechain=True),
+        msg('assistant', [tool('s', 'Write', file_path=f'{ROOT}/s.md', content='s\n')], ts=ts(5), isSidechain=True),
+        dict(result('s'), timestamp=ts(5, 1))])
+    w.tick(sec(ts(9)))
+    assert w.rebuilds == 1
+    fvs = _diffs_complete(store)
+    assert os.path.getsize(os.path.join(store, 'diffs', 'bodies.ndjson')) > size and fvs[-1] == {'f': {'s.md': diffs.h10('s\n')}}
+    _diffs_equal_static(tmp_path, store, str(proj), ROOT)
+
+
+@pytest.mark.parametrize('case', ['appended', 'half-line'])
+def test_live_diffs_cut_back_with_the_steps_on_restart(tmp_path, case):
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    _six_writes(proj)
+    w = _writer(store, proj, checkpoint_every=1e9)
+    w.start(sec(ts(2, 30)))
+    w.tick(sec(ts(9)))                  # more steps, no checkpoint: the process dies here
+    p = os.path.join(store, 'diffs', 'steps.ndjson')
+    if case == 'half-line':
+        with open(p, 'ab') as fh:
+            fh.write(b'{"f":{"m')
+    w2 = _writer(store, proj, checkpoint_every=1e9)
+    assert w2.start(sec(ts(9))) == 'warm', w2.cold_reason
+    assert len(open(p).readlines()) == w2.n == 6
+    _diffs_complete(store)
+    _diffs_equal_static(tmp_path, store, str(proj), ROOT)
+
+
+def test_live_diffs_a_file_lines_file_that_does_not_match_means_a_cold_build(tmp_path):
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    _six_writes(proj)
+    w = _writer(store, proj)
+    w.start(sec(ts(9)))
+    w.checkpoint(sec(ts(9)))
+    p = os.path.join(store, 'diffs', 'steps.ndjson')
+    lines = open(p).readlines()
+    open(p, 'w').write(''.join(lines[:-1]) + '{"f":{"m9.py":null}}\n')
+    w2 = _writer(store, proj)
+    assert w2.start(sec(ts(10))) == 'cold' and w2.cold_reason == 'diffs/steps.ndjson does not match'
+    assert open(p).readlines() == lines
+    _diffs_complete(store)
+
+
+def test_live_diffs_a_crash_in_the_middle_of_commits_leaves_every_text_written(tmp_path):
+    """^C after some steps of a cold build were appended: the texts they name were appended first."""
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    recs = [msg('user', 'go', ts=ts(0))]
+    for k in range(1, 7):
+        recs += [msg('assistant', [tool(f'w{k}', 'Write', file_path=f'{ROOT}/d{k % 2}.md', content=f'# {k}\n')], ts=ts(k)),
+                 dict(result(f'w{k}'), timestamp=ts(k, 1))]
+    write_lines(proj / f'{SID}.jsonl', recs)
+    w = _writer(store, proj)
+    calls = [0]
+    orig = w._commit
+
+    def boom(st):
+        calls[0] += 1
+        if calls[0] == 4:
+            raise KeyboardInterrupt
+        return orig(st)
+    w._commit = boom
+    with pytest.raises(KeyboardInterrupt):
+        w.start(sec(ts(30)))
+    assert len(live.read_store(store)[1]) == 3
+    assert sum(len(fv.get('f', {})) for fv in _diffs_complete(store)) == 3
+
+
+def test_live_diffs_tail_lines_follow_provisional_json(tmp_path):
+    """The tail's file lines (diffs/tail.json, the last two versions) are the provisional steps'; committed, they
+    are the steps' own."""
+    import diffs
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    recs = [msg('user', 'go', ts=ts(0))]
+    for k, (path, text) in enumerate([('a.md', '# a\n'), ('m.py', 'def f():\n    return 1\n'), ('a.md', '# a\nmore\n')]):
+        recs += [msg('assistant', [tool(f'w{k}', 'Write', file_path=f'{ROOT}/{path}', content=text)], ts=ts(k + 1)),
+                 dict(result(f'w{k}'), timestamp=ts(k + 1, 1))]
+    write_lines(proj / f'{SID}.jsonl', recs)
+    w = _writer(store, proj, lag=600)
+    w.start(sec(ts(5)))                 # all three in the tail
+    _, lines, prov = live.read_store(store)
+    assert len(lines) == 0 and len(prov) == 3
+    fvs = _diffs_complete(store)
+    assert fvs[0] == {'f': {'a.md': diffs.h10('# a\n')}} and fvs[2] == {'f': {'a.md': diffs.h10('# a\nmore\n')}}
+    w.tick(sec(ts(12, 30)))             # two committed, adopted from the tail
+    _, lines2, prov2 = live.read_store(store)
+    assert len(lines2) == 2 and len(prov2) == 1
+    assert diffs.tail_fvs(store, prov) == fvs and diffs.tail_fvs(store, prov2) == fvs[2:]
+    assert _diffs_complete(store) == fvs
+    w.tick(sec(ts(20)))
+    assert len(live.read_store(store)[1]) == 3 and _diffs_complete(store) == fvs
+    assert diffs.tail_fvs(store, prov) is None          # (two versions kept)

@@ -20,7 +20,7 @@ then labelled from the committed cache `demo/labels.aigource.json` (no GPU neede
 ```
 P=~/.claude/projects/-home-rontero-Documents-Projects-AIProjects-HarnessTools
 .venv/bin/python timeline.py $P $P-aigource --root ../aigource --seed-git --git-reconcile --no-timings \
-    -o web/timeline-aigource.json --sessions-out demo/aigource-sessions.json
+    -o web/timeline-aigource.json --sessions-out demo/aigource-sessions.json --diffs web/timeline-aigource.diffs
 .venv/bin/python label.py web/timeline-aigource.json --cache demo/labels.aigource.json --server http://127.0.0.1:1
 # new blob versions: label step by step (resumable, timed, GPU-paced; log in demo/label-runs/), then the line above
 ./serve-llm.sh --runtime b11960 ~/.cache/models/Qwen3.5-4B-Q4_K_M.gguf 8080 -np 1 --cache-ram 0 &
@@ -48,7 +48,7 @@ make live-serve NAME=aigource LABELS=demo/labels.aigource.json &    # LIVE_PORT=
 make live-serve-stop NAME=aigource    # stops the server (and the model it started)
 make live-stop NAME=aigource          # stops the writer; exits 1 if none is running
 make live-verify NAME=aigource        # a batch rebuild compared with the store (slow on big projects)
-make live-export NAME=aigource        # writes live/aigource/timeline.json
+make live-export NAME=aigource        # writes live/aigource/timeline.json (DIFFS=DIR: and its diffs layout)
 ```
 
 Labels are asked only for steps made after labelling was first switched on for this NAME. That moment is kept in
@@ -106,6 +106,14 @@ group, killed with the server even on SIGKILL), with `-c 4096 -np 1 --cache-ram 
 after 60 s idle: ~100 MiB of VRAM, woken by the next ask in ~3 s, if the VRAM is free then), and stops it 10 min
 after it last answered (`--idle-stop`), also while asks wait on a hot GPU; its whole process group goes with it. `--no-ask` serves cache hits and kept labels only. Options: liveserve.py's docstring.
 API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
+
+Diffs inside blobs (data side; the page part is not built yet): `timeline.py --diffs DIR` (or `make timeline
+DIFFS=web/timeline.diffs`) also writes the texts the steps show, by the hashes the steps carry, as plain gzip files
+(DIR/index.json.gz + DIR/s/<step>.json.gz; timeline.json is byte-identical without it). The live writer always keeps
+them (live/NAME/diffs/), liveserve.py serves each step's file line as `fv` and the texts at `/live/bodies?h=...`, and
+`live.py export --diffs DIR` writes the static layout from a store. How a client gets the old and new text of a
+function or file between two steps: SCHEMA.md "Diffs", reference reader `diffs.Reader.range_texts()`. aigource:
+see PLAN.md "Diffs inside blobs, data side outcome" for sizes.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,

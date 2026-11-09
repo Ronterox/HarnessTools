@@ -324,3 +324,64 @@ timeline (v3 and --v2), right after `"session"`; with one session the key is abs
   `case` pattern's `)` closes nothing, a `cd` in a `case` arm makes the directory unknown, `&>file` is a
   redirection, `cd -P dir` / `cd -- dir` / `x=1 cd dir` / `builtin cd dir` /
   `command cd dir` go to dir); after `cd -` or a bare `cd` the heredoc is skipped.
+
+## Diffs (2026-11-09): texts for diffs inside blobs
+
+The timeline never carries code text beyond `snippet`; the texts a diff needs sit beside it, keyed by the hash the
+steps already carry: a function's `hash` (sha1 of its body, first 10 hex, analyze.py) and, for a file / text blob,
+the same hash of the whole file text. timeline.json is byte-identical with or without them (`timeline.py --diffs`),
+and live steps.ndjson still equals `timeline.py --no-timings`. Writer and reference reader: diffs.py.
+
+Per step a **file line** `fv` (keys only when not empty, `{}` when nothing):
+- `f`: {path: hash | `"bin:N"` | null}: the file / text blobs whose text changed since the previous analysed step
+  (null: the blob is gone; `"bin:N"`: a binary file, N the UTF-8 bytes of its snapshot text, no text stored). F(i),
+  the file map after step i, is F(i-1) with `f` applied (F(-1) = {}). A step whose analysis failed has no `f` (its
+  state is the previous one).
+- `seed`: {path: hash | `"bin:N"`}: on a `seeded` step, the text the edit applied to (the git base, an Edit's
+  `originalFile`, a Read's text), when it is not what the snapshot held.
+- `sq`: {qual: hash}: that base's body of each function the seeded file has after the step, by qual, from the
+  analyzer's own parse of the base (analyze.load_module, the file's language): exact, `<module>` and carved bodies
+  included; a qual the base does not define has none. Where the base does not parse, the bodies are sliced by a line
+  diff of base and the file after the step (lines split at `\n` only, as tree-sitter counts them) and their quals are
+  listed in `sqa` [qual, ...] (approximate).
+
+Where they are:
+- Static (`timeline.py ... --diffs DIR`, `live.py export --diffs DIR`, the same bytes for the same steps): plain
+  gzip files a static server serves as they are (the page: `fetch` + `DecompressionStream('gzip')`).
+  `DIR/index.json.gz` {"v": 1, "steps": N, "fv": [file line per step], "chunks": {"<step>": [hash, ...]}} and
+  `DIR/s/<step>.json.gz` {hash: text}, the texts first named at that step (`step` = the step's place, = `idx`).
+  To fetch hash h: its chunk is the step whose list holds it.
+- Live (liveserve.py): each served step carries `fv` (left out when `{}`), committed and provisional alike, and
+  `/live/timeline.json`'s "live" says `"diffs": true` (false: a store written before diffs, no `fv`, every text
+  unknown). `GET /live/bodies?h=H1,H2,...` (1 to 256 hashes of 10 lowercase hex, else 400) -> {hash: text, or null
+  when the store has none}; same Host check and timeouts as the other endpoints. The server checks the pack on every
+  request and each line it reads back against the hash asked (a store recreated, cut or damaged under it: read again
+  once, else null). A tail is served only with its file lines (else the tail served before, or none). The store: live/NAME/diffs/
+  (bodies.ndjson, steps.ndjson, tail.json; live.py's docstring). Every hash a served step names is there before the
+  step is: texts are appended before the lines that name them, a step's file line before the step.
+
+A client's diff of blob B from before step a to after step b (0 <= a <= b; this step: a = b; since the start:
+a = 0; since step N: a = N). Old state = the expanded step a-1 (none for a = 0), new state = step b; texts by hash
+from the store (only those not cached). `diffs.Reader.range_texts(a, b, B)` is the reference; the page mirrors it.
+- Code blob: its family is B plus its cut pieces (blobs whose `cut` is B) in both states. Functions: the quals of
+  the family's functions at b, then those at a-1 that b's family lacks. Group: the `merged` entry whose `funcs`
+  names the qual (a folded-in blob), else the piece or B (pieces show as collapsed sections).
+  - At b: new = its hash. Old = the qual's hash anywhere in the old state (`moved_from`: its old blob, when that
+    is not in the family); else the earliest `sq` of the qual at steps a..k, k the first step of a..b showing the
+    qual (`seeded`; `approx` when the qual is in that step's `sqa`): a seed after the step that made it is no base of
+    it; else none (new).
+  - Only at a-1: old = its hash; when the qual is elsewhere at b, `moved_to` (that blob) and new = its hash there;
+    else deleted (old text from a-1's hash, which the store always holds).
+  - Renames: a new function (no old) takes the old side of a deleted one with the same hash (a move to another file:
+    another qual, the same body), else of one with the same `name` (`renamed_from`), each at most once.
+  - State: new (no old), deleted (no new), same (equal hashes), changed.
+- File / text blob (its `path`): old = F(a-1)[path], else the earliest `seed` of the path at a..k, k the first step
+  of a..b whose F has it (`seeded`); new
+  = F(b)[path] (none: deleted; the blob, gone at b, is found at a-1). A new path whose text hash equals that of a path
+  in F(a-1) gone from F(b) is that path renamed (`renamed_from`). `"bin:N"` on either side: binary, no texts.
+- Display: a client line-diffs old against new (Myers; in a Web Worker for big files); `<module>` bodies and carved
+  ones are joined statements (no line numbers); a function body starts at its definition (decorators included; a
+  JS callback can start mid-line). A step whose edit did not apply changes nothing; the next step's diff covers both.
+- Costs (aigource): PLAN.md "Diffs inside blobs, data side outcome". Provisional texts never committed stay in the
+  live pack (each once); `live.py export --diffs` writes only what the steps name. 10-hex collisions (~7e-6 over the
+  store) are the timeline's own blind spot.

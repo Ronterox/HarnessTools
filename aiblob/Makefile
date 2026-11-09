@@ -2,15 +2,17 @@ PY      ?= .venv/bin/python
 SESSION ?= $(HOME)/.claude/projects/-home-rontero-Documents-Projects-AIProjects-HarnessTools-aiblob-demo-app
 OUT     ?= web/timeline.json
 ROOT    ?=
+DIFFS   ?=
 PERF_OUT  ?= demo/perf/perf.csv
 PERF_ARGS ?=
 
 .PHONY: timeline test perf serve live live-stop live-export live-verify live-serve live-serve-stop
 LABELS  ?= demo/labels.json
 
-# analyse, then put back the cached labels (port 1: no llama-server is asked; uncached blobs keep heuristic names)
+# analyse, then put back the cached labels (port 1: no llama-server is asked; uncached blobs keep heuristic names);
+# DIFFS=web/timeline.diffs also writes the texts for diffs inside blobs (timeline.py --diffs, SCHEMA.md "Diffs")
 timeline:
-	$(PY) timeline.py $(SESSION) --no-timings -o $(OUT)
+	$(PY) timeline.py $(SESSION) --no-timings -o $(OUT) $(if $(DIFFS),--diffs $(DIFFS))
 	$(PY) label.py $(OUT) --cache $(LABELS) --server http://127.0.0.1:1
 
 test:
@@ -34,7 +36,7 @@ live-stop:
 	$(PY) live.py stop $(NAME)
 
 live-export:
-	$(PY) live.py export $(NAME)
+	$(PY) live.py export $(NAME) $(if $(DIFFS),--diffs $(DIFFS))
 
 live-verify:
 	$(PY) live.py verify $(NAME)

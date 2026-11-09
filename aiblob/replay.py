@@ -71,6 +71,7 @@ class Step:
     seeded: bool = False   # the file's base came from git (seed_git)
     author: str = 'ai'     # 'git': a commit's checkpoint (git_reconcile)
     empty: bool = False    # a git step whose commit matched the snapshot
+    before: dict = field(default=None, repr=False)  # seeded: {relpath: the text the edit applied to} (diffs.py)
 
 HEREDOC_BODY = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2[ \t]*(?=\n|$)", re.S)
 HEREDOC = re.compile(r"cat\s*>\s*['\"]?([^\s'\"<>]+)['\"]?\s*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\2\s*$", re.S | re.M)
@@ -748,10 +749,10 @@ class Merger:
             if got not in (None, snap.get(rel)):
                 seen[rel] = (got, snap[rel])
             return None
-        before = snap.get(rel)
-        seeded = False
+        before = snap0 = snap.get(rel)
+        seeded, base0 = False, before          # base0: the text the edit applied to (Step.before when seeded)
         if before is None and self.seed_git and root and op['op'] != 'write' and not op.get('created'):
-            before = git_base(root, rel, op['ts'])
+            before = base0 = git_base(root, rel, op['ts'])
             seeded = before is not None
         applied = True
         if op['op'] == 'write' and (op['ok'] or op['tool'] == 'Bash'):    # a failing command's heredoc still ran
@@ -762,6 +763,7 @@ class Merger:
             base = before
             if op.get('orig') is not None and op['orig'] != before:
                 base, seeded = op['orig'], True      # the file as the Edit tool saw it: the snapshot had drifted
+                base0 = base
             if base is None and op['old'] == '':
                 after = op['new']
             elif base is not None and op['old'] in base:
@@ -788,6 +790,7 @@ class Merger:
                 if got is not None and (then, before) != (None, None):
                     got = merge3(then, before, got) if then is not None and before is not None else None
                 seeded = got is not None
+                base0 = text if before is None else before
             if got is None and op.get('observer'):
                 return None                 # it only saw another transcript's change, which did not fit either
             if got is None:
@@ -806,8 +809,9 @@ class Merger:
         turn = op['turn'] if not self.many else self.turns.setdefault((op['src'], op['turn']), len(self.turns))
         box = op['said']                     # spent by the first call with a step: later calls of the text say nothing
         said = box['said'] if self._spend(box, op['tid']) else ''
+        seed = {rel: base0} if seeded and applied and base0 is not None and base0 != snap0 else None
         return self._step(Step(self.n, op['ts'], op['tool'], rel, said, turn, a, r, op['ok'], dict(snap),
-                               op['session'], op['agent'], applied, seeded and applied))
+                               op['session'], op['agent'], applied, seeded and applied, before=seed))
 
     def _step(self, st):
         if self.rest is not None and not self.git_seen:
@@ -1170,6 +1174,6 @@ if __name__ == '__main__':
         i += 1
     for s in steps(args if len(args) > 1 else args[0], root, seed_git='--seed-git' in sys.argv,
                    git_reconcile='--git-reconcile' in sys.argv):
-        d = asdict(s); d.pop('content')
+        d = asdict(s); d.pop('content'); d.pop('before')
         d['files'] = len(s.content)
         print(json.dumps(d))

@@ -2,6 +2,7 @@
 
     python timeline.py <session.jsonl|project-dir> [more ...] [--root DIR] [-o web/timeline.json] [--no-timings]
                        [--full] [--v2] [--no-smart] [--seed-git] [--git-reconcile] [--sessions-out sessions.json]
+                       [--diffs DIR]
 
 Several transcripts and/or project directories are merged into one timeline (replay.steps(); a directory means
 all its sessions with their subagents); their steps then carry `session` and `agent`. --seed-git seeds missing
@@ -18,11 +19,13 @@ The file is schema v5: step 0 (and any step marked "full") carries the whole sta
 changed, down to the functions of a re-sent blob and the entries of the areas table (compact() / expand() below).
 Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; --no-smart keeps them as analyzed,
 for debugging and tests), each with its `area`. --v2 writes every step in full instead. --no-timings writes 0 for
-parse_ms / analyze_ms, so two runs on the same session are byte-identical.
+parse_ms / analyze_ms, so two runs on the same session are byte-identical. --diffs DIR also writes the texts the
+steps show (function bodies, file texts) for diffs inside blobs, as DIR/index.json.gz + DIR/s/<step>.json.gz
+(diffs.py, SCHEMA.md "Diffs"); the timeline is the same with or without it.
 """
 import argparse, copy, difflib, gc, glob, json, operator, os, sys, time
 
-import replay
+import diffs, replay
 from analyze import analyze, _is_binary
 from areas import Zoner
 
@@ -128,14 +131,19 @@ def edge_key(e):
     """The order analyze() writes edges in, which expand() restores: kind, then a, then b."""
     return (EDGE_ORDER.get(e['kind'], len(EDGE_ORDER)), e['a'], e['b'])
 
-def analyzed_steps(steps, full=False, timings=True, smart=True):
+def analyzed_steps(steps, full=False, timings=True, smart=True, diffs=None):
     """(replay.Step, {relpath: text}) pairs in order -> one full-state step dict per pair (schema v2 shape, plus
     the v5 areas). full: analyze every snapshot from scratch (no memo) instead of incrementally; the steps are the
-    same. smart=False leaves the analyzer's blobs as they are (no merges, no cuts; areas still), for debugging."""
+    same. smart=False leaves the analyzer's blobs as they are (no merges, no cuts; areas still), for debugging.
+    diffs: a diffs.Static, given each step's texts and file line (the steps are the same)."""
     an = Analyzer(full, timings, smart)
+    an.sink = diffs.sink if diffs is not None else None
     try:
         for st, snap in steps:
-            yield an.step(st, snap)
+            out = an.step(st, snap)
+            if diffs is not None:
+                diffs.push(an.fv)
+            yield out
     finally:
         gc.unfreeze()
 
@@ -144,7 +152,11 @@ class Analyzer:
     the previous step's functions, blobs and files (for deltas). fork() is a copy to run ahead: analyze() and the
     Zoner replace what they change rather than write into it (the memo's tables, the previous step's state), so the
     copy shares the parse cache (keyed by content, never mutated) and the memo's tables and copies the few dicts
-    that are written in place. evict() keeps only the parsed modules of the last snapshot."""
+    that are written in place. evict() keeps only the parsed modules of the last snapshot.
+
+    sink: a diffs.BodySink or None. With one, each step stores the texts it shows (function bodies, file / text blob
+    texts, seeded bases) and leaves its file line in `fv` (diffs.py); the step dicts are the same. A fork shares
+    it; pickling drops it."""
 
     def __init__(self, full=False, timings=True, smart=True):
         self.cache, self.memo, self.timings, self.zoner = {}, None if full else {}, timings, Zoner(smart)
@@ -152,9 +164,11 @@ class Analyzer:
         self.prev_files = {}                          # relpath -> text of the last analysed step
         self.blobs, self.edges, self.areas = [], [], []
         self.stats = {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
+        self.sink, self.fmap, self.fv = None, {}, {}  # diffs.BodySink; file blob path -> text hash; last file line
 
     def fork(self):
         a = copy.copy(self)
+        a.sink = self.sink                  # (copy.copy goes through __getstate__)
         a.memo = dict(self.memo) if self.memo is not None else None
         a.zoner = copy.copy(self.zoner)
         a.zoner.cut_memo = dict(self.zoner.cut_memo)
@@ -176,6 +190,7 @@ class Analyzer:
     def __getstate__(self):
         d = dict(self.__dict__)
         d['cache'], d['memo'] = {}, None if self.memo is None else {}   # rebuilt by warm()
+        d['sink'] = None                                                # set again by its owner
         return d
 
     def step(self, st, snap):
@@ -186,6 +201,9 @@ class Analyzer:
             result = None
         if result is not None:
             result = self.zoner.apply(result)
+        if self.sink is not None:
+            self.fv = self.sink.step(self, st, result, snap)
+        if result is not None:
             self.areas = result['areas']
             self.blobs, self.edges = build_state(result, self.prev_funcs, self.prev_members, snap, self.prev_files)
             self.prev_funcs = {f['qual']: (f['hash'], result['bodies'][f['qual']], f['lines'])
@@ -407,9 +425,10 @@ def expand(tl):
     return out
 
 def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False, steps=None, git_reconcile=False,
-             smart=True):
+             smart=True, diffs=None):
     """The timeline dict for a session, or several merged (path: a transcript, a directory or a list of them, see
-    replay.transcripts()): schema v5 (compacted) unless v2. steps: replay.steps() already run on path."""
+    replay.transcripts()): schema v5 (compacted) unless v2. steps: replay.steps() already run on path. diffs: a
+    diffs.Static that gets the texts as the steps are made (the dict is the same)."""
     files = replay.transcripts(path)
     root = os.path.abspath(root or session_root(files[0]) or '.')
     rs = steps if steps is not None else replay.steps(files, root, seed_git=seed_git, git_reconcile=git_reconcile)
@@ -417,7 +436,7 @@ def timeline(path, root=None, timings=True, full=False, v2=False, seed_git=False
     session = ','.join(ids) if ids else os.path.splitext(os.path.basename(files[0]))[0]
     sessions = replay.session_list(files, rs) if len(ids) > 1 else []
     head = {'root': root, 'session': session, **({'sessions': sessions} if len(sessions) > 1 else {})}
-    steps = analyzed_steps(((st, st.content) for st in rs), full=full, timings=timings, smart=smart)
+    steps = analyzed_steps(((st, st.content) for st in rs), full=full, timings=timings, smart=smart, diffs=diffs)
     if v2:
         return {**head, 'steps': list(steps)}
     c = Compactor()
@@ -438,6 +457,8 @@ def main():
     ap.add_argument('--git-reconcile', action='store_true', help='a step per commit of root from the first step up to '
                     'HEAD, setting the snapshot to the commit')
     ap.add_argument('--sessions-out', help='also write the sessions with steps (id, start, end, steps, prompt) as JSON')
+    ap.add_argument('--diffs', metavar='DIR', help='also write the texts for diffs inside blobs (index.json.gz and '
+                    's/<step>.json.gz, SCHEMA.md "Diffs") to DIR')
     ap.add_argument('--checkpoint', metavar='STORE', help='build through live.py and leave its store (e.g. live/NAME) '
                     'for `live.py run NAME` to continue; needs --no-timings (same output)')
     a = ap.parse_args()
@@ -454,10 +475,16 @@ def main():
         w.cold(time.time())
         tl = json.loads(live.export_text(a.checkpoint))
         rs = None
+        if a.diffs:
+            diffs.export_store(a.checkpoint, a.diffs)
     else:
         rs = replay.steps(files, os.path.abspath(a.root or session_root(files[0]) or '.'), seed_git=a.seed_git,
                          git_reconcile=a.git_reconcile)
-        tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart)
+        dw = diffs.Static(a.diffs) if a.diffs else None
+        tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart,
+                      diffs=dw)
+        if dw is not None:
+            dw.close()
     if a.sessions_out:
         with open(a.sessions_out, 'w', encoding='utf-8') as fh:
             json.dump(tl.get('sessions') or replay.session_list(files, rs if rs is not None else [

@@ -26,6 +26,8 @@ HTTP (127.0.0.1 only):
                          the layer's changes after version V (the page's lv). "ask" {state (idle, waiting, asking,
                          starting, paused, down), queued, asking, temp, server (external / child), child (pid),
                          pending: [kid]}: the labelling chip.
+- /live/bodies?h=H1,H2,...   texts for diffs inside blobs (diffs.py): {hash: text, or null when the store has none},
+                         1 to 256 hashes of 10 hex (else 400), from live/NAME/diffs/bodies.ndjson.
 - POST /live/focus {"step": i}   the step the page shows: its blobs are asked first.
 - /live/status           {epoch, ready, steps, provisional, gen, rebuilds, writer (status.json), writer_running,
                          labels: {path, keys, lv, layer}, ask, labelling (the new-step boundary), pid}.
@@ -58,6 +60,12 @@ label found at a later step for a key an earlier step shows (a `merged` entry go
 out the same way. So the page shows what `label.py T --cache LABELS --server http://127.0.0.1:1` writes with the
 cache as it is now, every step (aigource, a random half of its cache: 323 steps differ without the layer, none with it).
 
+Diffs (diffs.py, SCHEMA.md "Diffs"): each served step also carries `fv`, its file line (diffs/steps.ndjson for a
+committed step, diffs/tail.json for a provisional one; left out when `{}`), and "live" says `diffs` (the store has
+file lines; a store written before them has none and serves no `fv`). A step is served only once its file line is
+read (live.py writes it first; one written in between two reads is read at the next poll); a provisional.json whose
+lines diffs/tail.json does not hold yet leaves the tail served before (or none) until they are read.
+
 Asks (livelabel.py): only blobs changed at new steps, steps made after labelling was first enabled on the store
 (labelling.json, see Live); the worker's thread asks the model and merges each label into LABELS (lock, read again,
 merge, rename); --no-ask: none.
@@ -67,7 +75,7 @@ import argparse, bisect, copy, glob, hashlib, http.server, json, os, signal, soc
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import label, replay, timeline
+import diffs, label, replay, timeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, 'web')
@@ -574,6 +582,7 @@ class Live:
         self.epoch, self.lines, self.tail, self.tail_v, self.gen, self.ready = int(time.time() * 1000), [], [], 0, 0, False
         self.status, self.header, self.cache_keys, self.stats, self.broken = {}, '', 0, {}, False
         self.ov, self.lv, self.ask, self.ask_v = {}, 0, None, 0
+        self.pack = diffs.Pack(self.path('diffs/bodies.ndjson'))
         self.bound = _read_json(self.path('labelling.json')) if worker is not None else None
         if self.bound is not None:
             self.bound['_since'] = ts_seconds(self.bound.get('since'))
@@ -599,18 +608,23 @@ class Live:
         self.ids, self.counts, self.sessions, self.tail_ids, self.fallback = [], {}, [], [], None
         self.tail_counts = {}
         self.rebuilds, self.prov_gen, self.wstatus = 0, None, {}
+        self.diffs = os.path.exists(self.path('diffs/steps.ndjson'))   # a store with file lines (live.py, diffs.py)
+        self.tail_fv, self.retry = [], False        # the tail's file lines; a file line not read yet: poll again
 
     # -- polling --------------------------------------------------------------------------------------------------
     def poll(self):
         """Read what changed in the store; True when what is served changed."""
         self._ask_poll()
-        stats = {n: _stat(self.path(n)) for n in ('head.json', 'steps.ndjson', 'provisional.json', 'status.json')}
+        stats = {n: _stat(self.path(n)) for n in ('head.json', 'steps.ndjson', 'provisional.json', 'status.json',
+                                                  'diffs/steps.ndjson', 'diffs/tail.json')}
         stats['labels'] = _stat(self.labels_path)
         if self.ready and stats == self.stats:
             return False
         old, self.stats = self.stats, stats
-        if not self.ready or self.broken or _read_json(self.path('head.json')) != self.head:
+        if not self.ready or self.broken or _read_json(self.path('head.json')) != self.head \
+                or (stats['diffs/steps.ndjson'] is not None) != self.diffs:
             return self._rebuild()
+        retry, self.retry = self.retry, False
         ov = self._recache() if stats['labels'] != old.get('labels') else {}
         status = _read_json(self.path('status.json')) or {} if stats['status.json'] != old.get('status.json') \
             else None
@@ -623,8 +637,8 @@ class Live:
         if prov is not None:
             check = check or self.prov_gen is not None and prov.get('gen', 0) < self.prov_gen
             self.prov_gen = prov.get('gen', 0)
-            self.prov = (prov.get('base', -1), [dumps(s) for s in prov.get('steps', ())], prov.get('gen', 0))
-        new = self._read_steps(check)
+            self.prov = self._prov(prov)
+        new = self._read_steps(check or retry)
         if new is None or not self._behind_ok():    # the steps served no longer hold
             return self._rebuild()
         if new:                                     # a tail written while they were read goes out with them
@@ -632,8 +646,9 @@ class Live:
             p2 = _read_json(self.path('provisional.json')) if pst != stats['provisional.json'] else None
             if p2 is not None and p2.get('gen', 0) >= (self.prov_gen or 0):
                 stats['provisional.json'], self.prov_gen = pst, p2.get('gen', 0)
-                self.prov = (p2.get('base', -1), [dumps(s) for s in p2.get('steps', ())], p2.get('gen', 0))
+                self.prov = self._prov(p2)
         tail = self._new_tail()
+        self._retry_later()
         ov.update(self.lab.take_overlay())
         if not new and tail is None and status is None and not ov:
             return False
@@ -806,28 +821,69 @@ class Live:
         except OSError:
             return []
         self.ino = st[0]
-        return [self._commit(l) for l in lines[max(0, len(self.raw) - start):]]
+        new = lines[max(0, len(self.raw) - start):]
+        fvs = self._fvs(len(self.raw), len(new))
+        if len(fvs) < len(new):             # (its file line is written first: read again, the whole file)
+            new, self.retry = new[:len(fvs)], True
+        return [self._commit(l, fv) for l, fv in zip(new, fvs)]
 
-    def _commit(self, raw):
+    def _fvs(self, i, n):
+        """The file lines of committed steps i..i+n-1 (diffs/steps.ndjson; fewer when it does not hold them yet),
+        [None] * n for a store without them."""
+        if not self.diffs:
+            return [None] * n
+        try:
+            with open(self.path('diffs/steps.ndjson'), 'rb') as fh:
+                return _complete_lines(fh.read())[0][i:i + n]
+        except OSError:
+            return []
+
+    def _prov(self, p):
+        """provisional.json -> (base, lines, gen, their file lines from diffs/tail.json: None when it has none for
+        them, which is then read again)."""
+        lines = [dumps(s) for s in p.get('steps', ())]
+        fv = diffs.tail_fvs(self.store, lines) if self.diffs and lines else [None] * len(lines)
+        return p.get('base', -1), lines, p.get('gen', 0), None if fv is None else [None if x is None else dumps(x)
+                                                                                     for x in fv]
+
+    def _retry_later(self):
+        """A file line not found (written in between two reads): the next poll reads the store again."""
+        if self.prov is not None and self.prov[3] is None:
+            self.retry = True
+            self.stats['provisional.json'] = None
+        if self.retry:
+            self.stats['retry'] = True
+
+    @staticmethod
+    def _with_fv(out, fv):
+        if fv is not None and fv != '{}':
+            out['fv'] = json.loads(fv)
+        return out
+
+    def _commit(self, raw, fv=None):
         st = json.loads(raw)
         self.raw.append(raw)
         if st.get('session') and st.get('author') != 'git':
             if st['session'] not in self.counts:
                 self.ids.append(st['session'])
             self.counts[st['session']] = self.counts.get(st['session'], 0) + 1
-        return dumps(self.lab.push(st, self.clock()))
+        return dumps(self._with_fv(self.lab.push(st, self.clock()), fv))
 
     def _new_tail(self):
         """(labelled tail, gen) when the tail to serve changed, else None. It is provisional.json's steps when its base
         is the committed count, or those after the committed count when the ones before are the committed ones (also
         while the file is behind what is served); else what is left of the tail served on the same terms; else none."""
         n = len(self.raw)
-        raw, gen = [], self.gen
-        for base, lines, g in ([self.prov] if self.prov else []) + [(self.tail_base, self.tail_raw, self.gen)]:
+        raw, gen, fvs = [], self.gen, []
+        for base, lines, g, fv in ([self.prov] if self.prov else []) + [(self.tail_base, self.tail_raw, self.gen,
+                                                                        self.tail_fv)]:
+            if fv is None:                  # (its file lines not read yet: the tail served before, else none)
+                continue
             if 0 <= base <= n <= base + len(lines) and lines[:n - base] == self.raw[base:n]:
-                raw, gen = lines[n - base:], g
+                raw, gen, fvs = lines[n - base:], g, fv[n - base:]
                 break
-        if raw == self.tail_raw and n == self.tail_base and gen == self.gen and not (self.tail_force and raw):
+        if raw == self.tail_raw and n == self.tail_base and gen == self.gen and fvs == self.tail_fv \
+                and not (self.tail_force and raw):
             return None
         self.tail_force = False
         lab, tail, self.tail_ids, self.tail_counts = self.lab.fork(), [], [], {}
@@ -838,12 +894,12 @@ class Live:
                     if st['session'] not in self.counts and st['session'] not in self.tail_counts:
                         self.tail_ids.append(st['session'])
                     self.tail_counts[st['session']] = self.tail_counts.get(st['session'], 0) + 1
-                tail.append(dumps(lab.push(st)))
+                tail.append(dumps(self._with_fv(lab.push(st), fvs[len(tail)])))
         except (ValueError, KeyError, TypeError, AttributeError) as e:   # not deltas on the committed steps
             print(f'liveserve: provisional steps that do not follow the committed ones, none served '
                   f'({type(e).__name__}: {e})', file=sys.stderr)
             tail, self.tail_ids, self.tail_counts = [], [], {}
-        self.tail_raw, self.tail_base = raw, n
+        self.tail_raw, self.tail_base, self.tail_fv = raw, n, fvs
         return tail, gen
 
     def _rebuild(self):
@@ -857,7 +913,7 @@ class Live:
         self.rebuilds, self.wstatus = status.get('rebuilds', 0), status
         if prov is not None:
             self.prov_gen = prov.get('gen', 0)
-            self.prov = (prov.get('base', -1), [dumps(s) for s in prov.get('steps', ())], prov.get('gen', 0))
+            self.prov = self._prov(prov)
         cache = load_cache(self.labels_path)
         head = self.head or {}
         self.lab = Labeller(head.get('root') or '.', cache, self.at, head.get('schema', timeline.SCHEMA), self.is_new)
@@ -866,6 +922,7 @@ class Live:
         lines = self._read_steps(True) or []
         self._bound_init()
         tail = self._new_tail()
+        self._retry_later()
         header = self._header()
         ov = self.lab.take_overlay()
         with self.cond:
@@ -912,9 +969,9 @@ class Live:
     def timeline_text(self):
         with self.cond:
             lines, tail, epoch, gen, header = list(self.lines), list(self.tail), self.epoch, self.gen, self.header
-            labels, lv, ask = {k: v for k, (_, v) in self.ov.items()}, self.lv, self.ask
+            labels, lv, ask, fv = {k: v for k, (_, v) in self.ov.items()}, self.lv, self.ask, self.diffs
         live = dumps({'epoch': epoch, 'steps': len(lines), 'provisional': len(tail), 'gen': gen, 'lv': lv,
-                      'labels': labels, 'ask': ask})
+                      'labels': labels, 'ask': ask, 'diffs': fv})
         return '{' + header + f',"live":{live},"steps":[' + ','.join(lines + tail) + ']}'
 
     def status_obj(self):
@@ -1028,6 +1085,11 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return self._send(dumps(self.live.status_obj()).encode('utf-8'), 'application/json')
         if u.path == '/live/events':
             return self._events(q)
+        if u.path == '/live/bodies':
+            hs = [h for v in q.get('h', ()) for h in v.split(',')]
+            if not hs or len(hs) > diffs.MAX_GET or not all(diffs.HASH.match(h) for h in hs):
+                return self.send_error(400, f'h: 1 to {diffs.MAX_GET} 10-hex hashes, comma-separated')
+            return self._send(diffs._utf8(self.live.pack.get(list(dict.fromkeys(hs)))), 'application/json')
         if u.path.startswith('/live/'):
             return self.send_error(404)
         return super().do_GET()

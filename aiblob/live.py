@@ -2,7 +2,8 @@
 
     python live.py run NAME INPUT [INPUT ...] [--root DIR] [--seed-git] [--git-reconcile] [--no-smart]
                    [--lag 60] [--idle 600] [--settle 60] [--poll 0.3] [--fresh] [--store DIR]
-    python live.py export NAME [-o FILE] [--store DIR]   committed steps + provisional tail -> a timeline.json
+    python live.py export NAME [-o FILE] [--diffs DIR] [--store DIR]   committed steps + provisional tail -> a
+                                                         timeline.json (and its diffs layout, as timeline.py --diffs)
     python live.py verify NAME [--store DIR]             a batch build of the same inputs compared with the store
     python live.py stop NAME [--store DIR]               SIGTERM to the writer (live.pid: its pid and start time)
 
@@ -21,6 +22,13 @@ this file unless --store says otherwise:
   build.
 - status.json; live.pid (`pid start-time`: a pid now used by another process is no writer; timeline.py
   --checkpoint refuses a store whose writer runs).
+- diffs/ (diffs.py, SCHEMA.md "Diffs"): bodies.ndjson, the texts the steps show by hash, append-only (it outlives
+  rebuilds and restarts; its hashes are the writer's seen set); steps.ndjson, the file line of each committed step
+  (cut back and rebuilt with steps.ndjson, and checked with it at a warm start); tail.json {"tails": [{base, h, fv}]}:
+  the provisional steps' file lines, for the last two provisional.json versions (h: diffs.tail_digest() of their
+  steps), written before provisional.json. Order: the new texts are appended to bodies.ndjson before any line that
+  names them is written, and a step's file line before the step (steps.ndjson is cut or truncated before
+  diffs/steps.ndjson), so a reader that sees a step finds its file line and every text it names.
 
 Committed vs provisional (plan decision 4b). Steps are committed by replay.Engine under the watermark
 w = now - lag: every record a transcript holds with an earlier time is assumed written by then (phase 0 measured
@@ -60,10 +68,11 @@ import argparse, collections, copy, functools, gc, glob, hashlib, json, os, pick
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import replay, timeline
+import diffs, replay, timeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CODE = ('replay.py', 'analyze.py', 'areas.py', 'timeline.py', 'live.py', 'lang_c.py', 'lang_go.py', 'lang_js.py')
+CODE = ('replay.py', 'analyze.py', 'areas.py', 'timeline.py', 'live.py', 'lang_c.py', 'lang_go.py', 'lang_js.py',
+        'diffs.py')
 VERSION = 2
 
 
@@ -280,16 +289,17 @@ class Tailer:
 
 
 class Entry:
-    """One provisional step: the replay step it came from, its line, the analyzer and compactor after it."""
-    __slots__ = ('meta', 'content', 'line', 'analyzer', 'compactor', 'session', 'author')
+    """One provisional step: the replay step it came from, its line and file line, the analyzer and compactor
+    after it."""
+    __slots__ = ('meta', 'content', 'before', 'line', 'fv', 'analyzer', 'compactor', 'session', 'author')
 
-    def __init__(self, st, line, analyzer, compactor):
-        self.meta, self.content = _meta(st), st.content
-        self.line, self.analyzer, self.compactor = line, analyzer, compactor
+    def __init__(self, st, line, fv, analyzer, compactor):
+        self.meta, self.content, self.before = _meta(st), st.content, st.before
+        self.line, self.fv, self.analyzer, self.compactor = line, fv, analyzer, compactor
         self.session, self.author = st.session, st.author
 
     def matches(self, st):
-        return self.meta == _meta(st) and self.content == st.content
+        return self.meta == _meta(st) and self.content == st.content and self.before == st.before
 
 
 def _meta(st):
@@ -312,7 +322,9 @@ class Writer:
         self.every = {'checkpoint': checkpoint_every, 'evict': evict_every, 'gc': gc_every}
         self.engine, self.stale, self.prov_every, self.clean = None, False, prov_every, False
         self.rebuilds, self.reasons, self.cold_reason = 0, [], ''
-        os.makedirs(store, exist_ok=True)
+        os.makedirs(self.path('diffs'), exist_ok=True)
+        open(self.path('diffs/steps.ndjson'), 'a').close()
+        self.sink = diffs.BodySink(self.path('diffs/bodies.ndjson'))
 
     path = lambda self, name: os.path.join(self.store, name)
 
@@ -336,13 +348,16 @@ class Writer:
                 grew = now if os.path.exists(p) and os.path.getsize(p) > i['off'] else i.get('grew')
                 if grew is not None:
                     self.tailer.sizes[p] = (i['off'], grew)
-        self.engine, self.tail, self.prov_lines, self.gen, self.n = None, [], None, 0, 0
+        self.engine, self.tail, self.prov_lines, self.gen, self.n, self.tails = None, [], None, 0, 0, []
         self.prov_version, self.prov_base = -1, -1
         self.analyzer, self.compactor = timeline.Analyzer(timings=False, smart=self.args['smart']), timeline.Compactor()
+        self.analyzer.sink = self.sink
         self.counts = {}            # session -> committed steps (git ones too), in order of first step
         self.last = {'scan': now, 'git': now, 'checkpoint': now, 'evict': now, 'gc': now}
         self.dirty = True
         with open(self.path('steps.ndjson'), 'w'):
+            pass
+        with open(self.path('diffs/steps.ndjson'), 'w'):       # (after steps.ndjson: never fewer lines than it)
             pass
         new = self.tailer.discover(now, cold=True)
         if not new:
@@ -442,9 +457,14 @@ class Writer:
         if self.engine.late:                # (before anything drained is written)
             raise Restart(f'late: {self.engine.late} records broke the watermark')
         if got:
-            with open(self.path('steps.ndjson'), 'a', encoding='utf-8') as fh:
+            with open(self.path('steps.ndjson'), 'a', encoding='utf-8') as fh, \
+                    open(self.path('diffs/steps.ndjson'), 'a', encoding='utf-8') as fd:
                 for st in got:
-                    fh.write(self._commit(st) + '\n')
+                    line, fv = self._commit(st)
+                    self.sink.flush()                   # texts, then the file line, then the step
+                    fd.write(fv + '\n')
+                    fd.flush()
+                    fh.write(line + '\n')
             self.dirty = True
         # the tail is fork().finish(): only what the engine was told since (or a commit it did not foresee) changes it
         self.stale = self.stale or self.engine.version != self.prov_version
@@ -458,13 +478,14 @@ class Writer:
     def _commit(self, st):
         if self.tail and self.tail[0].matches(st):
             e = self.tail.pop(0)                    # the tail was right: its analysis is this step's
-            self.analyzer, self.compactor, line = e.analyzer, e.compactor, e.line
+            self.analyzer, self.compactor, line, fv = e.analyzer, e.compactor, e.line, e.fv
         else:
             self.tail, self.stale = [], True
             line = dumps(self.compactor.push(self.analyzer.step(st, st.content)))
+            fv = dumps(self.analyzer.fv)
         self.n += 1
         self.counts[st.session] = self.counts.get(st.session, 0) + 1
-        return line
+        return line, fv
 
     def provisional(self, now):
         """Rewrite provisional.json from a fork of the engine run to the end; True when it changed."""
@@ -482,7 +503,7 @@ class Writer:
         a, c = a.fork(), copy.copy(c)
         for st in steps[keep:]:
             line = dumps(c.push(a.step(st, st.content)))
-            tail.append(Entry(st, line, a.fork(), copy.copy(c)))
+            tail.append(Entry(st, line, dumps(a.fv), a.fork(), copy.copy(c)))
         self.tail = tail
         return self._write_tail(now)
 
@@ -492,6 +513,10 @@ class Writer:
             return False
         self.prov_lines, self.prov_base = lines, self.n
         self.gen += 1
+        self.sink.flush()
+        self.tails = [f'{{"base":{self.n},"h":"{diffs.tail_digest(lines)}","fv":[{",".join(e.fv for e in self.tail)}]}}'] \
+            + self.tails[:1]
+        write_atomic(self.path('diffs/tail.json'), f'{{"tails":[{",".join(self.tails)}]}}')
         write_atomic(self.path('provisional.json'),
                      f'{{"gen":{self.gen},"base":{self.n},"late":{self.engine.late},"w":{dumps(self.engine.w)},'
                      f'"steps":[{",".join(lines)}]}}')
@@ -510,8 +535,10 @@ class Writer:
         if self.engine is None or not self.clean:
             return
         last = _last_line(self.path('steps.ndjson'))
+        dlast = _last_line(self.path('diffs/steps.ndjson'))
         head = {'version': VERSION, 'code': code_hash(), 'args': self.args, 'steps': self.n,
-                'last': hashlib.sha1(last.encode()).hexdigest() if last is not None else None}
+                'last': hashlib.sha1(last.encode()).hexdigest() if last is not None else None,
+                'dlast': hashlib.sha1(dlast.encode()).hexdigest() if dlast is not None else None}
         state = {'engine': self.engine, 'analyzer': self.analyzer, 'compactor': self.compactor,
                  'files': {p: dict(i, hash=self.tailer.tail_hash(p)) for p, i in self.tailer.files.items()},
                  'root': self.root, 'many': self.many, 'counts': self.counts, 'rebuilds': self.rebuilds}
@@ -533,6 +560,7 @@ class Writer:
         self.tailer, self.engine, self.analyzer, self.compactor = tailer, st['engine'], st['analyzer'], st['compactor']
         self.root, self.many, self.counts, self.rebuilds = st['root'], st['many'], st['counts'], st['rebuilds']
         self.n, self.tail, self.prov_lines, self.gen, self.dirty = st['steps'], [], None, 0, False
+        self.analyzer.sink, self.tails = self.sink, []
         self.prov_version, self.prov_base = -1, -1
         self.last = {'scan': now - self.scan, 'git': now, 'checkpoint': now, 'evict': now, 'gc': now}
         self.analyzer.warm(self.analyzer.prev_files)
@@ -561,6 +589,8 @@ class Writer:
                 return f'the checkpoint does not load ({e.__class__.__name__})'
         if _count_lines(self.path('steps.ndjson'), st['steps'], st['last']) is None:
             return 'steps.ndjson does not match'
+        if _count_lines(self.path('diffs/steps.ndjson'), st['steps'], head.get('dlast')) is None:
+            return 'diffs/steps.ndjson does not match'
         tailer = Tailer(self.args['inputs'], self.settle)
         for p, info in st['files'].items():
             try:
@@ -684,6 +714,7 @@ def main(argv=None):
         p.add_argument('name')
         if name == 'export':
             p.add_argument('-o', '--out')
+            p.add_argument('--diffs', metavar='DIR', help='also write the diffs layout (timeline.py --diffs) to DIR')
     for p in sub.choices.values():
         p.add_argument('--store', help='store directory (default: live/NAME next to live.py)')
     a = ap.parse_args(argv)
@@ -693,6 +724,8 @@ def main(argv=None):
         out = a.out or os.path.join(store, 'timeline.json')
         write_atomic(out, text)
         print(out)
+        if a.diffs:
+            print(diffs.export_store(store, a.diffs))
         return 0
     if a.cmd == 'verify':
         return verify(store)

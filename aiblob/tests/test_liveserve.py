@@ -1219,3 +1219,101 @@ def test_a_tail_written_while_the_steps_are_read_goes_out_with_them(flask, cache
     assert len(live.lines) == 8 and len(live.tail) == 2 and live.tail_v == v + 1
     want, _ = label_py(tmp_path, head, lines[:10], cache)
     assert same([json.loads(x) for x in live.lines + live.tail], want)
+
+
+# -- diffs (diffs.py): `fv` on the served steps, /live/bodies -------------------------------------------------------------
+def _diffs_store(tmp_path):
+    """A live.py store with texts: three steps committed, two provisional."""
+    import live
+    from test_live import sec
+    from test_replay import ROOT, SID, msg, result, tool, ts, write_lines
+    proj, store = tmp_path / 'proj', str(tmp_path / 'store')
+    texts = [('a.md', '# a\n'), ('m.py', 'def f():\n    return 1\n'), ('a.md', '# a\nmore\n'),
+             ('m.py', 'def f():\n    return 2\n\n\ndef g():\n    return f()\n'), ('b.md', '# b\n')]
+    recs = [msg('user', 'go', ts=ts(0))]
+    for k, (path, text) in enumerate(texts):
+        recs += [msg('assistant', [tool(f'w{k}', 'Write', file_path=f'{ROOT}/{path}', content=text)], ts=ts(k + 1)),
+                 dict(result(f'w{k}'), timestamp=ts(k + 1, 1))]
+    write_lines(proj / f'{SID}.jsonl', recs)
+    w = live.Writer(store, [str(proj)], ROOT, lag=150, scan=0, alive=lambda: set(), prov_every=0)
+    w.start(sec(ts(6)))
+    return w, store, lambda: w.tick(sec(ts(20)))
+
+
+def _served_fvs(tl):
+    return [s.get('fv', {}) for s in tl['steps']]
+
+
+def _store_fvs(store):
+    import diffs, live
+    _, lines, prov = live.read_store(store)
+    return diffs.store_fvs(store, lines, prov)
+
+
+def _bodies(s, hs):
+    r, body = s.get('/live/bodies?h=' + ','.join(hs))
+    assert r.status == 200 and r.getheader('Content-Type').startswith('application/json')
+    return json.loads(body)
+
+
+def test_served_steps_carry_their_file_lines_and_every_hash_is_served(cache, tmp_path, served):
+    import diffs
+    w, store, finish = _diffs_store(tmp_path)
+    s = served(store, cache)
+    for step in range(2):
+        tl = s.timeline()
+        assert tl['live']['diffs'] is True and (tl['live']['steps'], tl['live']['provisional']) == ((3, 2), (5, 0))[step]
+        assert _served_fvs(tl) == _store_fvs(store) and 'fv' in tl['steps'][4]       # (step 4: b.md)
+        hs = sorted({h for st, fv in zip(tl['steps'], _served_fvs(tl)) for h in diffs.step_hashes(st, fv)})
+        got = _bodies(s, hs)
+        assert len(hs) >= 6 and all(got[h] is not None and diffs.h10(got[h]) == h for h in hs)
+        finish()
+        s.settle(store)
+        s.wait(lambda lv: len(lv.lines) == 5)
+
+
+def test_bodies_unknown_bad_and_capped(cache, tmp_path, served):
+    import diffs
+    w, store, _ = _diffs_store(tmp_path)
+    s = served(store, cache)
+    h = diffs.h10('# a\n')
+    assert _bodies(s, [h, '0123456789', h]) == {h: '# a\n', '0123456789': None}
+    assert _bodies(s, [f'{i:010x}' for i in range(256)]) == {f'{i:010x}': None for i in range(256)}
+    for q in ('', '?h=', '?h=xyz', '?h=ABCDEF0123', f'?h={h}0', f'?h={h},', f'?h={h},,{h}', '?h=' + ','.join(
+            f'{i:010x}' for i in range(257)), '?x=' + h):
+        assert s.get('/live/bodies' + q)[0].status == 400, q
+    assert s.get(f'/live/bodies?h={h}', {'Host': 'evil.example'})[0].status == 403
+    empty = str(tmp_path / 'none')                   # a store without texts: all unknown
+    os.makedirs(empty)
+    assert _bodies(served(empty, cache), [h]) == {h: None}
+
+
+def test_a_step_waits_for_its_file_line(cache, tmp_path, served):
+    """A committed step whose file line is not in diffs/steps.ndjson yet is not served; it is, with it, once the
+    line is there (live.py writes it first: this is a server that reads in between)."""
+    w, store, _ = _diffs_store(tmp_path)
+    p = os.path.join(store, 'diffs', 'steps.ndjson')
+    lines = open(p).readlines()
+    open(p, 'w').write(''.join(lines[:2]))
+    s = served(store, cache)
+    s.settle(store)
+    assert len(s.live.lines) == 2
+    open(p, 'w').write(''.join(lines))
+    s.wait(lambda lv: len(lv.lines) == 3)
+    assert _served_fvs(s.timeline()) == _store_fvs(store)
+
+
+def test_a_tail_waits_for_its_file_lines(cache, tmp_path, served):
+    """A provisional.json whose lines diffs/tail.json does not hold yet is not served (no tail before it: none); it
+    is, with them, once they are read."""
+    w, store, _ = _diffs_store(tmp_path)
+    p = os.path.join(store, 'diffs', 'tail.json')
+    good = open(p).read()
+    open(p, 'w').write('{"tails":[]}')
+    s = served(store, cache)
+    s.settle(store)
+    tl = s.timeline()
+    assert (tl['live']['steps'], tl['live']['provisional']) == (3, 0) and s.live.retry
+    open(p, 'w').write(good)
+    s.wait(lambda lv: len(lv.tail) == 2 and '"fv"' in lv.tail[1])
+    assert _served_fvs(s.timeline()) == _store_fvs(store)
