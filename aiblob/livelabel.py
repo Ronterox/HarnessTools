@@ -30,11 +30,10 @@ thread that started it (this worker's) ends, so it never outlives this process (
 parent that died before it was set). PR_SET_PDEATHSIG covers that process only: the default command runs llama-server
 in it (the runtime's private glibc loader maps the program into its own process, no fork); a --llm-cmd that forks
 (a shell wrapper) leaves its children to the stop below. It is stopped (SIGTERM to its whole process group, SIGKILL
-to what is left of the group after 10 s, or 3 s once the child itself is gone) IDLE_STOP s after it was last asked (or
+to what is left of the group after 10 s, or 3 s once the child itself is gone) IDLE_STOP s after its last answer (or
 started), whether or not asks wait meanwhile (a thermal pause, a backoff), when it exits on its own (what is left of
 its group), and when the server stops. IDLE_STOP = 10 min: a sleeping child costs ~100 MiB of VRAM and its RAM, and
-wakes in ~3 s where a new one loads the model again (estimated ~10 s and a page-cache read of 2.5 GB, not measured
-yet); the gaps between an agent's turns are mostly under 10 min, so a session at work keeps the cheap wake, one left
+wakes in ~3 s where a new one loads the model again (measured 6.0 s on the 2026-11-09 RTX 2060 smoke, a page-cache read of 2.5 GB); the gaps between an agent's turns are mostly under 10 min, so a session at work keeps the cheap wake, one left
 alone gives everything back.
 
 Every ask and every change of state is a JSON line in the run log (demo/label-runs/<name>.live.jsonl)."""

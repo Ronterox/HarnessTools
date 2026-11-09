@@ -199,8 +199,8 @@ page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `are
   it applies (`areas.caption_table()`), so they follow the labels for free.
 - Labels (`label.py`): a blob's cache key leaves out functions folded in from a small blob, and a cut parent's
   key also covers its pieces' own functions, so both keep the key (and label) of the blob the analyzer drew; a
-  piece has a key of its own and shows its root function's name and its parent's emoji until a live labelling
-  run labels it. On the aigource map every key the v4 labels cached still matches (1,130 distinct cache hits, 0
+  piece has a key of its own and shows its root function's name and its parent's emoji until a manual
+  `label.py --per-step` run labels it (live labelling asks only steps made after its boundary). On the aigource map every key the v4 labels cached still matches (1,130 distinct cache hits, 0
   calls); the only uncached keys are the 192 versions of the 15 pieces.
 - Label reuse (`label.py --relabel-at X`, default 0.2, 2026-11-08): per blob identity, a label is kept until the
   lines changed since it was made reach X of the identity's lines at that label; then the model is asked again.

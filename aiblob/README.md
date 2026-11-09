@@ -35,6 +35,26 @@ the default; an added or removed function counts whole): the new version gets a 
 (a `--retry-failed` run can end with a label or so more than a clean run); in the whole-timeline mode, versions
 that would keep a label whose ask failed stay unlabelled until a later run labels it.
 
+Live mode with labelling, quick start (run from aiblob/; aigource, `P` as above). PROJECT is the Claude Code transcript
+dir(s), ROOT the checked-out repo, relative to aiblob/. A llama-server on :8080 is used if one runs; otherwise one starts
+on demand, which needs an NVIDIA GPU, the b11960 runtime and cuda12-libs under ~/.cache/remcli-runtimes and
+~/.cache/models/Qwen3.5-4B-Q4_K_M.gguf (without a GPU or the model the chip shows "down", without the runtime the ⚠
+error chip; on a machine without a GPU use `LIVE_SERVE_ARGS=--no-ask`). The page waits for its first step until the cold build commits.
+
+```
+make live NAME=aigource PROJECT="$P $P-aigource" ROOT=../aigource LIVE_ARGS="--seed-git --git-reconcile" &
+make live-serve NAME=aigource LABELS=demo/labels.aigource.json &    # LIVE_PORT=8791 is the default, LIVE_SERVE_ARGS=--no-ask: cache only
+# open http://127.0.0.1:8791/ ; log: demo/label-runs/aigource.live.jsonl
+make live-serve-stop NAME=aigource    # stops the server (and the model it started)
+make live-stop NAME=aigource          # stops the writer; exits 1 if none is running
+make live-verify NAME=aigource        # a batch rebuild compared with the store (slow on big projects)
+make live-export NAME=aigource        # writes live/aigource/timeline.json
+```
+
+Labels are asked only for steps made after labelling was first switched on for this NAME. That moment is kept in
+live/NAME/labelling.json, so it survives restarts; a `--no-ask` serve does not set it. Older history shows cached labels
+or structural names.
+
 Live map (live.py): it follows the transcripts as they are written and keeps a store in
 live/NAME/: committed steps (steps.ndjson, exactly as a batch build writes them, never changed) and a provisional tail
 (provisional.json: what a batch build would add if the transcripts ended now), with a checkpoint for warm restarts:
@@ -46,6 +66,11 @@ live/NAME/: committed steps (steps.ndjson, exactly as a batch build writes them,
 .venv/bin/python live.py stop aigource                    # SIGTERM by the pid in live/aigource/live.pid
 .venv/bin/python timeline.py ... --no-timings --checkpoint live/aigource   # a batch build live then continues
 ```
+
+live.py run also takes `--lag 60` (s a record may be written after its time), `--idle 600` (how long a quiet transcript of a stopped session may stay before its open calls are closed), `--settle 60`, `--poll 0.3`,
+`--fresh` (ignore the checkpoint), `--no-smart`; `make live` passes them through `LIVE_ARGS`. Other files in live/NAME/:
+head.json, status.json, checkpoint.pkl, rest.json (with `--seed-git`), live.pid, serve.pid, timeline.json (export), labelling.json,
+llama-server.log. The labels cache is locked through demo/labels*.json.lock next to it.
 
 Live server (liveserve.py). With a writer running (`make live NAME=…`), `make live-serve NAME=… [LABELS=…]` serves the
 store at http://127.0.0.1:8791/ (`LIVE_PORT=`), which opens the page in live mode (`?live=1`; `?live=0` is the static
@@ -79,7 +104,7 @@ used as it is and never started or stopped. Otherwise the server starts its own 
 nvidia-smi shows 3,300 MiB of VRAM free (and 2 GiB of RAM available), on a free port, as its child (its own process
 group, killed with the server even on SIGKILL), with `-c 4096 -np 1 --cache-ram 0 --sleep-idle-seconds 60` (asleep
 after 60 s idle: ~100 MiB of VRAM, woken by the next ask in ~3 s, if the VRAM is free then), and stops it 10 min
-after it was last asked (`--idle-stop`), also while asks wait on a hot GPU; its whole process group goes with it. `--no-ask` serves cache hits and kept labels only. Options: liveserve.py's docstring.
+after it last answered (`--idle-stop`), also while asks wait on a hot GPU; its whole process group goes with it. `--no-ask` serves cache hits and kept labels only. Options: liveserve.py's docstring.
 API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,

@@ -247,7 +247,8 @@ Ported the approved zoom draft into the real pipeline (areas.py, timeline.py, la
 - On TechnicalAnalysis the areas pass costs ~48 ms per step (p50 276 vs 228 ms): reshape, recount and the areas'
   call-site table walk every function each step; reuse them across steps when blob membership and calls did not
   change.
-- Pieces stay unlabelled until a live labelling run reaches them (root function name + parent's emoji meanwhile);
+- Pieces stay unlabelled until a manual `label.py --per-step` run reaches them (live labelling asks only steps made
+  after `since`; root function name + parent's emoji meanwhile);
   with `--relabel-at` the 15 pieces need 65 label requests over the aigource history instead of 194.
 - The cost is ~10 ms per step on aigource; reshape could reuse the previous step's units when no blob changed
   membership or calls (most steps), if that matters.
@@ -383,3 +384,71 @@ Design in live.py's docstring (store, committed vs provisional, liveness, number
   growing; idle time counts from when the writer found a file; subagent tags are reread by content. Tests: the
   review's touch / untimed / skew / cp / cp -p cases, cold, following and following with `many` on; Feed can write
   random mtimes (resume scenarios at every cold-start point run with both); livefuzz uses random mtimes.
+
+## Live mode, phase 3 outcome (2026-11-09): liveserve.py and the page in live mode
+Design in liveserve.py's docstring. In short:
+- Server (127.0.0.1:8791, `make live-serve`): /live/timeline.json (the store as `live.py export` writes it, labelled),
+  /live/events (SSE: "steps" with id = the committed count, so Last-Event-ID beats `from=` on a reconnect; "tail";
+  "rebuild" with the epoch; "labels"; "ask", the state of the labelling chip), /live/status, POST /live/focus. Host check (DNS rebinding), 60 s socket
+  timeout, `epoch` / `from` validated (400), no traversal. It only reads the store and runs with or without a writer.
+- Served committed steps never contradict the store: `_behind_ok` rebuilds (epoch + 1, the page reloads at the same
+  step) when the steps served no longer match what the store says comes next; a store that is a prefix of the steps
+  served (a writer cutting back to its checkpoint, or mid-rebuild) is waited on.
+- Labels are applied server-side with label.py's own code (step_keys, Keeper, apply_labels, plus Expander / Compactor
+  to keep the page's format): cache hits and the 20% keep rule, never a model call.
+- Page, `?live=1` (`/` redirects there; `?live=0` is the static page): incremental expansion, provisional steps faded
+  until they commit, LIVE badge, follow on the last step at 4x and a jump when more than 20 behind, a "+N new" pill
+  elsewhere, blob positions kept (new blobs placed beside the others) plus a Re-layout button. Static mode is
+  pixel-identical to before.
+- Numbers: page heap ~79 MB at 1,270 steps on aigource.
+- Tests: tests/test_liveserve.py (protocol, resume, rebuilds, host check, timeouts), test_live_e2e.py (writer + server +
+  simulated transcripts), test_live_page.py (browser driven by tests/cdp_driver.js).
+- Open: see the residual risks below (stalled resume, writer dying mid-rebuild).
+
+## Live mode, phase 4 outcome (2026-11-09): livelabel.py, labelling of new steps
+Design in livelabel.py's docstring. A worker thread inside liveserve asks the local model for the blobs of NEW steps
+only; history is never asked: a restart or rebuild never asks steps older than `since`; steps made while the server was down are asked.
+- Coalescing: per blob, its newest version, asked once quiet 20 s, or its turn ended, or 120 s since first wanted;
+  both clocks restart after an answer. The 20% rule applies as in label.py. Order: the step the page shows (POST
+  /live/focus) first, then the newest.
+- Thermal: pause at >= 85 C (nvidia-smi, read at most every 5 s), resume below 80 C.
+- Failures: a failed ask is retried after 2 s and 4 s; after 3 attempts the blob backs off 60, 120, 300, 600 s. A
+  llama-server that does not answer is probed on /health after 15, 30, then every 60 s, nothing asked meanwhile. An
+  error in one step of the worker shows on the chip ('error') and the next step goes on; a dead worker thread is
+  restarted by the server up to 3 times (then 'error' stays: the warning chip on the page).
+- Log: demo/label-runs/<name>.live.jsonl, one JSON line per ask and per change of state.
+- llama-server: one answering at `--llm-url` is used, never started or stopped. Otherwise a child starts on demand,
+  only with fresh nvidia-smi VRAM >= 3,300 MiB, RAM >= 2 GiB available and the worker not paused for heat, with
+  `-c 4096 -np 1 --cache-ram 0 --sleep-idle-seconds 60`. Own process group plus PR_SET_PDEATHSIG (SIGKILL when the
+  starting thread ends); stop = SIGTERM to the group, SIGKILL after 10 s; stopped 10 min after the last answer (or start). Before
+  an ask to a sleeping child (/props `is_sleeping`, checked without waking it) free VRAM is read again and the ask
+  waits while it is short.
+- Boundary: live/NAME/labelling.json {since, steps}, written once. A step is new iff its ts >= since.
+  since = max(wall clock at enable, store and transcript mtimes, newest step ts + 1 ms). A transcript mtime more
+  than 60 s ahead of max(clock, the store's own files' mtimes) is ignored and logged (`mtime-ahead` in the run log).
+- Labels layer: label keys go out as 16-hex kids (`lk` / `mk` per step); SSE "labels" {kid: label or null} changes
+  reach every step showing that key without a reload, and the page recaptions areas with a JS port of
+  areas.caption_table. Settled labels equal `label.py <export> --cache C --server http://127.0.0.1:1`: on aigource
+  with a random half of its cache, 323 steps differ without the layer, 0 with it. label.save_cache now does flock,
+  re-read, merge of only the keys this process changed, atomic rename (a concurrent label.py run loses nothing).
+- Verification: 432 tests pass; 78 of 78 mutants killed; tests use a fake llama-server (tests/fakellama.py) and a
+  fake nvidia-smi (tests/fakesmi.py), so no GPU is needed.
+- Real-GPU smoke (2026-11-09, RTX 2060, Qwen3.5-4B Q4 via the b11960 runtime, child started by liveserve): child ready
+  6.0 s after start; 4 asks of 1.13-1.34 s each at 70 C gave real titles ("View shared note", "Error page display",
+  "API token display", "Login page"). VRAM: 2,972 MiB used by the child (its own per-process use, nvidia-smi compute-apps; phase 0's 3,098 MiB is the total-used delta), 102 MiB after the 60 s sleep. SIGTERM to
+  liveserve: child gone and VRAM fully back. SIGKILL to liveserve: child gone within 2 s. Steps with old timestamps
+  are (correctly) never asked, so a smoke test must stamp its new steps with the current time.
+- Residual risks:
+  - a stalled resume (more than --settle between copied records) costs repeated rebuilds;
+  - a writer dying in the middle of a rebuild leaves the server serving the old steps until the writer restarts;
+  - a label key first seen at step 0 costs ~2.3 s of poll-thread work;
+  - a theoretical reorder of timeless steps (a step without ts takes the time of the step before it);
+  - an Edit waiting on a permission prompt holds every later commit (the provisional tail still shows them);
+  - before the writer has written head.json (during the `--seed-git` scan) the server computes `since` from the wall
+    clock and the store's mtimes only; this matters only with a clock that runs behind, and no test covers it.
+
+## Backlog, live
+- Label the 15 cut pieces (192 versions on aigource) by hand with `label.py --per-step`, only when asked: history is
+  never relabelled automatically.
+- Per-step cost reuse (a cache change replays the labeller's plan from the last 32-step snapshot before the first
+  step showing a changed key, and relabels the steps that show it).
