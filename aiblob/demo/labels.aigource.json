@@ -7324,5 +7324,1285 @@
   "title": "Comment test data",
   "summary": "Test input for comment generation",
   "risk": "low: display only"
+ },
+ "0cb625329b,2fe7b49c7f,54f66daba7,5d0c989871,71efd8be35,775ebfad6e,7f42b9ca44,83ac5189f6,b2fabdfdd4,c0bc6da7a2,d15bbdb78e": {
+  "emoji": "🎨",
+  "title": "Model state updates",
+  "summary": "Applies changes to the visual model structure",
+  "risk": "high: Incorrect model state can corrupt the entire application"
+ },
+ "0c09a2409e,4ebfeabded,bb8a24fd77,fd78f8950b": {
+  "emoji": "🔄",
+  "title": "Node layout engine",
+  "summary": "Calculates positions and spacing for model nodes.",
+  "risk": "high: Incorrect layout can break the visualization."
+ },
+ "58ea50d92b,5dc4cf4281,6cc43eaf10,7a2762e4cb,7f42b9ca44,9bb486fa25,b15a1fb286,b2fabdfdd4,c91dc990c7,e42436696a,f584b80e25": {
+  "emoji": "🎨",
+  "title": "Model state updates",
+  "summary": "Applies changes to the visual model structure",
+  "risk": "high: Incorrect model state can corrupt the entire application",
+  "reused_from": "0cb625329b,2fe7b49c7f,54f66daba7,5d0c989871,71efd8be35,775ebfad6e,7f42b9ca44,83ac5189f6,b2fabdfdd4,c0bc6da7a2,d15bbdb78e"
+ },
+ "0c09a2409e,3f5756055b,818c00f90d,fd78f8950b": {
+  "emoji": "🔄",
+  "title": "Node layout engine",
+  "summary": "Calculates positions and spacing for model nodes.",
+  "risk": "high: Incorrect layout can break the visualization.",
+  "reused_from": "0c09a2409e,4ebfeabded,bb8a24fd77,fd78f8950b"
+ },
+ "58ea50d92b,5dc4cf4281,6cc43eaf10,7a2762e4cb,7f42b9ca44,9bb486fa25,b15a1fb286,b2fabdfdd4,c9196803f4,c91dc990c7,e42436696a": {
+  "emoji": "🎨",
+  "title": "Model state updates",
+  "summary": "Applies changes to the visual model structure",
+  "risk": "high: Incorrect model state can corrupt the entire application",
+  "reused_from": "0cb625329b,2fe7b49c7f,54f66daba7,5d0c989871,71efd8be35,775ebfad6e,7f42b9ca44,83ac5189f6,b2fabdfdd4,c0bc6da7a2,d15bbdb78e"
+ },
+ "2314e2bd83,c42522facf": {
+  "emoji": "👁️",
+  "title": "HUD display",
+  "summary": "Shows counts of added and deleted items.",
+  "risk": "low: only visual text output"
+ },
+ "58ea50d92b,5dc4cf4281,6cc43eaf10,7a2762e4cb,7f42b9ca44,9bb486fa25,b15a1fb286,b5669df5e7,c9196803f4,c91dc990c7,e42436696a": {
+  "emoji": "🎨",
+  "title": "Model state updates",
+  "summary": "Applies changes to the visual model structure",
+  "risk": "high: Incorrect model state can corrupt the entire application",
+  "reused_from": "0cb625329b,2fe7b49c7f,54f66daba7,5d0c989871,71efd8be35,775ebfad6e,7f42b9ca44,83ac5189f6,b2fabdfdd4,c0bc6da7a2,d15bbdb78e"
+ },
+ "0308eb7f5a,0c09a2409e,12a1ec365d,fd78f8950b": {
+  "emoji": "🔄",
+  "title": "Node layout engine",
+  "summary": "Calculates positions and spacing for model nodes.",
+  "risk": "high: Incorrect layout can break the visualization.",
+  "reused_from": "0c09a2409e,4ebfeabded,bb8a24fd77,fd78f8950b"
+ },
+ "5dc4cf4281,6cc43eaf10,7a2762e4cb,7f42b9ca44,9bb486fa25,a8aecfdd1a,b5669df5e7,bf49dff620,c9196803f4,c91dc990c7,d22be40765": {
+  "emoji": "🎨",
+  "title": "Model state updater",
+  "summary": "Applies changes to the model graph structure",
+  "risk": "high: Incorrect model state can corrupt data"
+ },
+ "2314e2bd83,d9c91df70f": {
+  "emoji": "👁️",
+  "title": "HUD display",
+  "summary": "Shows counts of added and deleted items.",
+  "risk": "low: only visual text output",
+  "reused_from": "2314e2bd83,c42522facf"
+ },
+ "34329f34eb,5dc4cf4281,6cc43eaf10,7a2762e4cb,7f42b9ca44,8222bdbcc3,8409bd8f1f,a8aecfdd1a,b5669df5e7,bf49dff620,c91dc990c7": {
+  "emoji": "🎯",
+  "title": "model_apply",
+  "summary": "Applies changes to the model's internal state.",
+  "risk": "high: Incorrect state can corrupt the entire application"
+ },
+ "2cd50104fa,34724a0936,6a525ee0cd,6ef2ead2cb,7c06761d91,91a36fd4dc,9cb833906a,aa8b19bf85,ac72962330,c80e18493e,d9f944b7b0,f6c61e7859": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution"
+ },
+ "0938c90aaa,14009bff04,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3": {
+  "emoji": "👁️",
+  "title": "Transcript detail view",
+  "summary": "Displays full message content and metadata",
+  "risk": "low: display only"
+ },
+ "0cf64bd3aa,2cd50104fa,34724a0936,46e8e565da,4910c629b4,6ef2ead2cb,7c06761d91,91a36fd4dc,c80e18493e,d9f944b7b0,e99f2339a3,f6c61e7859": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution",
+  "reused_from": "2cd50104fa,34724a0936,6a525ee0cd,6ef2ead2cb,7c06761d91,91a36fd4dc,9cb833906a,aa8b19bf85,ac72962330,c80e18493e,d9f944b7b0,f6c61e7859"
+ },
+ "14009bff04,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3": {
+  "emoji": "👁️",
+  "title": "Transcript detail view",
+  "summary": "Displays full message content and metadata",
+  "risk": "low: display only",
+  "reused_from": "0938c90aaa,14009bff04,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3"
+ },
+ "2cd50104fa,34724a0936,46e8e565da,4910c629b4,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,d9f944b7b0,e99f2339a3,f6c61e7859": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution",
+  "reused_from": "2cd50104fa,34724a0936,6a525ee0cd,6ef2ead2cb,7c06761d91,91a36fd4dc,9cb833906a,aa8b19bf85,ac72962330,c80e18493e,d9f944b7b0,f6c61e7859"
+ },
+ "1ff2e4a18e,3768ce49ad,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3": {
+  "emoji": "👁️",
+  "title": "Transcript detail view",
+  "summary": "Displays full message content and metadata",
+  "risk": "low: display only",
+  "reused_from": "0938c90aaa,14009bff04,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3"
+ },
+ "2cd50104fa,34724a0936,4619332367,5c6eca4784,5fc786365b,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,b3e9e02a37,c80e18493e,d9f944b7b0,f6c61e7859,fbb885f506": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution"
+ },
+ "1e47802534,2cd50104fa,34724a0936,4619332367,5c6eca4784,6ef2ead2cb,7c06761d91,91a36fd4dc,93a362ca7e,93d5306d7e,b3e9e02a37,c80e18493e,d9f944b7b0,f6c61e7859,fbb885f506": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution",
+  "reused_from": "2cd50104fa,34724a0936,4619332367,5c6eca4784,5fc786365b,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,b3e9e02a37,c80e18493e,d9f944b7b0,f6c61e7859,fbb885f506"
+ },
+ "0d52515d1b,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3": {
+  "emoji": "👁️",
+  "title": "Transcript detail view",
+  "summary": "Displays full message content and metadata",
+  "risk": "low: display only",
+  "reused_from": "0938c90aaa,14009bff04,1ff2e4a18e,3b86522620,54371cd7c9,70d37a1e2e,b4eed93ae1,c46f542793,d506c8d4dc,db1ba76222,db712924a3"
+ },
+ "1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,c8d2de7047,cb7c067bec,d9f944b7b0,f6c61e7859,f99a0b4a31,fbb885f506": {
+  "emoji": "📝",
+  "title": "Transcript feed stream",
+  "summary": "Generates real-time transcript events from edits",
+  "risk": "high: data integrity and event ordering"
+ },
+ "08485823cf,0dae2b4a6c,1e47802534,296d2deaa9,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📝",
+  "title": "Transcript feed stream",
+  "summary": "Generates real-time transcript events from edits",
+  "risk": "high: data integrity and event ordering",
+  "reused_from": "1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,c8d2de7047,cb7c067bec,d9f944b7b0,f6c61e7859,f99a0b4a31,fbb885f506"
+ },
+ "08485823cf,0dae2b4a6c,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,ae1262d573,c80e18493e,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📝",
+  "title": "Transcript feed stream",
+  "summary": "Generates real-time transcript events from edits",
+  "risk": "high: data integrity and event ordering",
+  "reused_from": "1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,c8d2de7047,cb7c067bec,d9f944b7b0,f6c61e7859,f99a0b4a31,fbb885f506"
+ },
+ "964183f14a,b7a45c6af5,c8468a8ccf,df4d370028": {
+  "emoji": "📝",
+  "title": "Word style filter",
+  "summary": "Checks text against good/bad word lists",
+  "risk": "low: cosmetic text changes"
+ },
+ "46114bccdc,cf1ef63072": {
+  "emoji": "📝",
+  "title": "Note panel rendering",
+  "summary": "Draws the note panel with background and rounded corners.",
+  "risk": "low: Only affects visual display"
+ },
+ "2fcddd8b1d,68ac59d8ae,838ac0beed,ed93b54e2b": {
+  "emoji": "📝",
+  "title": "Note panel height",
+  "summary": "Calculates height for note display area",
+  "risk": "low: affects only visual layout"
+ },
+ "08485823cf,0dae2b4a6c,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31": {
+  "emoji": "📝",
+  "title": "Transcript feed stream",
+  "summary": "Generates real-time transcript events from edits",
+  "risk": "high: data integrity and event ordering",
+  "reused_from": "1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,c8d2de7047,cb7c067bec,d9f944b7b0,f6c61e7859,f99a0b4a31,fbb885f506"
+ },
+ "08485823cf,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,b1776777b4,b751e63ad4,bafbfadcde,c80e18493e,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31": {
+  "emoji": "📝",
+  "title": "Transcript feed stream",
+  "summary": "Generates real-time transcript events from edits",
+  "risk": "high: data integrity and event ordering",
+  "reused_from": "1e47802534,2cd50104fa,34724a0936,4604f7bd7d,4619332367,6ef2ead2cb,7c06761d91,91a36fd4dc,93d5306d7e,c80e18493e,c8d2de7047,cb7c067bec,d9f944b7b0,f6c61e7859,f99a0b4a31,fbb885f506"
+ },
+ "08485823cf,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,53740811cb,70206331d1,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,b751e63ad4,bafbfadcde,c77465d3c9,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution"
+ },
+ "0d52515d1b,3b86522620,54371cd7c9,70d37a1e2e,c46f542793,c991464727,db1ba76222,db712924a3": {
+  "emoji": "📜",
+  "title": "Transcript detail formatter",
+  "summary": "Parses and formats transcript details.",
+  "risk": "low: formatting only"
+ },
+ "08485823cf,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,53740811cb,675627b25f,6f51584fd2,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,b751e63ad4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,e7a6de2ff2,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution",
+  "reused_from": "08485823cf,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,53740811cb,70206331d1,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,b751e63ad4,bafbfadcde,c77465d3c9,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "08485823cf,09b7ec4485,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,53740811cb,675627b25f,6f51584fd2,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,e7a6de2ff2,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool interactions",
+  "risk": "high: data integrity and tool execution",
+  "reused_from": "08485823cf,1e47802534,2cd50104fa,34724a0936,4604f7bd7d,53740811cb,70206331d1,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,b751e63ad4,bafbfadcde,c77465d3c9,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "0d52515d1b,3b86522620,54371cd7c9,70d37a1e2e,c46f542793,c991464727,d506c8d4dc,db1ba76222,db712924a3": {
+  "emoji": "📜",
+  "title": "Transcript detail formatter",
+  "summary": "Parses and formats transcript details.",
+  "risk": "low: formatting only",
+  "reused_from": "0d52515d1b,3b86522620,54371cd7c9,70d37a1e2e,c46f542793,c991464727,db1ba76222,db712924a3"
+ },
+ "023491b9c1,0a1ec96d2e,10beb3e557,1649d54104,174e686fca,3fd51d6df6,4b63da92ef,4c3fe53bbb,79bd66e141,86a6b2a6a8,9ef8a36788,ac60ab74ab,c9da0f5ae1,cdb609791c,dd22e60a79,f406028619,f5de3a96c0": {
+  "emoji": "🔄",
+  "title": "Change replay engine",
+  "summary": "Replays edits to show their effects",
+  "risk": "medium: incorrect edits break history"
+ },
+ "023491b9c1,0a1ec96d2e,174e686fca,4fbe5ada7e,79bd66e141,86a6b2a6a8,9ef8a36788,dd22e60a79,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🔄",
+  "title": "Edit replay engine",
+  "summary": "Replays edits by applying text changes to history.",
+  "risk": "high: incorrect edits corrupt data"
+ },
+ "023491b9c1,0a1ec96d2e,174e686fca,79bd66e141,86a6b2a6a8,9ef8a36788,cd38b61038,d310d6e2b6,dd22e60a79,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🔄",
+  "title": "Edit replay engine",
+  "summary": "Replays edits by applying text changes to history.",
+  "risk": "high: incorrect edits corrupt data",
+  "reused_from": "023491b9c1,0a1ec96d2e,174e686fca,4fbe5ada7e,79bd66e141,86a6b2a6a8,9ef8a36788,dd22e60a79,f406028619,f5de3a96c0,fad9777590"
+ },
+ "023491b9c1,0a1ec96d2e,0b780bbd8d,174e686fca,79bd66e141,86a6b2a6a8,9ef8a36788,cd38b61038,dd22e60a79,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🔄",
+  "title": "Edit replay engine",
+  "summary": "Replays edits by applying text changes to history.",
+  "risk": "high: incorrect edits corrupt data",
+  "reused_from": "023491b9c1,0a1ec96d2e,174e686fca,4fbe5ada7e,79bd66e141,86a6b2a6a8,9ef8a36788,dd22e60a79,f406028619,f5de3a96c0,fad9777590"
+ },
+ "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity"
+ },
+ "023491b9c1,0a1ec96d2e,4aa9ea8902,797d8e8b6a,79bd66e141,86a6b2a6a8,9ef8a36788,cd38b61038,dd22e60a79,e04a6f53a3,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🔄",
+  "title": "Change replay engine",
+  "summary": "Replays edits to show their effects",
+  "risk": "low: text manipulation only"
+ },
+ "023491b9c1,174e686fca,86a6b2a6a8,cd38b61038,d310d6e2b6,dd22e60a79,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🔄",
+  "title": "Edit replay engine",
+  "summary": "Replays edits by applying text changes to history.",
+  "risk": "high: incorrect edits corrupt data",
+  "reused_from": "023491b9c1,0a1ec96d2e,174e686fca,4fbe5ada7e,79bd66e141,86a6b2a6a8,9ef8a36788,dd22e60a79,f406028619,f5de3a96c0,fad9777590"
+ },
+ "023491b9c1,0476dc0f3e,174e686fca,377df59da1,3f81026338,529fcf9bac,563d8bab50,7618d2524f,86a6b2a6a8,cd38b61038,d310d6e2b6,dd22e60a79,deeb85705a,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🎬",
+  "title": "Replay history viewer",
+  "summary": "Replays past edits to show changes over time.",
+  "risk": "low: display only"
+ },
+ "023491b9c1,174e686fca,377df59da1,3f81026338,529fcf9bac,563d8bab50,7618d2524f,827e6c4f92,86a6b2a6a8,cd38b61038,d310d6e2b6,dd22e60a79,deeb85705a,e0e68cf990,f406028619,f5de3a96c0,fad9777590": {
+  "emoji": "🎬",
+  "title": "Replay history viewer",
+  "summary": "Replays past edits to show changes over time.",
+  "risk": "low: display only",
+  "reused_from": "023491b9c1,0476dc0f3e,174e686fca,377df59da1,3f81026338,529fcf9bac,563d8bab50,7618d2524f,86a6b2a6a8,cd38b61038,d310d6e2b6,dd22e60a79,deeb85705a,f406028619,f5de3a96c0,fad9777590"
+ },
+ "08485823cf,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,988affd8fc,9fc1c6f631,b1776777b4,bafbfadcde,c3ca7eb511,c80e18493e,cb9cad7cf7,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "08485823cf,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,7cdabbfa50,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c3ca7eb511,c80e18493e,cb9cad7cf7,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "2452a8ae5d,2646a55ec9,2ea59efae7,356d2963c1,4c7f74323d,9bc599c935": {
+  "emoji": "📊",
+  "title": "Metrics data formatter",
+  "summary": "Converts metrics into JSON text",
+  "risk": "low: formatting only"
+ },
+ "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness"
+ },
+ "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,b91cdf265e,be07f07173,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,b91cdf265e,c18c474227,ca8c8fc69b,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "1aff5b2c86,2a6e072272,3b0494d763,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,b91cdf265e,c18c474227,c2758ea688,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "1aff5b2c86,2a6e072272,45af50bebb,5b184afa62,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "79733d25a6,b472750e2d,cf432e8f5f,f3ea64592d": {
+  "emoji": "🎨",
+  "title": "Code editor initialization",
+  "summary": "Sets up the UI for displaying code text.",
+  "risk": "low: Only affects visual display"
+ },
+ "55d738f215,5fb7b01f2b,8c1490b991,8ddfe2c3ad,be6d7fc6aa,bed5dec1f7": {
+  "emoji": "🎨",
+  "title": "Code row renderer",
+  "summary": "Draws styled code lines on screen",
+  "risk": "low: only affects visual display"
+ },
+ "26f3d15136,329fde332e,83ec7deac6,875e8f1527,d6d41318cd,e042f8c429": {
+  "emoji": "🖥️",
+  "title": "Font and word loading",
+  "summary": "Sets up fonts and user keywords for the UI.",
+  "risk": "low: Only loads static fonts and config paths."
+ },
+ "1aff5b2c86,1e04960c6f,21fd2f37d9,45af50bebb,500601a8be,5b184afa62,5bdcb30d9d,62c33e2cb4,910fe79d9d,94cfb1fda3,94db4c89c0,970ba4b0cb,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,a39ce5233c,b14140ab3c,b651f4f238,b91cdf265e,c18c474227,cb48df6070,e343651fd6,fd4d851db1": {
+  "emoji": "🏗️",
+  "title": "Structure view builder",
+  "summary": "Constructs and analyzes structural metrics from data.",
+  "risk": "medium: data integrity and sorting correctness",
+  "reused_from": "1aff5b2c86,2a6e072272,45af50bebb,5bdcb30d9d,68978873bb,6b5c9d1375,910fe79d9d,91e04c6501,94cfb1fda3,94db4c89c0,970ba4b0cb,972e4da929,9e5190b1e4,9f8fcd7d1e,a0b77cdd69,af1522aff5,b91cdf265e,c18c474227,e2ec689b71,e343651fd6,e9123004ab,fb12e70272,fd4d851db1"
+ },
+ "55d738f215,5fb7b01f2b,8c1490b991,8ddfe2c3ad,bed5dec1f7": {
+  "emoji": "🎨",
+  "title": "Code row renderer",
+  "summary": "Draws styled code lines on screen",
+  "risk": "low: only affects visual display",
+  "reused_from": "55d738f215,5fb7b01f2b,8c1490b991,8ddfe2c3ad,be6d7fc6aa,bed5dec1f7"
+ },
+ "030d9f3045,075bc2c1f1,07cf5363d0,09ccf27dad,130993620c,133fd02ada,179b28e858,1a08953ddc,2242bae6bf,245d621b63,42f34885d1,48cf263a0a,4abe114796,5389d2db5b,542311ab0b,5b55a6519e,648c28ecda,651fc0a398,69b1937d85,6cc5950861,6f8912a83c,721123059f,75831b04dd,7f7eff1784,81194296a7,8623707236,895cad0493,8e1f5c1eb5,9906dcf514,9c74afd642,a049d4fc26,a2d632ec23,bf29cb0c0e,c7ee21932a,c8472f55ce,cb193985b1,d042501c8a,d1edabd91f,d236f27aa2,dad0ff5e25,dfea612054,e23f5b3f2b,e6558badda": {
+  "emoji": "📊",
+  "title": "Build artifact viewer",
+  "summary": "Displays build history and artifact details",
+  "risk": "low: only affects display"
+ },
+ "030d9f3045,075bc2c1f1,07cf5363d0,09ccf27dad,130993620c,133fd02ada,179b28e858,1a08953ddc,2242bae6bf,245d621b63,42f34885d1,48cf263a0a,5389d2db5b,542311ab0b,5b55a6519e,648c28ecda,651fc0a398,69b1937d85,6cc5950861,6f8912a83c,721123059f,75831b04dd,7f7eff1784,81194296a7,8623707236,895cad0493,8e1f5c1eb5,9906dcf514,9c74afd642,a049d4fc26,a2d632ec23,bf29cb0c0e,c7ee21932a,c8472f55ce,cb193985b1,d042501c8a,d1edabd91f,d236f27aa2,da6da9a255,dad0ff5e25,dfea612054,e23f5b3f2b,e6558badda": {
+  "emoji": "📊",
+  "title": "Build artifact viewer",
+  "summary": "Displays build history and artifact details",
+  "risk": "low: only affects display",
+  "reused_from": "030d9f3045,075bc2c1f1,07cf5363d0,09ccf27dad,130993620c,133fd02ada,179b28e858,1a08953ddc,2242bae6bf,245d621b63,42f34885d1,48cf263a0a,4abe114796,5389d2db5b,542311ab0b,5b55a6519e,648c28ecda,651fc0a398,69b1937d85,6cc5950861,6f8912a83c,721123059f,75831b04dd,7f7eff1784,81194296a7,8623707236,895cad0493,8e1f5c1eb5,9906dcf514,9c74afd642,a049d4fc26,a2d632ec23,bf29cb0c0e,c7ee21932a,c8472f55ce,cb193985b1,d042501c8a,d1edabd91f,d236f27aa2,dad0ff5e25,dfea612054,e23f5b3f2b,e6558badda"
+ },
+ "030d9f3045,075bc2c1f1,07cf5363d0,09ccf27dad,130993620c,133fd02ada,179b28e858,1a08953ddc,2242bae6bf,245d621b63,42f34885d1,48cf263a0a,5389d2db5b,542311ab0b,5b55a6519e,648c28ecda,651fc0a398,69b1937d85,6cc5950861,6f8912a83c,721123059f,75831b04dd,7f7eff1784,81194296a7,8623707236,895cad0493,8e1f5c1eb5,9906dcf514,9c74afd642,a049d4fc26,a2d632ec23,bf29cb0c0e,c7ee21932a,c8472f55ce,cb193985b1,d042501c8a,d1edabd91f,d236f27aa2,dad0ff5e25,dfea612054,e23f5b3f2b,e6558badda,f567a87fde": {
+  "emoji": "📊",
+  "title": "Build artifact viewer",
+  "summary": "Displays build history and artifact details",
+  "risk": "low: only affects display",
+  "reused_from": "030d9f3045,075bc2c1f1,07cf5363d0,09ccf27dad,130993620c,133fd02ada,179b28e858,1a08953ddc,2242bae6bf,245d621b63,42f34885d1,48cf263a0a,4abe114796,5389d2db5b,542311ab0b,5b55a6519e,648c28ecda,651fc0a398,69b1937d85,6cc5950861,6f8912a83c,721123059f,75831b04dd,7f7eff1784,81194296a7,8623707236,895cad0493,8e1f5c1eb5,9906dcf514,9c74afd642,a049d4fc26,a2d632ec23,bf29cb0c0e,c7ee21932a,c8472f55ce,cb193985b1,d042501c8a,d1edabd91f,d236f27aa2,dad0ff5e25,dfea612054,e23f5b3f2b,e6558badda"
+ },
+ "0c5fffebf8,113af7ad5a,2242bae6bf,2372b29c42,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,4f0d278cc7,651fc0a398,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9906dcf514,a0d6cdc168,a416323e02,aced27557f,d4bb13ca39,dfea612054,e5687b0a59,edb864c365": {
+  "emoji": "📊",
+  "title": "Node detail view",
+  "summary": "Shows code stats and history for a single file",
+  "risk": "low"
+ },
+ "19c260271b,336119d1e4,96a4ea6f6b,b9efd0e307,e01d154c39,fb37faf63b": {
+  "emoji": "🎨",
+  "title": "Node drawing system",
+  "summary": "Renders code nodes and text on screen",
+  "risk": "low: only affects display visuals"
+ },
+ "6b30990f40,a7744ac492": {
+  "emoji": "🔍",
+  "title": "Node inspection dashboard",
+  "summary": "Displays node details and metrics for analysis.",
+  "risk": "low"
+ },
+ "19c260271b,336119d1e4,96a4ea6f6b,99b18d04c6,b9efd0e307,fb37faf63b": {
+  "emoji": "🎨",
+  "title": "Node drawing system",
+  "summary": "Renders code nodes and text on screen",
+  "risk": "low: only affects display visuals",
+  "reused_from": "19c260271b,336119d1e4,96a4ea6f6b,b9efd0e307,e01d154c39,fb37faf63b"
+ },
+ "0c5fffebf8,113af7ad5a,2242bae6bf,2372b29c42,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,4f0d278cc7,651fc0a398,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9906dcf514,a0d6cdc168,a3b2c8264d,a416323e02,aced27557f,dfea612054,e5687b0a59,edb864c365": {
+  "emoji": "📊",
+  "title": "Node detail view",
+  "summary": "Shows code stats and history for a single file",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,2242bae6bf,2372b29c42,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,4f0d278cc7,651fc0a398,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9906dcf514,a0d6cdc168,a416323e02,aced27557f,d4bb13ca39,dfea612054,e5687b0a59,edb864c365"
+ },
+ "2452a8ae5d,2646a55ec9,4c7f74323d,752a2d8832,9bc599c935,fcd7557f00": {
+  "emoji": "📊",
+  "title": "Metrics data formatter",
+  "summary": "Converts metrics into JSON text",
+  "risk": "low: formatting only",
+  "reused_from": "2452a8ae5d,2646a55ec9,2ea59efae7,356d2963c1,4c7f74323d,9bc599c935"
+ },
+ "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low"
+ },
+ "044eb7fa4d,20619db1c2,42c1fe437d,824a340943,b86f15d86b,bf48101bf4,c5987124af,d29fd7a614,de8d703d10,f09cd1f86c,f2440080d1": {
+  "emoji": "🔧",
+  "title": "Syntax definition loader",
+  "summary": "Loads and parses syntax patterns for text objects.",
+  "risk": "high: incorrect patterns break text editing"
+ },
+ "24443c7a02,4ee0467b1d,a27221c873,c6b2814cbc,c8b6c34a77,f00d6fbabf": {
+  "emoji": "📜",
+  "title": "Syntax language loader",
+  "summary": "Loads and retrieves syntax definitions by name.",
+  "risk": "low: Only reads configuration files"
+ },
+ "023491b9c1,174e686fca,377df59da1,3f81026338,6e85094961,827e6c4f92,8b0de2ece7,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past changes in the project structure.",
+  "risk": "low: only reads stored data"
+ },
+ "1dd82aa198,2b75dceba0,3fb4de164a,94ca23f5be,a424d286aa,d115d9d5fb,fc30f6829e": {
+  "emoji": "📂",
+  "title": "File structure setup",
+  "summary": "Initializes file list and reads text files.",
+  "risk": "low: file handling only"
+ },
+ "34728c3174,3fe5d3c5e6,4ee653f3d9,563d8bab50,77c7da70ba,86a6b2a6a8,8ad6203300,dd22e60a79,de14c4e135,fad9777590": {
+  "emoji": "🔄",
+  "title": "File change analyzer",
+  "summary": "Processes file changes across multiple files",
+  "risk": "high: data integrity and consistency"
+ },
+ "b472750e2d,cf432e8f5f,f3ea64592d": {
+  "emoji": "🎨",
+  "title": "UI style initialization",
+  "summary": "Sets up font and word styles for rendering.",
+  "risk": "low: Only affects visual appearance"
+ },
+ "023491b9c1,174e686fca,2f7b9a852d,377df59da1,3f81026338,6e85094961,827e6c4f92,89d980dcf2,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past changes in the project structure.",
+  "risk": "low: only reads stored data",
+  "reused_from": "023491b9c1,174e686fca,377df59da1,3f81026338,6e85094961,827e6c4f92,8b0de2ece7,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619"
+ },
+ "070d93902f,0cef6f8c74,18e1aa5a9e,281bbe6f3f,4ed6866de2,68388ecef3,7e05067509,b9fdc49ffc,d9399f69bf,e645278848": {
+  "emoji": "🧠",
+  "title": "Command terminator",
+  "summary": "Finalizes command execution state",
+  "risk": "medium: incorrect command execution"
+ },
+ "023491b9c1,174e686fca,2f7b9a852d,377df59da1,3f81026338,827e6c4f92,89d980dcf2,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f14baa0629,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past changes in the project structure.",
+  "risk": "low: only reads stored data",
+  "reused_from": "023491b9c1,174e686fca,377df59da1,3f81026338,6e85094961,827e6c4f92,8b0de2ece7,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619"
+ },
+ "05978d5147,06956983d7,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,7cdabbfa50,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "05978d5147,06956983d7,1299c65886,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,b36def6f62,b7624f2a91,bafbfadcde,c80e18493e,cb9cad7cf7,d071f6324a,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "0ad0b49221,2f7b9a852d,493356197e,75b1463557,76d1c3cb5a,7f9ebd88ad,ab12203b5a,c26d426929,ebfb6ee98b": {
+  "emoji": "🔍",
+  "title": "Command runner",
+  "summary": "Parses and executes shell commands",
+  "risk": "high: command execution"
+ },
+ "023491b9c1,0460b1d281,174e686fca,2f7b9a852d,377df59da1,3f81026338,827e6c4f92,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f14baa0629,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past changes in the project structure.",
+  "risk": "low: only reads stored data",
+  "reused_from": "023491b9c1,174e686fca,377df59da1,3f81026338,6e85094961,827e6c4f92,8b0de2ece7,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619"
+ },
+ "05978d5147,06956983d7,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,5ef52cef28,7c06761d91,91a36fd4dc,9dfa7a3180,9fc1c6f631,b1776777b4,b36def6f62,b7624f2a91,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "058b877180,12f5748c46,244d6fcf7e,523d070059,6aa2802bec,738f42df26,98eb137a27,e1b9d274b1": {
+  "emoji": "📝",
+  "title": "Failed output checker",
+  "summary": "Checks for failed command outputs.",
+  "risk": "low: data validation only"
+ },
+ "20b6980440,2d73437e49,8d04c88941,a74584ae54,b2701db762,dd17a7377f": {
+  "emoji": "📂",
+  "title": "Command input parser",
+  "summary": "Splits and processes command strings into segments.",
+  "risk": "low: Only parses text input"
+ },
+ "05978d5147,06956983d7,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,5ef52cef28,7c06761d91,91a36fd4dc,9d6d5ae92f,9fc1c6f631,b1776777b4,b36def6f62,b7624f2a91,bafbfadcde,c80e18493e,cb9cad7cf7,cddcc494de,d9f944b7b0,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "023491b9c1,0460b1d281,174e686fca,2d914ff111,2f7b9a852d,377df59da1,3f81026338,827e6c4f92,a78c76ff99,b30ca739ef,cd43af42da,deeb85705a,f14baa0629,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past changes in the project structure.",
+  "risk": "low: only reads stored data",
+  "reused_from": "023491b9c1,174e686fca,377df59da1,3f81026338,6e85094961,827e6c4f92,8b0de2ece7,a78c76ff99,b30ca739ef,cd43af42da,ce1e1eb19a,deeb85705a,f406028619"
+ },
+ "164a205a7c,16bf26aeeb,2b75dceba0,3fb4de164a,5511950ebe,94ca23f5be,d115d9d5fb": {
+  "emoji": "📂",
+  "title": "File structure setup",
+  "summary": "Initializes file list and reads text files.",
+  "risk": "low: file handling only",
+  "reused_from": "1dd82aa198,2b75dceba0,3fb4de164a,94ca23f5be,a424d286aa,d115d9d5fb,fc30f6829e"
+ },
+ "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only"
+ },
+ "0c5fffebf8,113af7ad5a,130993620c,19084aeb64,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,4fd1885764,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,7f648a853d,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f663003c12,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "0c5fffebf8,113af7ad5a,130993620c,19084aeb64,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,4fd1885764,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,7f648a853d,81194296a7,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f663003c12,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,4fd1885764,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,7f648a853d,81194296a7,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f663003c12,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "432eb64c3b,d2399cceee,f8e7475153": {
+  "emoji": "🔗",
+  "title": "Command file finder",
+  "summary": "Maps commands to their source files",
+  "risk": "low: only displays file paths"
+ },
+ "719423d5d0,ba211f5074": {
+  "emoji": "📂",
+  "title": "Stale event tracker",
+  "summary": "Removes outdated file changes from the session.",
+  "risk": "low: Only affects display data"
+ },
+ "4837124552": {
+  "emoji": "🧩",
+  "title": "check",
+  "summary": "Loads project data and initializes build state.",
+  "risk": "low: Only reads and displays configuration data."
+ },
+ "d2399cceee,f56e2fc2fe,f8e7475153": {
+  "emoji": "🔗",
+  "title": "Command file finder",
+  "summary": "Maps commands to their source files",
+  "risk": "low: only displays file paths",
+  "reused_from": "432eb64c3b,d2399cceee,f8e7475153"
+ },
+ "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state"
+ },
+ "2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,c3fbc0b537,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,66a7932bf4,74b8619ea9,9fa0f6b269,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7,f9d9079a4e": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,568a26b1ee,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,b8c6d866f8,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,66a7932bf4,74b8619ea9,7b7119f51d,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "2333fa0a24,26f0d1efc1,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "05f558012a,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "00585590dd,05435dfd4a,0620831e29,0642d1d058,07ba11b7a4,0aef0142fe,0c5fffebf8,0f0fd063f9,10cbd6f174,113af7ad5a,130993620c,13887efad6,159e4f4c91,15a59de933,16b9f2bf37,16f56c91db,170b4fb9a0,190ffa0ec0,1a1a5e1757,1af908fd1b,1e29997717,1f4eba9a73,1f7f8e8f94,214fc74eba,216952e89a,2184747e48,21ac0fb3e8,2242bae6bf,23728a708f,2372b29c42,245fbf9d85,25d499da6d,2776a48677,2baa45943b,2c92318427,316c84fc5b,31ef214bbc,3256587fd1,32e08fdac1,336119d1e4,34de752171,363bd7b245,38b4099898,3a3bf11932,3e83097d0c,3f32f63f97,3f871eef46,4076bd62ee,40c7e37e98,428054863b,42f34885d1,46af65ee44,483371cf3e,48ed368f5d,4a1e62ede2,4b2707d740,4df31be39e,4f0d278cc7,4fae68adf5,4fd1885764,555943c5c6,565a9df1e0,596e4ff038,5b443516af,5c70020a43,5fd702e8b3,62771615f9,6463469691,648c28ecda,651fc0a398,6567e9430d,656b0e8497,656c3472c2,68e417054f,6b0d62d27e,6b30990f40,6f863a9838,721123059f,73d8af549b,7496c039a0,74d3e955d1,79733d25a6,79ac61eff7,7b5f6f0074,7c34581bd1,7e554e1ed9,7f648a853d,80653dc0ab,81194296a7,830a285fc0,834482e919,839a18ff27,83b9a1537f,853d58741e,87731ddd43,8af9fef6ae,8b94cc0265,8e09739143,8e88b289c6,8eee0ec26c,9062c935af,93791f0a9c,951457691a,95aadc17b2,95e21dd25b,96a4ea6f6b,98cab034d7,9906dcf514,9964fe646d,9a8e2041bc,9b94cd6c69,9d2ad6765a,9d73209efc,9ec71a7c4c,9fb1ffdb29,a03f963fe4,a05dc62977,a3b2c8264d,a416323e02,a6845e96fa,a6da45419c,a7744ac492,a8529b7cb6,a8f40124af,aa6f152368,ab2076129b,aced27557f,ad19314d5b,ad1c3a81be,ad41b3b731,adbe87d0c2,b0b623189d,b70d5922c3,b810b4ecbd,b89d4832e3,b9efd0e307,bad47ef623,bc6132cbee,be6d7fc6aa,bf0b109a4d,bf29cb0c0e,bf90e819fe,c02a533da6,c0970e91de,c8472f55ce,c860f63ffb,c896e0ad57,c985d72f38,ced5e5a6e3,cf81e2e87b,d042501c8a,d236f27aa2,d35955a877,d6749eaa64,d827002926,d8e76507a8,d9f237a4fc,dfe8a9738f,dfea612054,e5687b0a59,e57e881ae6,e84541b31d,e874bc2fd7,e9e3114477,ece8b5ab38,edb864c365,f05912e018,f2eefebb28,f4682e9d5b,f550ef3583,f58f9f3e6b,f663003c12,f999c5dc51,fa61ebf427,fb37faf63b,fd7e319ad1,ffefeb8301": {
+  "emoji": "🖥️",
+  "title": "Visualization interface",
+  "summary": "Renders complex data structures as interactive charts",
+  "risk": "low: Only affects display, not data integrity"
+ },
+ "96ae0d372d,c330811e17,f8e7475153": {
+  "emoji": "🔗",
+  "title": "Command file finder",
+  "summary": "Maps commands to their source files",
+  "risk": "low: only affects display"
+ },
+ "0d6e85ec23,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,c5ad21249e,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "0d6e85ec23,2333fa0a24,5d7986518a,66a7932bf4,74b8619ea9,abcf6de5fd,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "0d6e85ec23,2333fa0a24,66a7932bf4,74b8619ea9,a9542b48c5,abcf6de5fd,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "0d6e85ec23,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,da0663e0f3,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "060efc74c7,0d6e85ec23,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,b5d401bbd2,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Exact build execution",
+  "summary": "Executes precise build logic for context state",
+  "risk": "high: incorrect builds corrupt context state",
+  "reused_from": "1c9c97af7b,2333fa0a24,66a7932bf4,74b8619ea9,abcf6de5fd,d7f44623d7,f194fe25e7"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,060efc74c7,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,2688c3d184,2fb65d829c,319f0cbc93,329753315c,37042a78bd,380661639d,3957ed7218,39b3604a39,47f9ffcdc7,4ac0e827d4,4d7c000919,4dd88eb3bb,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,66a7932bf4,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,7b2a0847d6,8f2b136ea4,94df107abe,9800183f15,9c3ccad9e8,abcf6de5fd,b4f1d00abe,b55a8284a0,b5d401bbd2,b73501b5c2,b835772882,bb0d068773,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,cb20bf6eae,cd2f06a28d,cf0ebfd279,cf44159d4b,cfdd281ac1,d257317db3,d31828ac01,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,e238546049,e275513896,e8e93693b8,ec5a059f2a,ef64ba8f9d,f050daa768,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context state loader",
+  "summary": "Loads and manages application context state.",
+  "risk": "high: Data corruption or loss"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,20f93f8877,2124d7b74d,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,380661639d,38c5c78c33,3957ed7218,39b3604a39,3d4a96423b,3f3c1adbd2,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4dd88eb3bb,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42ee5c02e,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,47f9ffcdc7,4ac0e827d4,4d7c000919,4dd88eb3bb,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,830110815d,841a48adb2,88d8e37112,895fefc25c,8e22bc10d8,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42ee5c02e,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,47f9ffcdc7,4ac0e827d4,4d7c000919,4dd88eb3bb,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,830110815d,841a48adb2,88d8e37112,895fefc25c,8e22bc10d8,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,47f9ffcdc7,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,ac96400814,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,ac96400814,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,46d6e9b86f,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a481dd03e9,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,42f987dc52,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,55fc6bb6d5,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,3514dfdbe8,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,42f987dc52,4ac0e827d4,4d7c000919,4e1856ceca,4f500b5d16,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,841a48adb2,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c83427e70d,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,fa24c0e102,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,42f987dc52,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,211a384b3b,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,42f987dc52,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,211a384b3b,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a4decc1add,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,211a384b3b,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,94df107abe,9631411572,9800183f15,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9fc895c580,a42ee5c02e,a4decc1add,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "00585590dd,05435dfd4a,0620831e29,0642d1d058,07ba11b7a4,0aef0142fe,0c5fffebf8,0f0fd063f9,10cbd6f174,113af7ad5a,130993620c,13887efad6,159e4f4c91,15a59de933,16b9f2bf37,16f56c91db,170b4fb9a0,190ffa0ec0,1a1a5e1757,1af908fd1b,1e29997717,1f4eba9a73,1f7f8e8f94,216952e89a,2184747e48,21ac0fb3e8,2242bae6bf,23728a708f,2372b29c42,25d499da6d,2776a48677,2baa45943b,316c84fc5b,31ef214bbc,3256587fd1,32e08fdac1,336119d1e4,34de752171,363bd7b245,38b4099898,3a3bf11932,3e83097d0c,3f32f63f97,3f871eef46,4076bd62ee,40c7e37e98,428054863b,42f34885d1,46af65ee44,483371cf3e,48ed368f5d,4a1e62ede2,4b2707d740,4df31be39e,4f0d278cc7,4fae68adf5,4fd1885764,555943c5c6,565a9df1e0,5b443516af,5c70020a43,5fd702e8b3,62771615f9,6463469691,648c28ecda,651fc0a398,6567e9430d,656c3472c2,68e417054f,6b0d62d27e,6b30990f40,6f863a9838,721123059f,73d8af549b,7496c039a0,74d3e955d1,7b5f6f0074,7e554e1ed9,7f648a853d,80653dc0ab,81194296a7,830a285fc0,834482e919,839a18ff27,83b9a1537f,853d58741e,87731ddd43,8af9fef6ae,8b94cc0265,8e09739143,8e88b289c6,9062c935af,93791f0a9c,951457691a,95aadc17b2,95e21dd25b,96a4ea6f6b,98cab034d7,9906dcf514,9964fe646d,9a8e2041bc,9b94cd6c69,9d2ad6765a,9d73209efc,9ec71a7c4c,9fb1ffdb29,a03f963fe4,a05dc62977,a3b2c8264d,a416323e02,a6da45419c,a7744ac492,a8529b7cb6,a8f40124af,aa6f152368,ab2076129b,aced27557f,ad19314d5b,ad1c3a81be,ad41b3b731,adbe87d0c2,b0b623189d,b70d5922c3,b810b4ecbd,b89d4832e3,b9efd0e307,bad47ef623,bc6132cbee,bf0b109a4d,bf29cb0c0e,bf90e819fe,c02a533da6,c0970e91de,c8472f55ce,c860f63ffb,c896e0ad57,c985d72f38,ced5e5a6e3,cf81e2e87b,d042501c8a,d236f27aa2,d35955a877,d6749eaa64,d827002926,d8e76507a8,d9f237a4fc,dfe8a9738f,dfea612054,e5687b0a59,e57e881ae6,e84541b31d,e874bc2fd7,e9e3114477,edb864c365,f05912e018,f2eefebb28,f4682e9d5b,f550ef3583,f58f9f3e6b,f663003c12,f999c5dc51,fa61ebf427,fb37faf63b,fd7e319ad1,ffefeb8301": {
+  "emoji": "🖥️",
+  "title": "Visualization interface",
+  "summary": "Renders complex data structures as interactive charts",
+  "risk": "low: Only affects display, not data integrity",
+  "reused_from": "00585590dd,05435dfd4a,0620831e29,0642d1d058,07ba11b7a4,0aef0142fe,0c5fffebf8,0f0fd063f9,10cbd6f174,113af7ad5a,130993620c,13887efad6,159e4f4c91,15a59de933,16b9f2bf37,16f56c91db,170b4fb9a0,190ffa0ec0,1a1a5e1757,1af908fd1b,1e29997717,1f4eba9a73,1f7f8e8f94,214fc74eba,216952e89a,2184747e48,21ac0fb3e8,2242bae6bf,23728a708f,2372b29c42,245fbf9d85,25d499da6d,2776a48677,2baa45943b,2c92318427,316c84fc5b,31ef214bbc,3256587fd1,32e08fdac1,336119d1e4,34de752171,363bd7b245,38b4099898,3a3bf11932,3e83097d0c,3f32f63f97,3f871eef46,4076bd62ee,40c7e37e98,428054863b,42f34885d1,46af65ee44,483371cf3e,48ed368f5d,4a1e62ede2,4b2707d740,4df31be39e,4f0d278cc7,4fae68adf5,4fd1885764,555943c5c6,565a9df1e0,596e4ff038,5b443516af,5c70020a43,5fd702e8b3,62771615f9,6463469691,648c28ecda,651fc0a398,6567e9430d,656b0e8497,656c3472c2,68e417054f,6b0d62d27e,6b30990f40,6f863a9838,721123059f,73d8af549b,7496c039a0,74d3e955d1,79733d25a6,79ac61eff7,7b5f6f0074,7c34581bd1,7e554e1ed9,7f648a853d,80653dc0ab,81194296a7,830a285fc0,834482e919,839a18ff27,83b9a1537f,853d58741e,87731ddd43,8af9fef6ae,8b94cc0265,8e09739143,8e88b289c6,8eee0ec26c,9062c935af,93791f0a9c,951457691a,95aadc17b2,95e21dd25b,96a4ea6f6b,98cab034d7,9906dcf514,9964fe646d,9a8e2041bc,9b94cd6c69,9d2ad6765a,9d73209efc,9ec71a7c4c,9fb1ffdb29,a03f963fe4,a05dc62977,a3b2c8264d,a416323e02,a6845e96fa,a6da45419c,a7744ac492,a8529b7cb6,a8f40124af,aa6f152368,ab2076129b,aced27557f,ad19314d5b,ad1c3a81be,ad41b3b731,adbe87d0c2,b0b623189d,b70d5922c3,b810b4ecbd,b89d4832e3,b9efd0e307,bad47ef623,bc6132cbee,be6d7fc6aa,bf0b109a4d,bf29cb0c0e,bf90e819fe,c02a533da6,c0970e91de,c8472f55ce,c860f63ffb,c896e0ad57,c985d72f38,ced5e5a6e3,cf81e2e87b,d042501c8a,d236f27aa2,d35955a877,d6749eaa64,d827002926,d8e76507a8,d9f237a4fc,dfe8a9738f,dfea612054,e5687b0a59,e57e881ae6,e84541b31d,e874bc2fd7,e9e3114477,ece8b5ab38,edb864c365,f05912e018,f2eefebb28,f4682e9d5b,f550ef3583,f58f9f3e6b,f663003c12,f999c5dc51,fa61ebf427,fb37faf63b,fd7e319ad1,ffefeb8301"
+ },
+ "0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,af23b7372c,b4a40af32f,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code block renderer",
+  "summary": "Draws text as code or prose in the window",
+  "risk": "low: only affects display appearance"
+ },
+ "3e9c0bf117,945e0033a5,d828ebcab7": {
+  "emoji": "🖥️",
+  "title": "Screen coordinate mapper",
+  "summary": "Transforms and clips UI rectangles",
+  "risk": "low"
+ },
+ "3e9c0bf117,476bd6cbf4,d828ebcab7": {
+  "emoji": "🖥️",
+  "title": "Screen coordinate mapper",
+  "summary": "Transforms and clips UI rectangles",
+  "risk": "low",
+  "reused_from": "3e9c0bf117,945e0033a5,d828ebcab7"
+ },
+ "0401822f17,0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,af23b7372c,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code block renderer",
+  "summary": "Draws text as code or prose in the window",
+  "risk": "low: only affects display appearance",
+  "reused_from": "0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,af23b7372c,b4a40af32f,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1"
+ },
+ "00585590dd,05435dfd4a,0620831e29,0642d1d058,07ba11b7a4,0aef0142fe,0c5fffebf8,0f0fd063f9,10cbd6f174,113af7ad5a,130993620c,13887efad6,159e4f4c91,15a59de933,16b9f2bf37,16f56c91db,170b4fb9a0,190ffa0ec0,1a1a5e1757,1af908fd1b,1e29997717,1f4eba9a73,1f7f8e8f94,216952e89a,2184747e48,21ac0fb3e8,2242bae6bf,23728a708f,2372b29c42,25d499da6d,2776a48677,2baa45943b,316c84fc5b,31ef214bbc,3256587fd1,32e08fdac1,336119d1e4,34de752171,363bd7b245,38b4099898,3a3bf11932,3e83097d0c,3f32f63f97,3f871eef46,4076bd62ee,40c7e37e98,428054863b,42f34885d1,46af65ee44,483371cf3e,48ed368f5d,4a1e62ede2,4b2707d740,4df31be39e,4f0d278cc7,4fae68adf5,4fd1885764,555943c5c6,565a9df1e0,5b443516af,5c70020a43,5fd702e8b3,62771615f9,6463469691,648c28ecda,651fc0a398,6567e9430d,656c3472c2,68e417054f,6b30990f40,6f863a9838,721123059f,73d8af549b,7496c039a0,74d3e955d1,7b5f6f0074,7e554e1ed9,7f648a853d,80653dc0ab,81194296a7,830a285fc0,834482e919,839a18ff27,83b9a1537f,853d58741e,87731ddd43,8af9fef6ae,8b94cc0265,8e09739143,8e88b289c6,9062c935af,93791f0a9c,951457691a,95aadc17b2,95e21dd25b,96a4ea6f6b,98cab034d7,9906dcf514,9964fe646d,9a8e2041bc,9b94cd6c69,9d2ad6765a,9d73209efc,9ec71a7c4c,9fb1ffdb29,a03f963fe4,a3b2c8264d,a416323e02,a6da45419c,a7744ac492,a8529b7cb6,a8f40124af,aa6f152368,ab2076129b,aced27557f,ad19314d5b,ad1c3a81be,ad41b3b731,adbe87d0c2,b0b623189d,b70d5922c3,b810b4ecbd,b89d4832e3,b9efd0e307,bad47ef623,bc6132cbee,bf0b109a4d,bf29cb0c0e,bf90e819fe,c02a533da6,c0970e91de,c8472f55ce,c860f63ffb,c896e0ad57,c985d72f38,ced5e5a6e3,cf81e2e87b,d042501c8a,d236f27aa2,d35955a877,d6749eaa64,d827002926,d9f237a4fc,dfe8a9738f,dfea612054,e5687b0a59,e57e881ae6,e84541b31d,e874bc2fd7,edb864c365,f05912e018,f2eefebb28,f4682e9d5b,f550ef3583,f58f9f3e6b,f663003c12,f999c5dc51,fa61ebf427,fb37faf63b,fd7e319ad1,ffefeb8301": {
+  "emoji": "🖥️",
+  "title": "Visualization interface",
+  "summary": "Renders complex data structures as interactive charts",
+  "risk": "low: Only affects display, not data integrity",
+  "reused_from": "00585590dd,05435dfd4a,0620831e29,0642d1d058,07ba11b7a4,0aef0142fe,0c5fffebf8,0f0fd063f9,10cbd6f174,113af7ad5a,130993620c,13887efad6,159e4f4c91,15a59de933,16b9f2bf37,16f56c91db,170b4fb9a0,190ffa0ec0,1a1a5e1757,1af908fd1b,1e29997717,1f4eba9a73,1f7f8e8f94,214fc74eba,216952e89a,2184747e48,21ac0fb3e8,2242bae6bf,23728a708f,2372b29c42,245fbf9d85,25d499da6d,2776a48677,2baa45943b,2c92318427,316c84fc5b,31ef214bbc,3256587fd1,32e08fdac1,336119d1e4,34de752171,363bd7b245,38b4099898,3a3bf11932,3e83097d0c,3f32f63f97,3f871eef46,4076bd62ee,40c7e37e98,428054863b,42f34885d1,46af65ee44,483371cf3e,48ed368f5d,4a1e62ede2,4b2707d740,4df31be39e,4f0d278cc7,4fae68adf5,4fd1885764,555943c5c6,565a9df1e0,596e4ff038,5b443516af,5c70020a43,5fd702e8b3,62771615f9,6463469691,648c28ecda,651fc0a398,6567e9430d,656b0e8497,656c3472c2,68e417054f,6b0d62d27e,6b30990f40,6f863a9838,721123059f,73d8af549b,7496c039a0,74d3e955d1,79733d25a6,79ac61eff7,7b5f6f0074,7c34581bd1,7e554e1ed9,7f648a853d,80653dc0ab,81194296a7,830a285fc0,834482e919,839a18ff27,83b9a1537f,853d58741e,87731ddd43,8af9fef6ae,8b94cc0265,8e09739143,8e88b289c6,8eee0ec26c,9062c935af,93791f0a9c,951457691a,95aadc17b2,95e21dd25b,96a4ea6f6b,98cab034d7,9906dcf514,9964fe646d,9a8e2041bc,9b94cd6c69,9d2ad6765a,9d73209efc,9ec71a7c4c,9fb1ffdb29,a03f963fe4,a05dc62977,a3b2c8264d,a416323e02,a6845e96fa,a6da45419c,a7744ac492,a8529b7cb6,a8f40124af,aa6f152368,ab2076129b,aced27557f,ad19314d5b,ad1c3a81be,ad41b3b731,adbe87d0c2,b0b623189d,b70d5922c3,b810b4ecbd,b89d4832e3,b9efd0e307,bad47ef623,bc6132cbee,be6d7fc6aa,bf0b109a4d,bf29cb0c0e,bf90e819fe,c02a533da6,c0970e91de,c8472f55ce,c860f63ffb,c896e0ad57,c985d72f38,ced5e5a6e3,cf81e2e87b,d042501c8a,d236f27aa2,d35955a877,d6749eaa64,d827002926,d8e76507a8,d9f237a4fc,dfe8a9738f,dfea612054,e5687b0a59,e57e881ae6,e84541b31d,e874bc2fd7,e9e3114477,ece8b5ab38,edb864c365,f05912e018,f2eefebb28,f4682e9d5b,f550ef3583,f58f9f3e6b,f663003c12,f999c5dc51,fa61ebf427,fb37faf63b,fd7e319ad1,ffefeb8301"
+ },
+ "0401822f17,0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code block renderer",
+  "summary": "Draws text as code or prose in the window",
+  "risk": "low: only affects display appearance",
+  "reused_from": "0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,af23b7372c,b4a40af32f,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1"
+ },
+ "2983a29280,3906c4cff1": {
+  "emoji": "🎨",
+  "title": "Side panel renderer",
+  "summary": "Draws the left sidebar UI elements",
+  "risk": "low: only visual display"
+ },
+ "2983a29280,f721e6ae76": {
+  "emoji": "🎨",
+  "title": "Side panel renderer",
+  "summary": "Draws the left sidebar UI elements",
+  "risk": "low: only visual display",
+  "reused_from": "2983a29280,3906c4cff1"
+ },
+ "2983a29280,b6781e709c": {
+  "emoji": "🎨",
+  "title": "Side panel renderer",
+  "summary": "Draws the left sidebar UI elements",
+  "risk": "low: only visual display",
+  "reused_from": "2983a29280,3906c4cff1"
+ },
+ "0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,4fd1885764,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,7f648a853d,81194296a7,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f663003c12,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,7106335f8a,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1": {
+  "emoji": "🎨",
+  "title": "Window drawing engine",
+  "summary": "Renders code windows with text and layout",
+  "risk": "low: visual display only"
+ },
+ "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,70d4628da1,93bf814829,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1": {
+  "emoji": "🎨",
+  "title": "Window drawing engine",
+  "summary": "Renders code windows with text and layout",
+  "risk": "low: visual display only",
+  "reused_from": "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,7106335f8a,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,211a384b3b,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,683be8e056,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,94df107abe,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9f558c6748,9fc895c580,a42ee5c02e,a4decc1add,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4c82e2182,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,70d4628da1,7fabe581fa,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1": {
+  "emoji": "🎨",
+  "title": "Window drawing engine",
+  "summary": "Renders code windows with text and layout",
+  "risk": "low: visual display only",
+  "reused_from": "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,7106335f8a,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1"
+ },
+ "0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,70d4628da1,938f2c5e26,99a2dea2b6,b4f4585160,bbf075dafa,be828adcfc,c0626584dd,cf812b0983,d7f16482f7,d828ebcab7,f191376eb1": {
+  "emoji": "🎨",
+  "title": "Window drawing engine",
+  "summary": "Renders code windows with text and layout",
+  "risk": "low: visual display only",
+  "reused_from": "0401822f17,0c381eec2f,147c582a48,1b8d13b6ae,3a9cf4493f,3e9c0bf117,476bd6cbf4,63b620dad3,6c72c94bd8,7106335f8a,99a2dea2b6,b4f4585160,bbf075dafa,c0626584dd,d7f16482f7,d828ebcab7,e9c8aab06b,f191376eb1"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,211a384b3b,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,30b62cd7ca,319f0cbc93,329753315c,34115b70da,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,6555f9b6d1,66a7932bf4,67636a3d31,683be8e056,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,8269410c6d,830110815d,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,94df107abe,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9d5e2df480,9f558c6748,9fc895c580,a42ee5c02e,a4decc1add,a8a25d4d4c,aae0908bed,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f66e11d72f,f705849259,f8e03f804d,f93443cba5,faa55f1372,fc0b451d3d,fcc019f822": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0e38823412,0e55afe452,10e508c184,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,30b62cd7ca,319f0cbc93,329753315c,34115b70da,3446b02493,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4c13a7bb76,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,6555f9b6d1,66a7932bf4,67636a3d31,683be8e056,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7aee156e13,7d2e96ba30,81bdf4ca4b,830110815d,875b73b0bd,88d8e37112,895fefc25c,8bf10eb609,8c3ea0a5e3,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,94df107abe,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9d5e2df480,9fc895c580,a42ee5c02e,a4decc1add,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c13a6168fc,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e275513896,e47e37327c,ea4de59b69,ef64ba8f9d,f05c4d7cfa,f194fe25e7,f3d980aebb,f66e11d72f,f705849259,f8d93eb228,f8e03f804d,f93443cba5,faa55f1372,fb21ac6d18,fc0b451d3d,fcc019f822": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,0e55afe452,10e508c184,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,30b62cd7ca,319f0cbc93,329753315c,34115b70da,3446b02493,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,6555f9b6d1,66a7932bf4,67636a3d31,6817cbbdf2,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7aee156e13,7d2e96ba30,81bdf4ca4b,830110815d,875b73b0bd,88d8e37112,895fefc25c,8bf10eb609,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,94df107abe,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9d5e2df480,9fc895c580,a42ee5c02e,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd324d4e58,c13a6168fc,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e275513896,e47e37327c,e80593e647,ea4de59b69,ef64ba8f9d,f05c4d7cfa,f194fe25e7,f3d980aebb,f66e11d72f,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,f93443cba5,faa55f1372,fb21ac6d18,fc0b451d3d,fcc019f822": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,0e55afe452,10e508c184,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,30b62cd7ca,319f0cbc93,329753315c,34115b70da,3446b02493,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,6555f9b6d1,66a7932bf4,67636a3d31,6817cbbdf2,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7aee156e13,7d2e96ba30,81bdf4ca4b,830110815d,875b73b0bd,88d8e37112,895fefc25c,8bf10eb609,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9d5e2df480,9fc895c580,a42ee5c02e,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e275513896,e47e37327c,e80593e647,ea4de59b69,ef64ba8f9d,f05c4d7cfa,f194fe25e7,f3d980aebb,f66e11d72f,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,f93443cba5,faa55f1372,fb21ac6d18,fc0b451d3d,fcc019f822": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,0e55afe452,10e508c184,124c26d95e,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eac42445f,2eadd11ac9,30b62cd7ca,319f0cbc93,329753315c,34115b70da,3446b02493,37042a78bd,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,41dabade47,4ac0e827d4,4b0df17a10,4d7c000919,4e1856ceca,4fb62d5c62,5070647434,54297c56b6,54d4645979,58ffdce9d3,597c315972,5e485ebe7e,6555f9b6d1,66a7932bf4,67636a3d31,6817cbbdf2,6852410195,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7aee156e13,7d2e96ba30,81bdf4ca4b,830110815d,88d8e37112,895fefc25c,8bf10eb609,8f2b136ea4,8f733d4780,8fee2bee11,924098a693,946fc9b695,94df107abe,9631411572,98a9121c8c,992125492a,9b0dba16ea,9c3ccad9e8,9d5e2df480,9fc895c580,a42ee5c02e,a8a25d4d4c,abcf6de5fd,acc06ae0f8,b4f1d00abe,b55a8284a0,b56818112d,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bc4b2ee2be,bcc4ac2c6c,bd719a0b8e,c34e12bae6,c5333a9c60,c8b1982e65,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,d178167dda,d257317db3,d30755a22a,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e275513896,e47e37327c,e80593e647,ea4de59b69,ef64ba8f9d,f05c4d7cfa,f194fe25e7,f3d980aebb,f66e11d72f,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,f93443cba5,faa55f1372,fb21ac6d18,fc0b451d3d,fcc019f822": {
+  "emoji": "📂",
+  "title": "Context data loader",
+  "summary": "Reads and initializes project context",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,017e18c836,01b7b4538b,0586714833,060efc74c7,08334d3ae2,0b8e2be315,0d6e85ec23,0e38823412,0e55afe452,12ec8ff71e,140c380765,18c6f6a1c0,1b63ff16ba,1f53b748c3,2124d7b74d,226f9a8c14,2333fa0a24,25cadc72fb,263cbca841,2688c3d184,268a1f5c52,2da2e1134b,2eadd11ac9,2ef52b2b8b,2fb65d829c,319f0cbc93,329753315c,34115b70da,37042a78bd,380661639d,3957ed7218,39b3604a39,3d4a96423b,4077bc2f8d,47f9ffcdc7,4ac0e827d4,4d7c000919,4dc2c90b4a,4dd88eb3bb,4fb62d5c62,502d220235,5070647434,54297c56b6,54d4645979,57e5eb0106,58ffdce9d3,597c315972,5e485ebe7e,66a7932bf4,67636a3d31,6e5f8e123e,6fbd68fa76,70a5de22c6,74b8619ea9,786028a653,786f4c4e54,7d2e96ba30,81bdf4ca4b,88d8e37112,895fefc25c,8f2b136ea4,8f733d4780,924098a693,94df107abe,9631411572,9800183f15,992125492a,9b0dba16ea,9c3ccad9e8,a42eb2b615,a42ee5c02e,a8a25d4d4c,abcf6de5fd,b4f1d00abe,b55a8284a0,b56818112d,b5d401bbd2,b73501b5c2,b835772882,b960dd0130,b983e5c257,bb0d068773,bb53a25cb7,bc1160bcb2,bcc4ac2c6c,bd324d4e58,c5333a9c60,c8b1982e65,c9fb3a4ec0,cb08dbf821,cb20bf6eae,cd2f06a28d,cd38246e20,cf0ebfd279,cf44159d4b,cfd1bc4a28,cfdd281ac1,d257317db3,d31828ac01,d36ca06cd8,d6e284804f,db01d1ff3e,dc23b213ec,ddd7076d5d,de08d206b3,de11df8914,de72e6dfde,dea3fb9652,df0d9eed2f,e10dc6525b,e146e1cd33,e238546049,e275513896,e47e37327c,e8e93693b8,ea4de59b69,ec5a059f2a,ecdd4966b8,ef64ba8f9d,f050daa768,f05c4d7cfa,f194fe25e7,f3d980aebb,f4782d4747,f66e11d72f,f93443cba5,faa55f1372,fc0b451d3d"
+ },
+ "0024119ba4,0586714833,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,12ec8ff71e,140c380765,1b63ff16ba,263cbca841,268a1f5c52,2da2e1134b,2eadd11ac9,329753315c,34115b70da,39b3604a39,3d4a96423b,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,54297c56b6,6555f9b6d1,67636a3d31,6e5f8e123e,786028a653,786f4c4e54,7d2e96ba30,7f31052a92,81bdf4ca4b,830110815d,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,9631411572,98a9121c8c,9fc895c580,a42ee5c02e,acc06ae0f8,b4f1d00abe,b56818112d,b983e5c257,bb0d068773,c34e12bae6,cf0ebfd279,cf44159d4b,cfd1bc4a28,d30755a22a,d31828ac01,d36ca06cd8,de11df8914,e10dc6525b,e47e37327c,ea4de59b69,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,faa55f1372": {
+  "emoji": "🧠",
+  "title": "Context state loader",
+  "summary": "Initializes project context from files",
+  "risk": "high: data loss or corruption"
+ },
+ "0e55afe452,5070647434,c5333a9c60,e80593e647,ef64ba8f9d,f93443cba5,fc0b451d3d": {
+  "emoji": "🧩",
+  "title": "Context block finder",
+  "summary": "Locates blocks within context data",
+  "risk": "low: display only"
+ },
+ "0024119ba4,02eb2e48c6,0586714833,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,12ec8ff71e,140c380765,1b63ff16ba,263cbca841,268a1f5c52,2da2e1134b,2eadd11ac9,329753315c,34115b70da,39b3604a39,3d4a96423b,41dabade47,4ac0e827d4,4e1856ceca,54297c56b6,6555f9b6d1,67636a3d31,6e5f8e123e,786028a653,786f4c4e54,7d2e96ba30,7f31052a92,81bdf4ca4b,830110815d,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,9631411572,98a9121c8c,9fc895c580,a42ee5c02e,acc06ae0f8,b4f1d00abe,b56818112d,b983e5c257,bb0d068773,c34e12bae6,cf0ebfd279,cf44159d4b,cfd1bc4a28,d30755a22a,d31828ac01,d36ca06cd8,de11df8914,e10dc6525b,e47e37327c,ea4de59b69,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,faa55f1372": {
+  "emoji": "🧠",
+  "title": "Context state loader",
+  "summary": "Initializes project context from files",
+  "risk": "high: data loss or corruption",
+  "reused_from": "0024119ba4,0586714833,08334d3ae2,0b8e2be315,0dcbea25b9,0e38823412,12ec8ff71e,140c380765,1b63ff16ba,263cbca841,268a1f5c52,2da2e1134b,2eadd11ac9,329753315c,34115b70da,39b3604a39,3d4a96423b,41dabade47,4ac0e827d4,4d7c000919,4e1856ceca,54297c56b6,6555f9b6d1,67636a3d31,6e5f8e123e,786028a653,786f4c4e54,7d2e96ba30,7f31052a92,81bdf4ca4b,830110815d,895fefc25c,8f2b136ea4,8f733d4780,8fee2bee11,9631411572,98a9121c8c,9fc895c580,a42ee5c02e,acc06ae0f8,b4f1d00abe,b56818112d,b983e5c257,bb0d068773,c34e12bae6,cf0ebfd279,cf44159d4b,cfd1bc4a28,d30755a22a,d31828ac01,d36ca06cd8,de11df8914,e10dc6525b,e47e37327c,ea4de59b69,f705849259,f72fab2f5b,f8d93eb228,f8e03f804d,faa55f1372"
+ },
+ "2333fa0a24,2eac42445f,3446b02493,4b0df17a10,66a7932bf4,74b8619ea9,abcf6de5fd,bd719a0b8e,c3ed3ceab8,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Build call manager",
+  "summary": "Manages build calls and resolves dependencies.",
+  "risk": "high: Incorrect builds break the application"
+ },
+ "2333fa0a24,2eac42445f,3446b02493,66a7932bf4,74b8619ea9,abcf6de5fd,bd719a0b8e,c3ed3ceab8,f194fe25e7": {
+  "emoji": "🔧",
+  "title": "Build call manager",
+  "summary": "Manages build calls and resolves dependencies.",
+  "risk": "high: Incorrect builds break the application",
+  "reused_from": "2333fa0a24,2eac42445f,3446b02493,4b0df17a10,66a7932bf4,74b8619ea9,abcf6de5fd,bd719a0b8e,c3ed3ceab8,f194fe25e7"
+ },
+ "1b94bacfdc,2d5589dc5c,64a54392e6,a9cbd6bbf5": {
+  "emoji": "🔄",
+  "title": "restore",
+  "summary": "Reconstructs context state from saved session data.",
+  "risk": "high: data loss if restore fails"
+ },
+ "0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,b4f4585160,be828adcfc,cf812b0983,d7f16482f7,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code block renderer",
+  "summary": "Draws text as code or prose in the window",
+  "risk": "low: only affects display appearance",
+  "reused_from": "0c381eec2f,147c582a48,3a9cf4493f,6c72c94bd8,99a2dea2b6,af23b7372c,b4a40af32f,b4f4585160,d7f16482f7,e9c8aab06b,f191376eb1"
+ },
+ "164a205a7c,16bf26aeeb,3fb4de164a,5511950ebe,94ca23f5be,d115d9d5fb": {
+  "emoji": "📂",
+  "title": "File structure setup",
+  "summary": "Initializes file list and reads text files.",
+  "risk": "low: file handling only",
+  "reused_from": "1dd82aa198,2b75dceba0,3fb4de164a,94ca23f5be,a424d286aa,d115d9d5fb,fc30f6829e"
+ },
+ "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3a9cf4493f,3e9c0bf117,63b620dad3,694331a249,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,e751e108f8,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code window renderer",
+  "summary": "Draws the code window layout and content.",
+  "risk": "low"
+ },
+ "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3e9c0bf117,63b620dad3,694331a249,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,dc081e599e,e751e108f8,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code window renderer",
+  "summary": "Draws the code window layout and content.",
+  "risk": "low",
+  "reused_from": "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3a9cf4493f,3e9c0bf117,63b620dad3,694331a249,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,e751e108f8,f191376eb1"
+ },
+ "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,40c7e37e98,42f34885d1,46af65ee44,47811a198a,48ed368f5d,4f0d278cc7,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,839a18ff27,83b9a1537f,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e5687b0a59,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,40c7e37e98,42f34885d1,46af65ee44,47811a198a,48ed368f5d,4dac2502f8,4f0d278cc7,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,839a18ff27,83b9a1537f,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e5687b0a59,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Displays detailed inspection data and metrics",
+  "risk": "low",
+  "reused_from": "0c5fffebf8,113af7ad5a,130993620c,1e29997717,214fc74eba,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3f32f63f97,40c7e37e98,42f34885d1,46af65ee44,48ed368f5d,4f0d278cc7,5fd702e8b3,648c28ecda,651fc0a398,68e417054f,6b30990f40,721123059f,79733d25a6,81194296a7,830a285fc0,839a18ff27,83b9a1537f,87731ddd43,8e09739143,9062c935af,95aadc17b2,9906dcf514,9fb1ffdb29,a0d6cdc168,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,bc6132cbee,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,dfea612054,e5687b0a59,e874bc2fd7,edb864c365,f444eb40a9,f663003c12,f999c5dc51"
+ },
+ "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low"
+ },
+ "03541f1df6,0721036e9f,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,3b17fa13e5,42f34885d1,463d5e36d9,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,617bb3f1f3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a43b4aa0ce,a7744ac492,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low",
+  "reused_from": "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51"
+ },
+ "03541f1df6,0721036e9f,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,3b17fa13e5,42f34885d1,463d5e36d9,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4fd1885764,5f20649558,5fd702e8b3,617bb3f1f3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a43b4aa0ce,a7744ac492,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low",
+  "reused_from": "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51"
+ },
+ "4c126d6886,4e47c76b94,75b1463557,9e8efb361a,c854cffd13,de6e3dc3ab,ded4c2cbd2,ebfb6ee98b": {
+  "emoji": "🧠",
+  "title": "Command runner",
+  "summary": "Executes commands and tracks their results.",
+  "risk": "high: incorrect command execution"
+ },
+ "4c126d6886,4e47c76b94,9e8efb361a,c854cffd13,de6e3dc3ab,ded4c2cbd2,e02ef55d6d,ebfb6ee98b": {
+  "emoji": "🧠",
+  "title": "Command runner",
+  "summary": "Executes commands and tracks their results.",
+  "risk": "high: incorrect command execution",
+  "reused_from": "4c126d6886,4e47c76b94,75b1463557,9e8efb361a,c854cffd13,de6e3dc3ab,ded4c2cbd2,ebfb6ee98b"
+ },
+ "05de50767f,0f2962a47b,1c99cbaea7,377df59da1,3f81026338,827e6c4f92,932f34b9c2,9bcb43e52f,a87b17740a,b9b9a07d1f,badd203691,cd43af42da,deeb85705a,e374f6c793,ec1ec1458c,f14baa0629,f406028619": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only",
+  "reused_from": "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619"
+ },
+ "0f2962a47b,1c99cbaea7,377df59da1,48d3129ed2,827e6c4f92,9072a3dea3,932f34b9c2,9bcb43e52f,a87b17740a,badd203691,c0ba6c0141,cd43af42da,cda3392ce0,deeb85705a,f14baa0629,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only",
+  "reused_from": "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619"
+ },
+ "164a205a7c,16bf26aeeb,3a2cef81d0,7d9aa52aed,94ca23f5be,d115d9d5fb": {
+  "emoji": "📂",
+  "title": "File structure setup",
+  "summary": "Initializes file list and reads text files.",
+  "risk": "low: file handling only",
+  "reused_from": "1dd82aa198,2b75dceba0,3fb4de164a,94ca23f5be,a424d286aa,d115d9d5fb,fc30f6829e"
+ },
+ "0f2962a47b,1c99cbaea7,377df59da1,6635712285,827e6c4f92,9072a3dea3,932f34b9c2,9bcb43e52f,a87b17740a,badd203691,c0ba6c0141,cd43af42da,cda3392ce0,deeb85705a,f14baa0629,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only",
+  "reused_from": "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619"
+ },
+ "0f2962a47b,13c4da56e5,1c99cbaea7,377df59da1,6635712285,6fe0d0afbe,827e6c4f92,9072a3dea3,a87b17740a,b582935154,c0ba6c0141,cd43af42da,cda3392ce0,deeb85705a,ebd4dbee9c,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only",
+  "reused_from": "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619"
+ },
+ "0f2962a47b,1c99cbaea7,2b8d515e7b,377df59da1,6635712285,6fe0d0afbe,827e6c4f92,9072a3dea3,a87b17740a,b582935154,c0ba6c0141,cd43af42da,cda3392ce0,deeb85705a,ebd4dbee9c,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history",
+  "summary": "Replays past analysis events and changes.",
+  "risk": "low: data display only",
+  "reused_from": "023491b9c1,0f2962a47b,1c99cbaea7,211db0b6ae,2f7b9a852d,377df59da1,3f81026338,4d3b040662,6fcb19589a,827e6c4f92,932f34b9c2,9bcb43e52f,badd203691,cd43af42da,deeb85705a,e05246175e,f14baa0629,f406028619"
+ },
+ "01b18429bf,0f2962a47b,107c08eb99,1c99cbaea7,2b8d515e7b,6635712285,9072a3dea3,a87b17740a,c0ba6c0141,cd43af42da,cda3392ce0,dc98e0f5fd,deeb85705a,f1d1fc9692,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past analysis events for review.",
+  "risk": "low: display only"
+ },
+ "20619db1c2,290023f7d4,4655d2de71,9cf1b17b8c,adfa8d48f7,b86f15d86b,bf48101bf4,c5987124af,d29fd7a614,f2440080d1": {
+  "emoji": "🔧",
+  "title": "Syntax definition loader",
+  "summary": "Loads and parses syntax patterns for text objects.",
+  "risk": "high: incorrect patterns break text editing",
+  "reused_from": "044eb7fa4d,20619db1c2,42c1fe437d,824a340943,b86f15d86b,bf48101bf4,c5987124af,d29fd7a614,de8d703d10,f09cd1f86c,f2440080d1"
+ },
+ "24443c7a02,3fe3caa3f2,4ee0467b1d,a27221c873,c8b6c34a77,f00d6fbabf": {
+  "emoji": "📜",
+  "title": "Syntax language loader",
+  "summary": "Loads and retrieves syntax definitions by name.",
+  "risk": "low: Only reads configuration files",
+  "reused_from": "24443c7a02,4ee0467b1d,a27221c873,c6b2814cbc,c8b6c34a77,f00d6fbabf"
+ },
+ "01b18429bf,107c08eb99,128d5b0f16,2b8d515e7b,570c625f4e,6635712285,9072a3dea3,a87b17740a,c25f9c5af6,cd43af42da,dc98e0f5fd,deeb85705a,ef0c57b805,f1d1fc9692,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past analysis events for review.",
+  "risk": "low: display only",
+  "reused_from": "01b18429bf,0f2962a47b,107c08eb99,1c99cbaea7,2b8d515e7b,6635712285,9072a3dea3,a87b17740a,c0ba6c0141,cd43af42da,cda3392ce0,dc98e0f5fd,deeb85705a,f1d1fc9692,f406028619,f5475b9892"
+ },
+ "164a205a7c,16bf26aeeb,3787110bf6,7d9aa52aed,94ca23f5be,d115d9d5fb": {
+  "emoji": "📂",
+  "title": "File structure setup",
+  "summary": "Initializes file list and reads text files.",
+  "risk": "low: file handling only",
+  "reused_from": "1dd82aa198,2b75dceba0,3fb4de164a,94ca23f5be,a424d286aa,d115d9d5fb,fc30f6829e"
+ },
+ "0c88500513,107c08eb99,128d5b0f16,2b8d515e7b,570c625f4e,6635712285,9072a3dea3,97bab36076,a87b17740a,c25f9c5af6,cd43af42da,dc98e0f5fd,ef0c57b805,f1d1fc9692,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past analysis events for review.",
+  "risk": "low: display only",
+  "reused_from": "01b18429bf,0f2962a47b,107c08eb99,1c99cbaea7,2b8d515e7b,6635712285,9072a3dea3,a87b17740a,c0ba6c0141,cd43af42da,cda3392ce0,dc98e0f5fd,deeb85705a,f1d1fc9692,f406028619,f5475b9892"
+ },
+ "03541f1df6,0721036e9f,0c5fffebf8,0f73b12ab7,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,3b17fa13e5,42f34885d1,463d5e36d9,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4fd1885764,5f20649558,5fd702e8b3,617bb3f1f3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a43b4aa0ce,a7744ac492,ae0717590e,b51064247a,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d67e78a9cf,d9f237a4fc,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low",
+  "reused_from": "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51"
+ },
+ "008bd67bf1,4c126d6886,4e47c76b94,93f29446b7,c854cffd13,de6e3dc3ab,ded4c2cbd2": {
+  "emoji": "🧠",
+  "title": "Command runner tracker",
+  "summary": "Tracks command execution history and arguments",
+  "risk": "medium: Incorrect command parsing may break automation"
+ },
+ "4c126d6886,4e47c76b94,8aeec5794e,93f29446b7,c854cffd13,de6e3dc3ab,ded4c2cbd2": {
+  "emoji": "🧠",
+  "title": "Command runner tracker",
+  "summary": "Tracks command execution history and arguments",
+  "risk": "medium: Incorrect command parsing may break automation",
+  "reused_from": "008bd67bf1,4c126d6886,4e47c76b94,93f29446b7,c854cffd13,de6e3dc3ab,ded4c2cbd2"
+ },
+ "05978d5147,06956983d7,1e47802534,2cd50104fa,34724a0936,5ef52cef28,7c06761d91,8de76de1fa,91a36fd4dc,9d6d5ae92f,9fc1c6f631,afb505c482,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cddcc494de,d9f944b7b0,da117ac602,f6c61e7859,f99a0b4a31": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Manages transcript events and tool usage",
+  "risk": "medium: data integrity",
+  "reused_from": "08485823cf,09b7ec4485,1e47802534,2cd50104fa,3453c45095,34724a0936,4604f7bd7d,7c06761d91,91a36fd4dc,9fc1c6f631,b1776777b4,bafbfadcde,c80e18493e,cb9cad7cf7,d9f944b7b0,e74eaf488a,f6c61e7859,f99a0b4a31"
+ },
+ "0c381eec2f,12d9d99900,13086a8825,182b932ee3,1b8d13b6ae,3e9c0bf117,63b620dad3,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,dc081e599e,e751e108f8,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code window renderer",
+  "summary": "Draws the code window layout and content.",
+  "risk": "low",
+  "reused_from": "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3a9cf4493f,3e9c0bf117,63b620dad3,694331a249,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,e751e108f8,f191376eb1"
+ },
+ "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3e9c0bf117,63b620dad3,70d4628da1,7cd8306a90,938f2c5e26,a358522555,afe31f38e4,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,dc081e599e,e751e108f8,f191376eb1": {
+  "emoji": "🖥️",
+  "title": "Code window renderer",
+  "summary": "Draws the code window layout and content.",
+  "risk": "low",
+  "reused_from": "0c381eec2f,12d9d99900,182b932ee3,1b8d13b6ae,3a9cf4493f,3e9c0bf117,63b620dad3,694331a249,70d4628da1,7cd8306a90,938f2c5e26,a358522555,bbf075dafa,c0626584dd,c0f3662880,d250e2a531,d828ebcab7,e751e108f8,f191376eb1"
+ },
+ "4524046c39,4c126d6886,4e47c76b94,8aeec5794e,c854cffd13,de6e3dc3ab,ded4c2cbd2": {
+  "emoji": "🧠",
+  "title": "Command runner tracker",
+  "summary": "Tracks command execution history and arguments",
+  "risk": "medium: Incorrect command parsing may break automation",
+  "reused_from": "008bd67bf1,4c126d6886,4e47c76b94,93f29446b7,c854cffd13,de6e3dc3ab,ded4c2cbd2"
+ },
+ "0f73b12ab7,113af7ad5a,130993620c,1e29997717,21ddffb3c1,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,3ac1974d21,3b17fa13e5,42f34885d1,463d5e36d9,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4fd1885764,5aced1e3b9,5f20649558,5fd702e8b3,617bb3f1f3,648c28ecda,681adb7c71,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a43b4aa0ce,a7744ac492,ae0717590e,b51064247a,b65aab5afd,bd90737ad1,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d67e78a9cf,d9f237a4fc,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low",
+  "reused_from": "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51"
+ },
+ "6bebc70748,70d37a1e2e,72194039d7,991fbbbef7,c290ab50a8,d506c8d4dc,db1ba76222,de3f7c23a4,e8aa7ae0e3": {
+  "emoji": "📜",
+  "title": "Transcript detail formatter",
+  "summary": "Parses and formats transcript details.",
+  "risk": "low: formatting only",
+  "reused_from": "0d52515d1b,3b86522620,54371cd7c9,70d37a1e2e,c46f542793,c991464727,db1ba76222,db712924a3"
+ },
+ "087cb646fd,10b49a4566,2cd50104fa,34724a0936,3b6a9af25c,54ff6bff19,5ef52cef28,6e3291eb02,71152bd91a,7c06761d91,91a36fd4dc,9fc1c6f631,a1c76c2797,a63b3d0606,afb505c482,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cffeaa682d,d9f944b7b0,f1d6f94173": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Processes and emits transcript events from the agent.",
+  "risk": "medium: Incorrect event emission may break history tracking."
+ },
+ "07da075747,0f73b12ab7,113af7ad5a,130993620c,1e29997717,21ddffb3c1,2242bae6bf,2372b29c42,25d499da6d,3ac1974d21,3b17fa13e5,42f34885d1,463d5e36d9,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4fd1885764,5aced1e3b9,5f20649558,5fd702e8b3,617bb3f1f3,648c28ecda,681adb7c71,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a43b4aa0ce,a7744ac492,ae0717590e,b51064247a,b65aab5afd,bd90737ad1,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d67e78a9cf,d9f237a4fc,e874bc2fd7,edb864c365,f999c5dc51": {
+  "emoji": "👁️",
+  "title": "Inspection view renderer",
+  "summary": "Draws detailed inspection panels and metrics",
+  "risk": "low",
+  "reused_from": "03541f1df6,0c5fffebf8,113af7ad5a,130993620c,1e29997717,2242bae6bf,2372b29c42,25d499da6d,31ef214bbc,363bd7b245,3ac1974d21,40c7e37e98,42f34885d1,46af65ee44,47811a198a,485b53cc5c,48ed368f5d,4d70389b4f,4dac2502f8,4fd1885764,5f20649558,5fd702e8b3,648c28ecda,68e417054f,721123059f,839a18ff27,83b9a1537f,8c055c9d5a,8e09739143,9062c935af,94d0c23bbf,95aadc17b2,9906dcf514,9fb1ffdb29,a2ac60f6ad,a2b1f76c35,a3b2c8264d,a416323e02,a7744ac492,aced27557f,ad1c3a81be,ae0717590e,b51064247a,bc6132cbee,bf0b109a4d,bf29cb0c0e,c8472f55ce,d042501c8a,d236f27aa2,d9f237a4fc,e57cd3baba,e874bc2fd7,edb864c365,f999c5dc51"
+ },
+ "087cb646fd,10b49a4566,2cd50104fa,34724a0936,3b6a9af25c,54ff6bff19,5b73d4e69c,5ef52cef28,6e3291eb02,71152bd91a,7c06761d91,91a36fd4dc,9fc1c6f631,a1c76c2797,a63b3d0606,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cffeaa682d,d9f944b7b0,f1d6f94173": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Processes and emits transcript events from the agent.",
+  "risk": "medium: Incorrect event emission may break history tracking.",
+  "reused_from": "087cb646fd,10b49a4566,2cd50104fa,34724a0936,3b6a9af25c,54ff6bff19,5ef52cef28,6e3291eb02,71152bd91a,7c06761d91,91a36fd4dc,9fc1c6f631,a1c76c2797,a63b3d0606,afb505c482,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cffeaa682d,d9f944b7b0,f1d6f94173"
+ },
+ "107c08eb99,128d5b0f16,14d351f175,2b8d515e7b,570c625f4e,6635712285,9072a3dea3,97bab36076,a87b17740a,c25f9c5af6,cd43af42da,dc98e0f5fd,ef0c57b805,f1d1fc9692,f406028619,f5475b9892": {
+  "emoji": "🔄",
+  "title": "Replay history viewer",
+  "summary": "Replays past analysis events for review.",
+  "risk": "low: display only",
+  "reused_from": "01b18429bf,0f2962a47b,107c08eb99,1c99cbaea7,2b8d515e7b,6635712285,9072a3dea3,a87b17740a,c0ba6c0141,cd43af42da,cda3392ce0,dc98e0f5fd,deeb85705a,f1d1fc9692,f406028619,f5475b9892"
+ },
+ "6bebc70748,70d37a1e2e,72194039d7,89ba719425,991fbbbef7,d506c8d4dc,db1ba76222,de3f7c23a4,e8aa7ae0e3": {
+  "emoji": "📜",
+  "title": "Detail view builder",
+  "summary": "Formats transcript data into viewable detail blocks.",
+  "risk": "low: Only affects display formatting, not data integrity."
+ },
+ "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,6d740a832e,9607f9dc7a,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd": {
+  "emoji": "🖥️",
+  "title": "Client connection manager",
+  "summary": "Handles incoming client sockets and data streams.",
+  "risk": "high: data loss or connection failure"
+ },
+ "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,7ea3223dbd,9607f9dc7a,b73952ec29,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd": {
+  "emoji": "🖥️",
+  "title": "Client connection manager",
+  "summary": "Handles incoming client sockets and data streams.",
+  "risk": "high: data loss or connection failure",
+  "reused_from": "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,6d740a832e,9607f9dc7a,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd"
+ },
+ "087cb646fd,10b49a4566,2cd50104fa,34724a0936,3b6a9af25c,54ff6bff19,5b73d4e69c,5ef52cef28,6e3291eb02,71152bd91a,742eeff365,7c06761d91,91a36fd4dc,9fc1c6f631,a1c76c2797,a63b3d0606,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cffeaa682d,d9f944b7b0": {
+  "emoji": "📜",
+  "title": "Transcript feed manager",
+  "summary": "Processes and emits transcript events from the agent.",
+  "risk": "medium: Incorrect event emission may break history tracking.",
+  "reused_from": "087cb646fd,10b49a4566,2cd50104fa,34724a0936,3b6a9af25c,54ff6bff19,5ef52cef28,6e3291eb02,71152bd91a,7c06761d91,91a36fd4dc,9fc1c6f631,a1c76c2797,a63b3d0606,afb505c482,b1776777b4,b36def6f62,b7624f2a91,c80e18493e,cb9cad7cf7,cffeaa682d,d9f944b7b0,f1d6f94173"
+ },
+ "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,8aa8874d02,9607f9dc7a,b73952ec29,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd": {
+  "emoji": "🖥️",
+  "title": "Client connection manager",
+  "summary": "Handles incoming client sockets and data streams.",
+  "risk": "high: data loss or connection failure",
+  "reused_from": "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,6d740a832e,9607f9dc7a,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd"
  }
 }
