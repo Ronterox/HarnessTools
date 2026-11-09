@@ -1093,6 +1093,87 @@ const distToPoly = (pts, x, y) => {
   return best;
 };
 
+/* ───────────────────────── step highlight ─────────────────────────
+   Each step change lights what it touched, with or without areas and inside the drill-down: a created blob buds (a
+   green glow, a swell that settles), a modified one sends yellow rings out, a deleted one fades out in red where it
+   was. PULSE_MS long; steps coming faster (fast play, a held →) shorten it to 3 step gaps, at least PULSE_MIN; the
+   same blob changing again starts its pulse over; at most PULSE_MAX blob pulses run at full strength, past that the
+   oldest fade out early (FPULSES is not capped: only the drilled blob's are drawn, and they end like the others). A
+   blob or function already full size when its creation step is shown again (going back) keeps its size: no bud. A
+   step drops the red fades of blobs it has (going back over a deletion) and of removed functions it does not show.
+   Reduced motion: a still outline instead. PULSES: blob id -> pulse; FPULSES: 'f:' + qual (a function), 'g:' + qual
+   (one removed). */
+const PULSE_MS = 2000, PULSE_MIN = 900, PULSE_MAX = 8, PULSE_DEL = 900, PULSE_COL = { new: 'add', mod: 'mix', del: 'rem' };
+const motionQ = matchMedia('(prefers-reduced-motion: reduce)');
+const PULSES = new Map(), FPULSES = new Map();
+let PULSE_FRAMES = 0;            // frames drawn with a pulse running (the tests check it stops)
+function pulseStep(i, now, gap, from) {           // from: the step shown before (-1: none)
+  const dur = gap > 0 ? clamp(gap * 3, PULSE_MIN, PULSE_MS) : PULSE_MS, st = STEPS[i], blobs = IDX[i].blobs, prev = IDX[i - 1], hit = [];
+  const put = (map, key, kind, d, at) => map.set(key, { kind, t0: now, end: now + d, at });
+  const ghosts = new Set([...st.stains.values()].filter(s => s.gone).map(s => 'g:' + s.q));
+  for (const [id, p] of PULSES) if (p.kind === 'del' && blobs.has(id)) PULSES.delete(id);
+  for (const k of FPULSES.keys()) if (k.startsWith('g:') && !ghosts.has(k)) FPULSES.delete(k);
+  for (const b of st.blobs) {
+    const d = b.delta, n = d.state === 'new' ? b.size : d.added + d.removed; if (n <= 0) continue;
+    hit.push([b.id, d.state === 'new' ? 'new' : 'mod', n, b]);
+    for (const f of b.funcs) { const fd = f.delta; if (fd.state === 'new') put(FPULSES, 'f:' + f.qual, 'new', dur, { grow: !IDX[from]?.funcs.has(f.qual) }); else if (fd.added + fd.removed > 0) put(FPULSES, 'f:' + f.qual, 'mod', dur); }
+  }
+  if (prev) for (const [id, b] of prev.blobs) if (!blobs.has(id)) hit.push([id, 'del', b.size, b]);
+  for (const s of st.stains.values()) if (s.gone && s.step === i) put(FPULSES, 'g:' + s.q, 'del', Math.min(dur, PULSE_DEL));
+  hit.sort((p, q) => q[2] - p[2]);
+  for (const [id, kind, , b] of hit.slice(0, PULSE_MAX)) {
+    if (kind === 'new') { const v = VIS.get(id); put(PULSES, id, kind, dur, { grow: !(v && v.r >= 0.9 * radius(b.size)) }); continue; }
+    if (kind !== 'del') { put(PULSES, id, kind, dur); continue; }
+    const v = VIS.get(id), h = v || homeOf(id, b);      // where it was drawn: it shrinks away from there
+    put(PULSES, id, kind, Math.min(dur, PULSE_DEL), { x: h.x, y: h.y, r: v ? v.r : radius(b.size), kind: b.kind, area: b.area });
+  }
+  const on = [...PULSES.values()].filter(p => !p.out).sort((p, q) => p.t0 - q.t0);
+  for (const p of on.slice(0, Math.max(0, on.length - PULSE_MAX))) { p.out = true; p.end = Math.min(p.end, now + 450); }
+}
+function prunePulses(now) {
+  for (const m of [PULSES, FPULSES]) for (const [k, p] of m) if (now >= p.end) m.delete(k);
+  if (PULSES.size || FPULSES.size) PULSE_FRAMES++;
+}
+/* a running pulse: its kind, age e, length and strength a (rises in 140 ms, fades over its last 450 ms) */
+function pulseAt(map, key, now) {
+  const p = map.get(key); if (!p || now >= p.end) return null;
+  const e = Math.max(0, now - p.t0);
+  return { kind: p.kind, e, dur: p.end - p.t0, grow: !!p.at?.grow, a: motionQ.matches ? 1 : Math.min(1, e / 140) * Math.min(1, (p.end - now) / 450) };
+}
+/* a created blob buds: from 55% it swells past its size and settles (none with reduced motion, nor when shown again
+   already full size) */
+function pulseScale(p) {
+  if (!p || p.kind !== 'new' || motionQ.matches) return 1;
+  if (!p.grow) return 1;
+  const k = clamp(p.e / 560, 0, 1) - 1;
+  return 0.55 + 0.45 * (1 + 2.70158 * k * k * k + 1.70158 * k * k);
+}
+/* pulse p on a shape of radius R at x, y (shape(r) traces it): under = the glow behind its fill, else what goes over it */
+function drawPulse(c, p, x, y, R, shape, alpha, under) {
+  const col = T[PULSE_COL[p.kind]], a = alpha * p.a, rim = R * 1.05 + 6;      // (clear of a thick complexity border)
+  if (a < 0.01) return;
+  c.save(); c.setLineDash([]); c.strokeStyle = col; c.lineJoin = 'round';
+  if (motionQ.matches) { if (!under) { c.globalAlpha = alpha; c.lineWidth = 3; shape(rim); c.stroke(); } }
+  else if (under) {
+    if (p.kind !== 'del') {
+      const G = R * 1.7 + 16, g = c.createRadialGradient(x, y, R * 0.7, x, y, G);
+      g.addColorStop(0, col); g.addColorStop(1, col + '00');      // (not 'transparent': that fades through grey)
+      c.globalAlpha = a * (p.kind === 'new' ? 0.75 : 0.4); c.fillStyle = g; c.beginPath(); c.arc(x, y, G, 0, TAU); c.fill();
+    }
+  } else if (p.kind === 'new') {
+    c.globalAlpha = a; c.lineWidth = 3.5; shape(rim); c.stroke();
+  } else if (p.kind === 'mod') {         // a steady line on the rim, a ring going out about once a second
+    const ph = p.e / 950 % 1, out = clamp(R * 0.7, 16, 40);
+    c.globalAlpha = a * 0.9; c.lineWidth = 2.5; shape(rim); c.stroke();
+    c.globalAlpha = a * (1 - ph) * 0.9; c.lineWidth = 1.5 + 2.5 * (1 - ph); shape(rim + out * ph); c.stroke();
+  } else {                               // deleted: a red wash that shrinks with it, a ring that leaves
+    const k = clamp(p.e / p.dur, 0, 1);
+    c.globalAlpha = a * 0.4 * (1 - k); c.fillStyle = col; shape(Math.max(1, R * (1 - 0.4 * k))); c.fill();
+    c.globalAlpha = a * (1 - k); c.lineWidth = 2.5; shape(R * (1 + 0.35 * k) + 3); c.stroke();
+  }
+  c.restore();
+}
+
 /* ───────────────────────── main map ───────────────────────── */
 const VIS = new Map();     // id → { r, a, blob }  (animated radius/alpha; blob = last seen data)
 let hover = null, hoverEdge = null, hoverNode = null, hoverArea = null, dnGeo = [], edgeGeo = [], stainGeo = [], stepAt = 0, mouse = { x: -1, y: -1 };
@@ -1220,13 +1301,15 @@ function drawMap(now, t) {
   // blobs, big first so small ones stay visible on top
   const ids = [...VIS.keys()].sort((a, b) => VIS.get(b).r - VIS.get(a).r);
   for (const id of ids) {
-    const v = VIS.get(id), b = v.blob, x = sx(v.x), y = sy(v.y), R = v.r * VIEW.s, shown = vis.get(id);
+    const v = VIS.get(id), b = v.blob, present = IDX[cur].blobs.has(id), pu = present && PULSES.get(id)?.kind !== 'del' ? pulseAt(PULSES, id, now) : null;
+    const x = sx(v.x), y = sy(v.y), R = v.r * VIEW.s * pulseScale(pu), shown = vis.get(id);
     if (R < 1 || shown < 0.01) continue;
     if (x + R < -60 || x - R > VW + 60 || y + R < -60 || y - R > VH + 60) continue;
-    const page = PAGE(b.kind), col = kindColors(b.kind, b.region), seed = hash(id), present = IDX[cur].blobs.has(id);
+    const page = PAGE(b.kind), col = kindColors(b.kind, b.region), seed = hash(id);
     const shape = (r, tt = t) => shapePath(ctx, b.kind, x, y, r, seed, tt), ms = present ? marks.get(id) || [] : [];
     let alpha = v.a * shown * (b.kind === 'orphan' ? 0.75 : 1);
     if ((hover || hoverNode) && !near.has(id)) alpha *= 0.22;
+    if (pu) drawPulse(ctx, pu, x, y, R, shape, alpha, true);
     ctx.save(); ctx.globalAlpha = alpha;
     shape(R); ctx.fillStyle = col.fill; ctx.fill();
     if (page) pageDetail(ctx, x, y, R, col);
@@ -1251,6 +1334,7 @@ function drawMap(now, t) {
       ctx.strokeStyle = T.flash; ctx.lineWidth = 2 + 3 * (1 - f); ctx.globalAlpha = alpha * (f < 1 ? blink : 0.7);
       shape(R + 4 + 10 * (1 - f)); ctx.stroke();
     }
+    if (pu) drawPulse(ctx, pu, x, y, R, shape, alpha, false);
     if (present && b.delta.moved > 0 && b.delta.state !== 'new') shimmer(ctx, x, y, R + 3, seed, t, alpha);
     if (hover === id) { ctx.strokeStyle = T.flash; ctx.lineWidth = 1.5; ctx.globalAlpha = 0.9 * shown; shape(R + 5); ctx.stroke(); }
     ctx.restore();
@@ -1279,6 +1363,14 @@ function drawMap(now, t) {
     if (inside) { ctx.fillText(label, x, y + es * 0.55 + 2); labels.push({ force: true, text: label, x, y: y + es * 0.55 + 2, fs }); }
     else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, it, col: col.text, alpha: hover && !near.has(id) ? 0.2 * shown : alpha, big: R });
     ctx.restore();
+  }
+  // blobs deleted by this step: a red fade where they were
+  for (const [id, p0] of PULSES) {
+    if (p0.kind !== 'del') continue;
+    const p = pulseAt(PULSES, id, now), w = p0.at, sh = 1 - am + am * (show.get(w.area) || 0);
+    if (!p || sh < 0.01) continue;
+    const x = sx(w.x), y = sy(w.y), seed = hash(id);
+    drawPulse(ctx, p, x, y, w.r * VIEW.s, r => shapePath(ctx, w.kind, x, y, r, seed, t), sh, false);
   }
   // region names first, then inside labels (as obstacles), then outside labels, hovered blob always wins
   const order2 = l => l.region ? 0 : l.force ? 1 : 2;
@@ -1358,7 +1450,9 @@ function drawDrill(now, t) {
     }
     const m = { ...s, key: s.step, steps: [s.step], parts: [s] }, x = C.x + best.x, y = C.y + best.y;
     drawStain(ctx, x, y, r, m, hash('ghost#' + s.q), now);
-    const a0 = ctx.globalAlpha; ctx.globalAlpha = a0 * stainAlpha(cur - s.step);
+    const gp = pulseAt(FPULSES, 'g:' + s.q, now), a0 = ctx.globalAlpha;
+    if (gp) drawPulse(ctx, gp, x, y, r, rr => { ctx.beginPath(); ctx.arc(x, y, rr, 0, TAU); }, a0, false);
+    ctx.globalAlpha = a0 * stainAlpha(cur - s.step);
     ctx.font = `600 12px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tw = ctx.measureText(s.name).width; ctx.fillText(s.name, x, y); ctx.fillStyle = m.git ? T.git : T.rem; ctx.fillRect(x - tw / 2 - 2, y - 0.5, tw + 4, 1.6);
     ctx.globalAlpha = a0;
@@ -1431,16 +1525,19 @@ function drawDrill(now, t) {
   // function blobs
   const outside = [];
   for (const n of nodes) {
-    const p = P(n), f = n.f, seed = hash(f.qual), isSel = drill.sel === f.qual;
+    const p = P(n), f = n.f, seed = hash(f.qual), isSel = drill.sel === f.qual, fp = pulseAt(FPULSES, 'f:' + f.qual, now), r = n.r * pulseScale(fp);
+    const fshape = rr => blobPath(ctx, p.x, p.y, rr, seed, t * 1.3);
     ctx.globalAlpha = ease * (sel && sel !== f.qual && !f.calls.some(c => c.to === sel) && !byQ.get(sel)?.f.calls.some(c => c.to === f.qual) ? 0.4 : 1);
-    blobPath(ctx, p.x, p.y, n.r, seed, t * 1.3); ctx.fillStyle = col.fill; ctx.fill();
+    if (fp) drawPulse(ctx, fp, p.x, p.y, r, fshape, ctx.globalAlpha, true);
+    fshape(r); ctx.fillStyle = col.fill; ctx.fill();
     const fm = funcMark(f.qual);
-    if (fm) { const s = stainSpot(f.qual, fm, n.r, f.lines); ctx.save(); ctx.clip(); drawStain(ctx, p.x + s.dx, p.y + s.dy, s.r, fm, s.seed, now); ctx.restore();
+    if (fm) { const s = stainSpot(f.qual, fm, r, f.lines); ctx.save(); ctx.clip(); drawStain(ctx, p.x + s.dx, p.y + s.dy, s.r, fm, s.seed, now); ctx.restore();
               drill.stains.push({ m: fm, x: p.x + s.dx, y: p.y + s.dy, r: s.r, where: f.name }); }
-    ctx.lineWidth = lineW(f.branches); ctx.strokeStyle = col.stroke; blobPath(ctx, p.x, p.y, n.r, seed, t * 1.3); ctx.stroke();
-    if (f.delta.state === 'moved') shimmer(ctx, p.x, p.y, n.r + 3, seed, t * 1.3, ctx.globalAlpha);
-    if (f.delta.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; blobPath(ctx, p.x, p.y, n.r + 4, seed, t * 1.3); ctx.stroke(); }
-    if (isSel || drill.hov === f.qual) { ctx.strokeStyle = T.mix; ctx.lineWidth = 2; blobPath(ctx, p.x, p.y, n.r + 6, seed, t * 1.3); ctx.stroke(); }
+    ctx.lineWidth = lineW(f.branches); ctx.strokeStyle = col.stroke; fshape(r); ctx.stroke();
+    if (f.delta.state === 'moved') shimmer(ctx, p.x, p.y, r + 3, seed, t * 1.3, ctx.globalAlpha);
+    if (f.delta.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; fshape(r + 4); ctx.stroke(); }
+    if (fp) drawPulse(ctx, fp, p.x, p.y, r, fshape, ctx.globalAlpha, false);
+    if (isSel || drill.hov === f.qual) { ctx.strokeStyle = T.mix; ctx.lineWidth = 2; fshape(r + 6); ctx.stroke(); }
     const fs = clamp(n.r * 0.36, 11, 15); ctx.font = `600 ${fs}px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const name = f.name.length > 22 ? f.name.slice(0, 21) + '…' : f.name, tw = ctx.measureText(name).width, inside = tw < n.r * 1.7;
     if (inside && fm) {
@@ -1570,11 +1667,13 @@ const tickAt = x => { for (const t of ticks) if (x < t.x1) return t.i; return ST
 
 /* ───────────────────────── step, status, playback ───────────────────────── */
 let playing = false, speed = 1, acc = 0;
-function setStep(i) {
+function setStep(i, quiet) {          // quiet: shown again as it was, no highlight of its edits (liveShow)
   i = clamp(i, 0, STEPS.length - 1);
   if (LIVE && !AUTO) { TRACK = i === STEPS.length - 1; if (TRACK) NEWN = 0; livePill(); }
   if (i === cur && stepAt) return;
+  const was = stepAt, from = was ? cur : -1;
   cur = i; stepAt = performance.now();
+  if (!quiet) pulseStep(i, stepAt, was ? stepAt - was : 0, from);
   if (LIVE) liveFocus();
   const s = STEPS[i], time = s.ts ? new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' }) : '';
   const S = s.stats, res = S && S.calls > 0   // v2: how many calls the analyzer could place
@@ -1790,6 +1889,7 @@ function buildLegend() {
     <div class="grid"><div class="row">${stain(T.mix)} modified</div><div class="row">${stain(T.rem)} mostly deleted</div>
     <div class="row"><span class="dot" style="border:2px solid ${T.flash}"></span> new blob</div>
     <div class="row"><span class="dot" style="border:1.5px dashed ${T.mute}"></span> code moved in</div>
+    <div class="row" style="grid-column:1 / -1"><span class="dot" style="background:radial-gradient(circle, ${T.add} 0 45%, transparent 72%)"></span><span class="dot" style="border:2px solid ${T.mix}"></span><span class="dot" style="border:2px solid ${T.rem}"></span> lit for 2 s: created · modified · deleted</div>
     ${SESS_ON ? `<div class="row">${stain(T.git)} changed by a git commit</div>` : ''}</div>
     <h4>folds and cuts</h4>
     <div class="row"><span class="dot" style="border:1.5px solid ${T.mute};width:9px;height:9px;margin:0 2.5px"></span> satellite: a small blob folded into this one</div>
@@ -1959,7 +2059,7 @@ function liveApply(committed, tail, had) {
 }
 /* setStep(i) again for a step whose content changed (flash: it plays its arrival again) without leaving TRACK */
 function liveShow(i, flash) {
-  const keep = stepAt; stepAt = 0; AUTO = true; setStep(i); AUTO = false;
+  const keep = stepAt; stepAt = 0; AUTO = true; setStep(i, !flash); AUTO = false;
   if (!flash) stepAt = keep;
 }
 function autoStep(i) { AUTO = true; setStep(i); AUTO = false; }
@@ -2024,6 +2124,7 @@ function frame(now) {
   const dt = Math.min(0.1, (now - lastT) / 1000); lastT = now;
   if (playing) { acc += dt * 1000 * speed; if (acc > 1100) { acc = 0; if (cur >= STEPS.length - 1) { if (!LIVE) setPlaying(false); } else if (!(LIVE && TRACK)) setStep(cur + 1); } }
   if (LIVE) liveTick(dt);
+  if (PULSES.size || FPULSES.size) prunePulses(now);
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0); ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH);
   if (STEPS.length) {
     updateVis(dt); if (!drill) moveCamera(dt); const t = now / 1000;

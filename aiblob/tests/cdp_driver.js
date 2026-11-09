@@ -6,6 +6,7 @@
 //   {"cmd": "shot", "path"}                   PNG screenshot of the viewport
 //   {"cmd": "heap"}                           -> {"used", "total"} bytes after a forced GC
 //   {"cmd": "errors"}                         -> {"value": [uncaught exceptions and console errors so far]}
+//   {"cmd": "media", "features"}              emulate CSS media features, e.g. [{"name": "prefers-reduced-motion", "value": "reduce"}]
 const readline = require('readline'), fs = require('fs');
 const ws = new WebSocket(process.argv[2]);
 let id = 0;
@@ -35,6 +36,7 @@ const handlers = {
   async shot(c) { const r = await send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(c.path, Buffer.from(r.data, 'base64')); return {}; },
   async heap() { await send('HeapProfiler.collectGarbage'); await sleep(200); await send('HeapProfiler.collectGarbage'); const r = await send('Runtime.getHeapUsage'); return { used: r.usedSize, total: r.totalSize }; },
   async errors() { return { value: errors.splice(0) }; },
+  async media(c) { await send('Emulation.setEmulatedMedia', { features: c.features || [] }); return {}; },
 };
 ws.onopen = async () => {
   await send('Page.enable'); await send('Runtime.enable'); await send('HeapProfiler.enable');

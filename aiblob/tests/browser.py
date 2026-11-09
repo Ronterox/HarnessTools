@@ -1,4 +1,4 @@
-"""Headless Chrome for the page tests, driven through cdp_driver.js (node): Browser().goto/eval/wait/shot/heap."""
+"""Headless Chrome for the page tests, driven through cdp_driver.js (node): Browser().goto/eval/wait/shot/heap/media."""
 import json, os, re, shutil, signal, subprocess, tempfile, time, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -53,6 +53,10 @@ class Browser:
 
     def heap(self):
         return self._cmd(cmd='heap')
+
+    def media(self, **features):
+        """Emulate CSS media features (prefers_reduced_motion='reduce'); none: back to the defaults."""
+        self._cmd(cmd='media', features=[{'name': k.replace('_', '-'), 'value': v} for k, v in features.items()])
 
     def errors(self):
         return self._cmd(cmd='errors')['value']
