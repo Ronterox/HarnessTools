@@ -4,7 +4,7 @@ import http.client, json, os, random, shutil, signal, socket, subprocess, sys, t
 
 import pytest
 
-import label, liveserve, timeline
+import areas, label, liveserve, timeline
 from livesim import SimWriter, dumps, raw_timeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -128,8 +128,13 @@ def label_py(tmp_path, head, lines, cache):
         return json.load(fh)['steps'], r.stdout
 
 
+def bare(steps):
+    """Served steps without the labels layer's key ids (`lk`, `mk`)."""
+    return [{k: v for k, v in s.items() if k not in ('lk', 'mk')} for s in steps]
+
+
 def same(a, b):
-    return [dumps(s) for s in a] == [dumps(s) for s in b]
+    return [dumps(s) for s in bare(a)] == [dumps(s) for s in bare(b)]
 
 
 # -- labels ---------------------------------------------------------------------------------------------------------------
@@ -224,20 +229,26 @@ def test_served_timeline_is_label_py_on_the_export(src, labels, tmp_path, served
     head, lines = raw_timeline(src)
     with open(os.path.join(REPO, 'demo', labels), encoding='utf-8') as fh:
         full = json.load(fh)
-    for name, cache in (('full', full), ('first', first_versions_only(lines, full))):
+    rnd = random.Random(7)      # (on aigource this half has a merged entry labelled on 323 steps only by the layer)
+    half = {k: v for k, v in full.items() if rnd.random() < 0.5}
+    for name, cache in (('full', full), ('first', first_versions_only(lines, full)), ('half', half)):
         c = tmp_path / f'{name}.json'
         c.write_text(json.dumps(cache), encoding='utf-8')
         want, report = label_py(tmp_path, head, lines, str(c))
         store = str(tmp_path / f'store-{name}')
         w = SimWriter(store, head)
-        k = len(lines) * 2 // 3
+        k = len(lines) if name == 'half' else len(lines) * 2 // 3
         w.commit(lines[:k])
         w.set_tail(lines[k:])
         s = served(store, str(c))
         tl = s.timeline()
         assert tl['live']['steps'] == k and tl['live']['provisional'] == len(lines) - k
-        assert same(tl['steps'], want), f'{name}: served steps differ from label.py on the export'
+        assert same_view(tl, want), f'{name}: the page would not show what label.py writes'
         assert {x: tl[x] for x in ('root', 'schema')} == head
+        if name != 'half':
+            assert same(tl['steps'], want), f'{name}: served steps differ from label.py on the export'
+        elif src == AIG:          # a merged entry back on an earlier version gets a label kept later: the layer's
+            assert tl['live']['labels'] and not same(tl['steps'], want)
         if src == AIG and name == 'first':
             assert ' 0 kept labels' not in report
 
@@ -386,13 +397,59 @@ def test_half_written_line_waits(flask, cache, tmp_path, served):
     ev.close()
 
 
-def test_new_label_cache_relabels(flask, cache, tmp_path, served):
+def layered(steps, overlay, full=True):
+    """The served steps as the page shows them with the labels layer, one at a time (a generator of JSON texts):
+    expanded, each blob and `merged` entry whose key id (`lk` / `mk`, carried on from step to step) the overlay names
+    gets its label (None: none), and the areas of a step where one changed captioned again (areas.caption_table, as
+    label.py does). Not `full`: only what labels touch (each blob's id, label and merged labels, the areas)."""
+    lk, mk = {}, {}
+    exp = liveserve.Expander(5)
+    for s in steps:
+        lk.update(s.get('lk', {}))
+        mk.update(s.get('mk', {}))
+        st = exp.push(s)
+        st = json.loads(dumps(st)) if full else dict(st, blobs=[dict(b, merged=[dict(m) for m in b.get('merged', ())])
+                                                                for b in st['blobs']])
+        hit = False
+        for b in st['blobs']:
+            for x, k in [(b, lk.get(b['id']))] + [(m, mk.get(m['id'])) for m in b.get('merged', ())]:
+                if k in overlay:
+                    hit = True
+                    if overlay[k] is None:
+                        x.pop('label', None)
+                    else:
+                        x['label'] = overlay[k]
+        if hit and 'areas' in st:
+            st['areas'] = areas.caption_table(st['blobs'], [a['id'] for a in st['areas']])
+        yield dumps(st) if full else digest(st)
+
+
+def digest(st):
+    return dumps([[(b['id'], b.get('label'), [m.get('label') for m in b.get('merged', ())]) for b in st['blobs']],
+                  st.get('areas')])
+
+
+def same_view(tl, want, overlay=None):
+    """The served timeline (with its labels layer) shows what label.py writes, step by step: whole steps, or on a
+    long timeline (where the steps but for labels are the same lines) what labels touch."""
+    full = len(want) < 200
+    got = layered(tl['steps'], tl['live']['labels'] if overlay is None else overlay, full)
+    exp = liveserve.Expander(5)
+    for st in want:
+        st = exp.push(st)
+        if next(got, None) != (dumps(st) if full else digest(st)):
+            return False
+    return next(got, None) is None
+
+
+def test_new_label_cache_is_a_labels_event_not_a_rebuild(flask, cache, tmp_path, served):
     head, lines = flask
     w = SimWriter(str(tmp_path / 's'), head)
     w.commit(lines)
     s = served(w.store, cache)
     tl = s.timeline()
-    ev = Events(s.port, tl['live']['epoch'], len(lines))
+    epoch = tl['live']['epoch']
+    ev = Events(s.port, epoch, len(lines))
     assert ev.next()[0] == 'tail'
     with open(cache, encoding='utf-8') as fh:
         c = json.load(fh)
@@ -400,10 +457,35 @@ def test_new_label_cache_relabels(flask, cache, tmp_path, served):
     c[key] = dict(c[key], title='Renamed part')
     with open(cache, 'w', encoding='utf-8') as fh:
         json.dump(c, fh)
-    assert ev.next()[0] == 'rebuild'
+    name, _, d = ev.next()
+    assert name == 'labels' and d['epoch'] == epoch and d['labels'] == {liveserve.kid(key): c[key]}
     want, _ = label_py(tmp_path, head, lines, cache)
-    assert same(s.timeline()['steps'], want)
-    assert 'Renamed part' in json.dumps(s.timeline(), ensure_ascii=False)
+    assert same_view(tl, want, d['labels'])                 # the page's steps + the event == label.py
+    tl2 = s.timeline()
+    assert tl2['live']['epoch'] == epoch and same_view(tl2, want)   # a page loading now gets the layer with them
+    ev.close()
+
+
+def test_a_label_learnt_relabels_the_tail_too(flask, cache, tmp_path, served):
+    head, lines = flask
+    w = SimWriter(str(tmp_path / 's'), head)
+    w.commit(lines[:12])
+    w.set_tail(lines[12:])
+    s = served(w.store, cache)
+    tl = s.timeline()
+    ev = Events(s.port, tl['live']['epoch'], 12)
+    assert ev.next()[0] == 'tail'
+    with open(cache, encoding='utf-8') as fh:
+        c = json.load(fh)
+    shown = {k for st in tl['steps'][12:] for k in (st.get('lk') or {}).values()}
+    key = next(k for k in sorted(c) if liveserve.kid(k) in shown)
+    c[key] = dict(c[key], title='Renamed tail part')
+    with open(cache, 'w', encoding='utf-8') as fh:
+        json.dump(c, fh)
+    name, _, d = ev.next()
+    assert name == 'tail'
+    want, _ = label_py(tmp_path, head, lines, cache)
+    assert same(d['tail'], want[12:]) and 'Renamed tail part' in json.dumps(d['tail'], ensure_ascii=False)
     ev.close()
 
 
@@ -825,3 +907,94 @@ def test_expander_is_timeline_expand():
         g = f.fork()
         assert [dumps(g.push(s)) for s in tl['steps'][k:]] == [dumps(s) for s in want[k:]]
         assert [dumps(f.push(s)) for s in tl['steps'][k:]] == [dumps(s) for s in want[k:]]
+
+
+# -- the labels layer -------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize('snap', [1, 3, 32])
+def test_recaches_in_any_order_plan_as_a_fresh_labeller(flask, tmp_path, monkeypatch, snap):
+    # caches changing under the labeller (answers, a key going, a title renamed), at any point: its plan, `applied`
+    # and the layer it served are a fresh labeller's with the last cache, and label.py's
+    monkeypatch.setattr(liveserve, 'SNAP', snap)
+    head, lines = flask
+    with open(os.path.join(REPO, 'demo', 'labels.json'), encoding='utf-8') as fh:
+        full = json.load(fh)
+    rnd = random.Random(snap)
+    for trial in range(4):
+        keys = sorted(full)
+        caches = [{k: full[k] for k in keys if rnd.random() < p} for p in (0.2, 0.5, 0.8, 0.6)]
+        caches[-1][keys[0]] = dict(full[keys[0]], title='Renamed later')
+        lab = liveserve.Labeller(head['root'], caches[0], 0.2, head['schema'])
+        cuts = sorted(rnd.sample(range(1, len(lines)), 3))
+        out, ov, at = [], {}, 0
+        for c, cache in zip(cuts + [len(lines)], caches[1:] + [caches[-1]]):
+            out += [json.loads(dumps(lab.push(json.loads(l), 0.0))) for l in lines[at:c]]
+            ov.update(lab.take_overlay())
+            ov.update(lab.recache(cache, lines[:c]))
+            at = c
+        fresh = liveserve.Labeller(head['root'], caches[-1], 0.2, head['schema'])
+        for l in lines:
+            fresh.push(json.loads(l), 0.0)
+        assert lab.work == fresh.work and lab.applied == fresh.applied
+        at = [sn[0] for sn in lab.snaps]
+        assert at == sorted(set(at))          # (one snapshot per position: the replayed ones replace the old)
+        c = tmp_path / f'c{trial}.json'
+        c.write_text(json.dumps(caches[-1]), encoding='utf-8')
+        want, _ = label_py(tmp_path, head, lines, str(c))
+        assert same_view({'steps': out, 'live': {'labels': ov}}, want)
+
+
+def test_recaches_keep_labels_as_a_fresh_labeller(tmp_path, monkeypatch):
+    # one blob, versions that keep labels and versions that do not; the caches label some of them: after any order of
+    # changes the kept labels (applied) are a fresh labeller's, and the page's view label.py's
+    monkeypatch.setattr(liveserve, 'SNAP', 2)
+    vs = [['h0', 'h1', 'h2', 'h3'], ["h0'", 'h1', 'h2', 'h3'], ["h0'", "h1'", 'h2', 'h3'], ["h0'", "h1'", 'h2*', 'h3'],
+          ["h0'", "h1'", "h2*", "h3'"], ['h0*', "h1'", 'h2*', "h3'"], ['h0*', "h1+", 'h2*', "h3'"]]
+    tl, _ = kept_fixture(vs)
+    head, lines = raw_timeline(tl)
+    keys = [','.join(sorted(v)) for v in vs]
+    lab_of = lambda k: {'emoji': '🔑', 'title': f'Keeper {keys.index(k)}', 'summary': 's', 'risk': 'low'}
+    rnd, kept = random.Random(2), 0
+    for trial in range(12):
+        caches = [{k: lab_of(k) for k in keys if rnd.random() < p} for p in (0.3, 0.5, 0.7)]
+        lab = liveserve.Labeller(head['root'], caches[0], 0.2, head['schema'])
+        out, ov, at = [], {}, 0
+        for c, cache in zip(sorted(rnd.sample(range(1, len(lines)), 2)) + [len(lines)], caches[1:] + [caches[-1]]):
+            out += [json.loads(dumps(lab.push(json.loads(l), 0.0))) for l in lines[at:c]]
+            ov.update(lab.take_overlay())
+            ov.update(lab.recache(cache, lines[:c]))
+            at = c
+        fresh = liveserve.Labeller(head['root'], caches[-1], 0.2, head['schema'])
+        for l in lines:
+            fresh.push(json.loads(l), 0.0)
+        assert lab.work == fresh.work and lab.applied == fresh.applied
+        at = [sn[0] for sn in lab.snaps]
+        assert at == sorted(set(at))          # (one snapshot per position: the replayed ones replace the old)
+        c = tmp_path / f'k{trial}.json'
+        c.write_text(json.dumps(caches[-1]), encoding='utf-8')
+        want, _ = label_py(tmp_path, head, lines, str(c))
+        assert same_view({'steps': out, 'live': {'labels': ov}}, want)
+        kept += any('reused_from' in v for v in fresh.applied.values())
+    assert kept >= 3
+
+
+def test_a_tail_written_while_the_steps_are_read_goes_out_with_them(flask, cache, tmp_path):
+    # the writer commits steps, then rewrites provisional.json while the server is reading them: the same poll serves
+    # the steps with that tail (one event, no step shown first with no tail and then again with it)
+    head, lines = flask
+    w = SimWriter(str(tmp_path / 's'), head)
+    w.commit(lines[:5])
+    live = liveserve.Live(w.store, cache)
+    live.poll()
+    w.commit(lines[5:8])
+    read = live._read_steps
+
+    def read_then_tail(check):
+        got = read(check)
+        w.set_tail(lines[8:10])
+        return got
+    live._read_steps = read_then_tail
+    v = live.tail_v
+    assert live.poll()
+    assert len(live.lines) == 8 and len(live.tail) == 2 and live.tail_v == v + 1
+    want, _ = label_py(tmp_path, head, lines[:10], cache)
+    assert same([json.loads(x) for x in live.lines + live.tail], want)

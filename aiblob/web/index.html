@@ -107,6 +107,13 @@ body.multi #empty { inset: 46px 0 138px; }
            color: var(--add); border-color: color-mix(in srgb, var(--add) 55%, transparent); background: color-mix(in srgb, var(--panel) 92%, transparent); box-shadow: 0 6px 18px rgba(0,0,0,.3); }
 body.multi #newPill { bottom: 148px; }
 .prov { color: var(--mute); font-style: italic; }
+/* the labelling chip (live, liveserve.py's worker): a coloured dot + a tag, the count of blobs waiting, the GPU */
+.badge.ask { display: inline-flex; align-items: center; gap: 5px; --c: var(--mute); color: var(--c); border-color: color-mix(in srgb, var(--c) 45%, transparent); }
+.badge.ask i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.badge.ask b { font-weight: 600; } .badge.ask .t { opacity: .75; }
+.badge.ask.asking { --c: var(--add); } .badge.ask.asking i { animation: beat .8s ease-in-out infinite; }
+.badge.ask.waiting, .badge.ask.starting { --c: var(--mix); } .badge.ask.starting i { animation: beat 1.6s ease-in-out infinite; }
+.badge.ask.paused, .badge.ask.down, .badge.ask.error { --c: var(--rem); } .badge.ask.down i { background: none; border: 1.5px solid currentColor; width: 5px; height: 5px; }
 </style>
 </head>
 <body>
@@ -117,6 +124,7 @@ body.multi #newPill { bottom: 148px; }
   <div class="meta" id="meta">loading…</div>
   <span class="badge" id="src"></span>
   <span class="badge live" id="liveBadge" hidden title="live: steps are added as the session is written"><i></i>LIVE</span>
+  <span class="badge ask" id="askChip" hidden role="status" aria-live="polite"></span>
   <button id="relayoutBtn" hidden title="Lay the map out again over every blob so far (live, new blobs are placed beside the others and nothing moves)">Re-layout</button>
   <button id="areasBtn" class="tog" aria-pressed="false" title="Areas: groups of blobs, one level above the blob map (A)">Areas <span class="k">A</span></button>
   <button id="followBtn" class="tog" aria-pressed="false" title="Follow: each step flies the camera to what it edits (F)">Follow <span class="k">F</span></button>
@@ -244,6 +252,7 @@ function expander(tl, s) {
       return out;
     },
     fork() { return expander(tl, { ...s, edges: new Map(s.edges), areas: s.areas && new Map(s.areas) }); },
+    set(id, b) { s.cur.set(id, b); },          // (live: a blob copied for the labels layer, the next steps go on from it)
   };
 }
 function expandSteps(tl) { const e = expander(tl); return (tl.steps || []).map(st => e.push(st)); }
@@ -328,6 +337,40 @@ function normalizeStep(st, i) {
   st.dataNodes = [...groups.values()];
   IDX[i] = { blobs, funcs, owner };
   return st;
+}
+/* areas.caption_table() (live mode captions areas again when labels come in): 1-2 title words by (members using
+   it) x sqrt(their lines), generic words skipped; the 3 faces with most lines, ties by code point as Python sorts */
+const GENERIC = new Set(`engine manager handler data function functions utility helper new code system controller
+startup cleanup creation test tests runner renderer the and for of to with from into hub orphan module main post
+get put patch int str`.split(/\s+/)), FIXED_CAP = { tests: 'Tests', files: 'Files' };
+function cmpCP(p, q) {
+  const a = [...p], b = [...q];
+  for (let k = 0; k < Math.min(a.length, b.length); k++) { const d = a[k].codePointAt(0) - b[k].codePointAt(0); if (d) return d; }
+  return a.length - b.length;
+}
+function captionOf(members) {
+  const count = new Map(), lines = new Map();
+  for (const [title, n] of members) for (const w of new Set(title.toLowerCase().match(/[a-z]+/g) || []))
+    if (!GENERIC.has(w) && (w.length > 2 || w === 'ui')) { count.set(w, (count.get(w) || 0) + 1); lines.set(w, (lines.get(w) || 0) + n); }
+  const score = [...count].map(([w, c]) => [c * Math.sqrt(lines.get(w)), w]).sort((p, q) => q[0] - p[0] || cmpStr(p[1], q[1]));
+  if (!score.length) return 'Misc';
+  const words = [score[0][1], ...score.slice(1, 2).filter(([sc]) => sc >= score[0][0] / 2).map(([, w]) => w)];
+  return words.map(w => w === 'ui' ? 'UI' : w[0].toUpperCase() + w.slice(1)).join(' · ');
+}
+function captionTable(blobs, ids) {
+  const byId = new Map(blobs.map(b => [b.id, b])), members = new Map();
+  for (const b of blobs) if ('area' in b) { if (!members.has(b.area)) members.set(b.area, []); members.get(b.area).push(b); }
+  return [...ids].sort(cmpStr).map(aid => {
+    const words = [], faces = new Map();
+    for (const b of members.get(aid) || []) {
+      const lab = b.label || {}, parent = byId.get(b.cut) || {}, size = b.size0 ?? b.size;
+      const emoji = lab.emoji || (parent.label || {}).emoji || b.emoji;
+      if (emoji) faces.set(emoji, (faces.get(emoji) || 0) + size);
+      const title = lab.title || ('cut' in b ? null : b.name);
+      if (title) words.push([title, size]);
+    }
+    return { id: aid, caption: FIXED_CAP[aid] || captionOf(words), faces: [...faces].sort((p, q) => q[1] - p[1] || cmpCP(p[0], q[0])).slice(0, 3).map(([e]) => e) };
+  });
 }
 /* recency of any change, additions included: only drives the pulse of edges between recently edited blobs */
 function spotsOf(get) {
@@ -1090,7 +1133,7 @@ function drawRegions() {
 function placeLabels(labels) {
   const placed = [], hit = r => placed.some(p => r.x0 < p.x1 && r.x1 > p.x0 && r.y0 < p.y1 && r.y1 > p.y0);
   for (const l of labels) {
-    ctx.font = l.region ? `600 ${l.fs}px ${SANS}` : `600 ${l.fs}px ${SANS}`;
+    ctx.font = l.region ? `600 ${l.fs}px ${SANS}` : `${l.it || ''}600 ${l.fs}px ${SANS}`;
     const w = ctx.measureText(l.text).width * (l.region ? 1.35 : 1) + 4, h = l.fs + 2;
     const cands = l.alt == null ? [l.y] : [l.y, l.alt];
     const y = l.force ? l.y : cands.find(y => !hit({ x0: l.x - w / 2, x1: l.x + w / 2, y0: y - h / 2, y1: y + h / 2 }));
@@ -1222,19 +1265,19 @@ function drawMap(now, t) {
     });
     ctx.save(); ctx.globalAlpha = alpha;
     // emoji + name (a page carries no emoji and is always named below itself)
-    const label = shortName(b.title), fs = clamp(R * 0.3, 11, 15);
-    ctx.font = `600 ${fs}px ${SANS}`; const tw = ctx.measureText(label).width, inside = !page && tw < R * 1.75 && R > 24;
+    const label = shortName(b.title), fs = clamp(R * 0.3, 11, 15), it = PEND.size && PEND.has(b.lk) ? 'italic ' : '';   // (live: a label on its way)
+    ctx.font = `${it}600 ${fs}px ${SANS}`; const tw = ctx.measureText(label).width, inside = !page && tw < R * 1.75 && R > 24;
     const es = clamp(R * (inside ? 0.5 : 0.75), 12, 30);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     if (!page) { ctx.font = `${es}px ${EMOJI_FONT}`; ctx.fillText(b.face, x, inside ? y - fs * 0.55 : y + 1); }
-    ctx.font = `600 ${fs}px ${SANS}`; ctx.fillStyle = col.text;
+    ctx.font = `${it}600 ${fs}px ${SANS}`; ctx.fillStyle = col.text;
     if (inside && ms.length) {     // a stain under the name: give it a backplate and full-contrast ink
       ctx.save(); ctx.globalAlpha = alpha * 0.78; ctx.fillStyle = T.bg; ctx.beginPath();
       ctx.roundRect(x - tw / 2 - 5, y + es * 0.55 + 2 - fs * 0.62, tw + 10, fs * 1.24, 4); ctx.fill(); ctx.restore(); ctx.fillStyle = T.ink;
     }
     const below = page ? R * 0.92 : R;
     if (inside) { ctx.fillText(label, x, y + es * 0.55 + 2); labels.push({ force: true, text: label, x, y: y + es * 0.55 + 2, fs }); }
-    else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, col: col.text, alpha: hover && !near.has(id) ? 0.2 * shown : alpha, big: R });
+    else labels.push({ text: label, x, y: y + below + fs * 0.85, alt: y - below - fs * 0.8, fs, it, col: col.text, alpha: hover && !near.has(id) ? 0.2 * shown : alpha, big: R });
     ctx.restore();
   }
   // region names first, then inside labels (as obstacles), then outside labels, hovered blob always wins
@@ -1532,6 +1575,7 @@ function setStep(i) {
   if (LIVE && !AUTO) { TRACK = i === STEPS.length - 1; if (TRACK) NEWN = 0; livePill(); }
   if (i === cur && stepAt) return;
   cur = i; stepAt = performance.now();
+  if (LIVE) liveFocus();
   const s = STEPS[i], time = s.ts ? new Date(s.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false, timeZoneName: 'short' }) : '';
   const S = s.stats, res = S && S.calls > 0   // v2: how many calls the analyzer could place
     ? ` · <span title="${S.calls - S.unresolved} of ${S.calls} calls resolved">resolved ${Math.round(100 * (1 - S.unresolved / S.calls))}%</span>` : '';
@@ -1762,23 +1806,123 @@ function buildLegend() {
    commits locks in. Each step is expanded and indexed once, on from the last committed one (expander(), stainStep(),
    sessStep()); the tail on forks of that state. A viewer on the last step follows new ones at 4× play speed (a
    jump when more than 20 behind); anywhere else a "+N new" pill counts them. A rebuild (or another epoch) loads
-   the timeline again, at the same step when it still exists; blobs keep their places throughout (layoutAdd()). */
+   the timeline again, at the same step when it still exists; blobs keep their places throughout (layoutAdd()).
+   Labels (liveserve.py's labelling worker) come as a layer: each step names its blobs' and folded-in blobs' label keys
+   when they change (`lk`, `mk`); live.labels in the timeline and "labels" events give {key: label or null}, which
+   goes on every blob showing that key, on every step, where it is (no reload); "ask" events drive the labelling chip,
+   and blobs whose label is on its way (`pending`) are named in italics. POST live/focus says which step is shown. */
 const LIVE = new URLSearchParams(location.search).get('live') === '1';
 let NCOMMIT = 0, EPOCH = 0, LEXP = null, LSTAIN = null, LSESS = null, LTAIL = [], LHEAD = {}, ES = null, reloading = null;
 let BOOTED = false, TRACK = true, NEWN = 0, AUTO = false, autoAcc = 0, FADE = 0;
+let LKS = null, LV = 0, OV = new Map(), LIDX = new Map(), PEND = new Set(), ASK = null, focusT = null, focusSent = -1;
+const lkState = () => ({ lk: new Map(), mk: new Map() });
+const lkFork = s => ({ lk: new Map(s.lk), mk: new Map(s.mk) });
 function liveStart(data) {
   SESS_META = new Map((Array.isArray(data.sessions) ? data.sessions : []).map(m => [m.id, m]));
   LHEAD = data; EPOCH = data.live ? data.live.epoch : 0;
   const had = STEPS.length;
   STEPS = []; IDX.length = 0; NCOMMIT = 0; LTAIL = []; FACE_R.clear();
   LEXP = expander(data); LSTAIN = new Map(); LSESS = sessIndex();
+  LKS = lkState(); LIDX = new Map(); LV = data.live?.lv || 0; OV = new Map(Object.entries(data.live?.labels || {}));
+  liveAsk(data.live?.ask || null);
   const n = data.live ? data.live.steps : data.steps.length;
   liveApply(data.steps.slice(0, n), data.steps.slice(n), had);
 }
-function liveStep(ex, stains, ss, raw, prov) {
-  const i = STEPS.length, st = normalizeStep(ex.push(raw), i);
+function liveStep(ex, stains, ss, raw, prov, ks) {
+  const i = STEPS.length, x = ex.push(raw);
+  if (ks) liveKeys(ex, ks, x, i, prov);
+  const st = normalizeStep(x, i);
   if (prov) st.prov = true;
   STEPS.push(st); stainStep(stains, st, i); sessStep(ss, st, i);
+}
+const sameLabel = (a, b) => (a || null) === (b || null) || (!!a && !!b && JSON.stringify(a) === JSON.stringify(b));
+function setLabel(o, L) { if (L) o.label = L; else delete o.label; }
+/* the labels layer on step x (i) as it comes: each blob object holds one key (one shown on several steps under
+   another key is copied for this one, and the expander goes on from the copy); a blob object seen for the first time
+   keeps the label it came with (`lb`) and takes the layer's when the layer has its key; a step showing a label other
+   than the one it came with gets its areas captioned again; committed blob objects are indexed by key with the steps
+   they are on */
+const LSEEN = new WeakSet();
+function liveKeys(ex, ks, x, i, prov) {
+  for (const k in x.lk || {}) ks.lk.set(k, x.lk[k]);
+  for (const k in x.mk || {}) ks.mk.set(k, x.mk[k]);
+  let other = false;
+  x.blobs.forEach((b, j) => {
+    const k = ks.lk.get(b.id) || '';
+    if (b.lk !== undefined && b.lk !== k) { const o = b; b = x.blobs[j] = { ...o, lk: undefined }; setLabel(b, o.lb); ex.set(b.id, b); }
+    if (b.lk === undefined) {
+      b.lk = k; b.lb = b.label; b.size0 = b.size;
+      if (OV.has(k)) setLabel(b, OV.get(k));
+      for (const m of b.merged || []) { m.lk = ks.mk.get(m.id) || ''; if (OV.has(m.lk)) setLabel(m, OV.get(m.lk)); }
+    }
+    if (b.label !== b.lb) other = true;
+    if (prov) return;
+    if (!LSEEN.has(b)) {
+      LSEEN.add(b); b._s0 = i;
+      for (const key of [b.lk, ...(b.merged || []).map(m => m.lk)]) if (key) { if (!LIDX.has(key)) LIDX.set(key, new Set()); LIDX.get(key).add(b); }
+    }
+    b._s1 = i;
+  });
+  if (other && x.areas?.length) x.areas = recaption(x.blobs, x.areas);
+}
+/* areas entries captioned again from the blobs' labels (an unchanged entry is kept as it is) */
+function recaption(blobs, list) {
+  const tbl = new Map(captionTable(blobs, list.map(a => a.id)).map(a => [a.id, a]));
+  return list.map(a => { const n = tbl.get(a.id); return n.caption === a.caption && n.faces.join('\n') === a.faces.join('\n') ? a : { ...a, caption: n.caption, faces: n.faces }; });
+}
+/* labels event: every blob (committed: by the index, the tail: its steps) showing a key that changed takes its new
+   label; faces, titles and the areas' captions of the steps they are on are made again */
+function liveLabels(upd) {
+  const hit = new Set(), steps = new Set();
+  for (const k in upd) {
+    OV.set(k, upd[k]);
+    for (const b of LIDX.get(k) || []) hit.add(b);
+  }
+  for (let i = NCOMMIT; i < STEPS.length; i++) for (const b of STEPS[i].blobs)
+    if (b.lk in upd || (b.merged || []).some(m => m.lk in upd)) { hit.add(b); steps.add(i); }
+  const changed = [];
+  for (const b of hit) {
+    let ch = false;
+    if (b.lk in upd && !sameLabel(b.label, upd[b.lk])) { setLabel(b, upd[b.lk]); ch = true; }
+    for (const m of b.merged || []) if (m.lk in upd && !sameLabel(m.label, upd[m.lk])) { setLabel(m, upd[m.lk]); ch = true; }
+    if (!ch) continue;
+    changed.push(b);
+    b.face = b.label?.emoji || b.emoji || (PAGE(b.kind) ? '' : '•'); b.title = b.label?.title || b.name;
+    if (b._s0 !== undefined) for (let i = b._s0; i <= b._s1; i++) steps.add(i);
+  }
+  if (!changed.length) return;
+  for (const i of steps) {
+    const st = STEPS[i]; if (!st) continue;
+    const ids = new Set(changed.filter(b => IDX[i].blobs.get(b.id) === b).map(b => b.id));
+    for (const b of st.blobs) if (b.cut && ids.has(b.cut)) ids.add(b.id);
+    for (const b of st.blobs) if (b.cut && ids.has(b.id) && !b.label) {    // a piece: its parent's face (normalizeStep), the last step it is on wins
+      let j = i; while (j + 1 < STEPS.length && IDX[j + 1].blobs.get(b.id) === b) j++;
+      const p = IDX[j].blobs.get(b.cut); b.face = p?.label?.emoji || b.emoji || (PAGE(b.kind) ? '' : '•');
+    }
+    if (!st.areas.length) continue;
+    st.areas = recaption(st.blobs, st.areas);
+    st.areaMap = new Map(st.areas.map(a => [a.id, a]));
+  }
+}
+function liveAsk(a) {
+  ASK = a; PEND = new Set(a?.pending || []);
+  const c = $('#askChip'); if (!c) return;
+  if (!a) { c.hidden = true; return; }
+  const st = a.state, n = a.queued || 0, temp = a.temp != null ? `${a.temp}°` : '';
+  const what = { idle: 'labels: nothing to ask', waiting: `labels: ${n} new blob${n === 1 ? '' : 's'} waiting for a quiet moment`,
+    asking: `labels: asking the model (${n} waiting)`, starting: 'labels: starting the local model', paused: `labels: paused, GPU at ${temp} (resumes when it cools)`,
+    down: `labels: the model is not reachable (retrying${a.why === 'nomem' || a.why === 'vram' ? ': not enough free GPU memory' : ''}); fallback names meanwhile`,
+    error: `labels: ${a.error || 'error'}; fallback names meanwhile` }[st] || st;
+  c.className = `badge ask ${st}`; c.hidden = false;
+  c.title = `${what}${a.server ? ` · server: ${a.server}` : ''}${temp && st !== 'paused' ? ` · GPU ${temp}` : ''}`;
+  c.innerHTML = `<i></i>${st === 'paused' ? '🌡' : st === 'down' ? '⏻' : st === 'error' ? '⚠' : '🏷'}${n || st === 'asking' ? `<b>${n}</b>` : ''}${temp ? `<span class="t">${temp}</span>` : ''}`;
+}
+function liveFocus() {
+  if (focusT || cur === focusSent) return;
+  focusT = setTimeout(() => {
+    focusT = null; if (cur === focusSent) return; focusSent = cur;
+    fetch('live/focus', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ step: cur }) }).catch(() => {});
+  }, 300);
 }
 /* committed steps after the NCOMMIT ones, then the whole tail after them (`had`: everything was reloaded, the page
    had that many steps before) */
@@ -1788,10 +1932,10 @@ function liveApply(committed, tail, had) {
   LTAIL = tail.map(t => JSON.stringify(t));
   STEPS.length = IDX.length = NCOMMIT;
   for (const k of [...FACE_R.keys()]) if (k >= NCOMMIT) FACE_R.delete(k);
-  for (const raw of committed) liveStep(LEXP, LSTAIN, LSESS, raw, false);
+  for (const raw of committed) liveStep(LEXP, LSTAIN, LSESS, raw, false, LKS);
   NCOMMIT = STEPS.length;
-  const ex = LEXP.fork(), stains = new Map(LSTAIN), ss = sessFork(LSESS);
-  for (const raw of tail) liveStep(ex, stains, ss, raw, true);
+  const ex = LEXP.fork(), stains = new Map(LSTAIN), ss = sessFork(LSESS), ks = lkFork(LKS);
+  for (const raw of tail) liveStep(ex, stains, ss, raw, true, ks);
   useSessions(ss);
   if (!BOOTED) {
     if (STEPS.length) { boot(LHEAD); TRACK = cur === STEPS.length - 1; liveMeta(); }
@@ -1843,7 +1987,7 @@ function liveBadge(on) {
 }
 function liveConnect() {
   if (ES) ES.close();
-  const es = ES = new EventSource(`live/events?epoch=${EPOCH}&from=${NCOMMIT}`);
+  const es = ES = new EventSource(`live/events?epoch=${EPOCH}&from=${NCOMMIT}&lv=${LV}`);
   const ours = d => { if (d.epoch === EPOCH) return true; liveReload(); return false; };
   es.addEventListener('steps', e => {
     const d = JSON.parse(e.data); if (!ours(d)) return;
@@ -1853,6 +1997,8 @@ function liveConnect() {
   });
   es.addEventListener('tail', e => { const d = JSON.parse(e.data); if (ours(d) && d.base === NCOMMIT) liveApply([], d.tail); });
   es.addEventListener('rebuild', () => liveReload());
+  es.addEventListener('labels', e => { const d = JSON.parse(e.data); if (!ours(d)) return; LV = d.lv; liveLabels(d.labels); });
+  es.addEventListener('ask', e => liveAsk(JSON.parse(e.data)));
   es.onopen = () => liveBadge(true);
   es.onerror = () => liveBadge(false);
 }

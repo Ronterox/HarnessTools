@@ -39,8 +39,13 @@ the new key then gets a copy of the label marked `reused_from: <labelled key>`, 
 A key already in the cache is always a hit. The state per blob is replayed from step 0 against the cache, so
 a resumed --per-step run decides as an uninterrupted one. 0 asks for every new key, as before.
 --count prints how many label requests the timeline needs from an empty cache, at X and at 0, and exits.
+
+The cache is written by merging (save_cache: lock, read the file again, merge the entries this run changed, rename),
+so a run next to another writer (another label.py, liveserve.py's labelling worker) loses none of its labels and
+puts none of theirs back to what it read.
 """
 import argparse
+import fcntl
 import hashlib
 import json
 import os
@@ -482,12 +487,30 @@ def read_log(path):
     return recs
 
 
-def save_cache(path, cache):
-    """Write the cache through a temp file and rename, so a kill never leaves half a file."""
-    tmp = path + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(cache, f, indent=1, ensure_ascii=False)
-    os.replace(tmp, path)
+def save_cache(path, cache, base=None):
+    """Merge `cache` into the cache file: under an exclusive lock on PATH.lock the file is read again, `cache`'s
+    entries replace or join it, and the result is written through a temp file and renamed. A kill never leaves half
+    a file, and a concurrent writer (liveserve.py's labelling worker, another label.py) loses nothing. `base`: the
+    cache as this process read it (and last saved it); only the entries changed since then are written, so an entry
+    another writer changed meanwhile is not put back to what this process read. base is then brought up to date.
+    -> the merged cache as written."""
+    if base is not None:
+        changed = {k: v for k, v in cache.items() if base.get(k) != v}
+        base.update(changed)
+        cache = changed
+    with open(path + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            with open(path, encoding="utf-8") as f:
+                disk = json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError):
+            disk = {}
+        disk.update(cache)
+        tmp = f"{path}.{os.getpid()}.tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(disk, f, indent=1, ensure_ascii=False)
+        os.replace(tmp, path)
+    return disk
 
 
 def error_text(blob, e):
@@ -583,7 +606,7 @@ def run_per_step(a, steps, cache):
         calls, errors = label_step(server, steps[i], list(ask.values()), cache, a) if ask else (0, [])
         secs = time.monotonic() - t0
         keeper.settle(cache)
-        save_cache(a.cache, cache)  # the step's labels, failed or not, before its log line
+        save_cache(a.cache, cache, a.base)  # the step's labels, failed or not, before its log line
         dirty = False
         rec = {"step": i, "idx": steps[i].get("idx"), "session": steps[i].get("session"), "keys": plan[i],
                "blobs": len(blobs), "asked": len(ask), "hits": hits, "reused": reused, "calls": calls,
@@ -601,7 +624,7 @@ def run_per_step(a, steps, cache):
                   file=sys.stderr)
             break
     if dirty:  # labels kept on steps that asked nothing
-        save_cache(a.cache, cache)
+        save_cache(a.cache, cache, a.base)
     if a.report:
         print(run_report(a.run_log))
 
@@ -690,6 +713,7 @@ def main():
             cache = json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         cache = {}
+    a.base = dict(cache)  # what this run read: only what it changes is merged back (save_cache)
     stale = [k for k, v in cache.items() if title_problem(v["title"])]
     for k in stale:
         del cache[k]
@@ -783,7 +807,7 @@ def main():
             cache[key] = dict(cache[src], reused_from=src)
             reused += 1
     if dirty or reused:
-        save_cache(a.cache, cache)
+        save_cache(a.cache, cache, a.base)
     apply_labels(steps, cache)
     for step in steps:
         step.pop("_keys", None)

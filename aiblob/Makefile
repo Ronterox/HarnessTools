@@ -39,11 +39,13 @@ live-export:
 live-verify:
 	$(PY) live.py verify $(NAME)
 
-# serve live/NAME to the page at http://127.0.0.1:$(LIVE_PORT)/ (labels: cache hits and kept labels, no model call),
+# serve live/NAME to the page at http://127.0.0.1:$(LIVE_PORT)/; new steps' blobs are labelled by the local model
+# (a llama-server at http://127.0.0.1:8080, else one started on demand; LIVE_SERVE_ARGS=--no-ask: cache only),
 # e.g. make live-serve NAME=aigource LABELS=demo/labels.aigource.json
 LIVE_PORT ?= 8791
+LIVE_SERVE_ARGS ?=
 live-serve:
-	$(PY) liveserve.py run $(NAME) --port $(LIVE_PORT) --labels $(LABELS)
+	$(PY) liveserve.py run $(NAME) --port $(LIVE_PORT) --labels $(LABELS) $(LIVE_SERVE_ARGS)
 
 live-serve-stop:
 	$(PY) liveserve.py stop $(NAME)

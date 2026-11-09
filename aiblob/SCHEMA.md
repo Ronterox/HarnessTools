@@ -223,6 +223,15 @@ page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `are
   universe (merged entries askable, no piece identities) 1,221 -> 555 (54.5%; the measurement's replay gives
   576, 52.8%, = 875 of 1,656 calls. Here 49 revisits of a key that kept a label are cache hits, where the
   measurement decides them afresh; through the anchors they leave, they account for the 21 fewer requests).
+- Live labels (`liveserve.py`, phase 4, 2026-11-09): the steps served to the live page carry two more fields,
+  `lk` {blob id: kid} and `mk` {`merged` entry id: kid}, for the ids whose label key differs from the previous
+  step's (kid = the first 16 hex of the key's sha1; `""` for a file blob without a readable head). The page keeps
+  them from step to step; `live.labels` in /live/timeline.json and the "labels" events give {kid: label or null},
+  the labels learnt after the steps showing them were labelled, which the page puts on every blob (and `merged`
+  entry) with that kid and from which it recaptions those steps' areas (`areas.caption_table()`, ported). A static
+  timeline.json never has them. Only blobs changed at steps after the store's labelling boundary
+  (`live/NAME/labelling.json`: {since, steps}: steps made at `since` or later) are ever asked; the rest of the rule is the one above, applied as
+  label.py applies it, so the page shows what label.py writes with the cache as it stands.
 - A failed ask leaves that blob with no anchor, so its later versions are asked (and then cached, hits on any
   rerun): a `--retry-failed` run can end slightly different from a run with no failures (534 vs 533 labels in a
   verifier run on aigource). In the whole-timeline mode, versions that would keep the label of a key whose ask

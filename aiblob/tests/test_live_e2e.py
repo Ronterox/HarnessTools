@@ -211,3 +211,83 @@ def test_live_page_jumps_when_far_behind(env):
     assert seen == [99, 149], seen                               # no walk through the 50 new steps
     shot('live-07-jumped-areas.png')
     assert b.errors() == []
+
+
+# -- labels (phase 4): the worker's labels reach the page as a layer, no reload ----------------------------------------
+LABELS = '''JSON.stringify(STEPS.map(s => ({ blobs: s.blobs.map(b => [b.id, b.label || null, b.cut && !b.label ? null : b.face, b.title,
+  (b.merged || []).map(m => m.label || null)]), areas: s.areas.map(a => [a.id, a.caption, a.faces]) })))'''
+
+
+def test_live_labels_chip_and_layer(tmp_path):
+    from fakellama import FakeLlama
+    from test_livelabel import NOCHILD, Smi, stamp
+    from test_liveserve import label_py
+    shots = os.environ.get('AIBLOB_SHOTS') or str(tmp_path)
+    head, lines = raw_timeline(os.path.join(REPO, 'web', 'timeline.json'))
+    lines = stamp(lines, 10)                                     # steps 10 on: made after labelling began
+    w = SimWriter(str(tmp_path / 's'), head)
+    w.commit(lines[:10])
+    cache = str(tmp_path / 'labels.json')
+    with open(cache, 'w') as fh:
+        json.dump({}, fh)
+    fake, smi = FakeLlama(), Smi(tmp_path, temp=64)
+    fake.state.loading = True                                    # the model is not there yet
+    import liveserve as ls
+    wk = ls.worker(cache, str(tmp_path / 'run.jsonl'), llm_url=fake.url, llm_cmd=NOCHILD, smi=smi.cmd, quiet=0, vram=10 ** 6)
+    srv, live, stop, poller = ls.serve(w.store, cache, port=0, poll=0.05, ask=wk, wait_cap=0.05)
+    threading.Thread(target=srv.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True).start()
+    url = f'http://127.0.0.1:{srv.server_address[1]}'
+    b = browser.Browser()
+    try:
+        b.goto(url + '/')
+        b.wait('typeof BOOTED !== "undefined" && BOOTED && STEPS.length === 10')
+        b.eval('window.__same = 1; 1')                           # gone if the page reloads
+        assert b.eval('$("#askChip").hidden === false && ASK.state') == 'idle'
+        b.shot(os.path.join(shots, 'labels-01-idle.png'))
+        epoch = b.eval('EPOCH')
+        w.commit(lines[10:14])
+        b.wait('STEPS.length === 14 && ASK && ASK.state === "down" && PEND.size > 0')
+        before = json.loads(b.eval(LABELS))
+        assert b.eval('$("#askChip").className') == 'badge ask down'
+        pend = b.eval('STEPS[13].blobs.filter(b => PEND.has(b.lk)).map(b => b.id)')
+        assert pend                                              # their titles are drawn in italics
+        b.eval('window.__fonts = []; const f0 = ctx.fillText.bind(ctx); ctx.fillText = (t, x, y) => { __fonts.push([ctx.font, t]); return f0(t, x, y); }; 1')
+        b.eval('setStep(13); 1')
+        b.wait('cur === 13 && __fonts.length > 200')
+        italic = b.eval('[...new Set(__fonts.filter(([f]) => f.startsWith("italic")).map(([, t]) => t))]')
+        titles = b.eval('STEPS[13].blobs.filter(b => PEND.has(b.lk)).map(b => shortName(b.title))')
+        assert italic and set(italic) <= set(titles)            # pending titles, and only those, in italics
+        b.shot(os.path.join(shots, 'labels-02-down-pending-italic.png'))
+        end = time.time() + 5
+        while wk.focus != 13 and time.time() < end:              # the page told the server where it is
+            time.sleep(0.05)
+        assert wk.focus == 13
+        fake.state.loading = False                               # the model is up: the asks drain
+        b.wait('ASK && ASK.state === "idle" && PEND.size === 0', 60000)
+        assert b.eval('[window.__same, EPOCH, STEPS.length]') == [1, epoch, 14]
+        assert fake.completions()
+        b.shot(os.path.join(shots, 'labels-03-labelled.png'))
+        want, _ = label_py(tmp_path, head, lines[:14], cache)
+        live_view = json.loads(b.eval(LABELS))
+        assert not any(x[1] for x in before[10]['blobs']) and any(x[1] for x in live_view[10]['blobs'])  # shown before
+        static = tmp_path / 'want.json'
+        static.write_text(json.dumps({'root': head['root'], 'schema': head['schema'], 'steps': want}), encoding='utf-8')
+        b.eval(f'window.__want = {static.read_text(encoding="utf-8")}; 1')
+        assert json.loads(b.eval(f'(() => {{ const keep = [STEPS, IDX.slice()]; normalize(__want); const v = {LABELS}; '
+                                 f'STEPS = keep[0]; IDX.length = 0; IDX.push(...keep[1]); return v; }})()')) == live_view
+        smi.set(temp=91)                                         # hot: paused (the chip shows the temperature)
+        w.commit(lines[14:16])
+        b.wait('STEPS.length === 16 && ASK && ASK.state === "paused"', 30000)
+        assert b.eval('$("#askChip").textContent').startswith('🌡') and '91°' in b.eval('$("#askChip").textContent')
+        b.shot(os.path.join(shots, 'labels-04-paused-hot.png'))
+        assert b.errors() == []
+        b.goto(url + '/index.html?live=0')                       # the static page: no chip
+        b.wait('typeof STEPS !== "undefined" && STEPS.length > 0')
+        assert b.eval('getComputedStyle($("#askChip")).display') == 'none' and b.eval('PEND.size') == 0
+    finally:
+        b.close()
+        stop.set()
+        srv.shutdown()
+        srv.server_close()
+        live.worker_thread.join(10)
+        fake.down()

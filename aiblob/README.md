@@ -52,13 +52,35 @@ store at http://127.0.0.1:8791/ (`LIVE_PORT=`), which opens the page in live mod
 page). New steps appear as they commit; steps not committed yet are drawn faded and lock in when committed. On the last
 step the page follows new steps (4×, a jump when more than 20 behind); elsewhere a "+N new" pill jumps to the newest.
 Blobs never move as steps come (new ones are placed beside the others); Re-layout lays the map out again. A rebuild of
-the store reloads the page at the same step. Labels are the cache's hits and kept labels (label.py's 20% rule), never
-a model call: the same names `label.py T --cache LABELS --server http://127.0.0.1:1` gives the export, but for one case
-by design: a folded-in `merged` blob whose functions go back to an earlier version keeps, on earlier steps, what was
-known then, where label.py shows the final cache's label everywhere (aigource: no difference with its full cache, 323
-merged labels on earlier steps with a random half of it; phase 4 will push labels back to earlier steps). The server runs without a writer too, binds
-127.0.0.1 only, refuses other Host names, and is stopped with `make live-serve-stop NAME=…` (pid in
-live/NAME/serve.pid). API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
+the store reloads the page at the same step. The server runs without a writer too, binds 127.0.0.1 only, refuses
+other Host names, and is stopped with `make live-serve-stop NAME=…` (pid in live/NAME/serve.pid).
+
+Labels in live mode (livelabel.py, the server's labelling worker). Only blobs that change in steps made after
+labelling was first enabled for the store are asked: the time it began is kept in live/NAME/labelling.json (never
+earlier than what the store and its transcripts already hold, so a clock that is behind, a store still in its cold
+build or catching up on its transcripts, a rebuild or a restart never asks old steps; edits made while the server was
+down count as new; a step without a time is new only after a new step). The whole history stays a manual
+`label.py --per-step` run. The 20% rule holds (a blob keeps its label until 20% of it changed), and asks
+are coalesced: per blob, its newest version once it is quiet (20 s without change, its turn over, or 120 s at most),
+so a burst of edits is one call, and a label that comes back after the blob moved on less than 20% covers the new
+version too. The step the page shows goes first (the page posts it), then the newest. Each label is merged into the
+cache at once (lock, read again, merge, rename: a label.py run at the same time loses nothing), and reaches every step
+showing that blob on the open page, earlier ones included, without a reload; the page then shows exactly what
+`label.py T --cache LABELS --server http://127.0.0.1:1` writes with that cache. A chip next to LIVE says how it goes
+(🏷 and the blobs waiting; a pulsing green dot while asking; 🌡 and the temperature while the GPU is at 85 °C or more,
+paused until below 80 °C; ⏻ while the model cannot be reached or there is no GPU memory for it; ⚠ when the worker
+failed, the server restarting it up to 3 times), and titles whose label is on its way are in italics.
+The map never waits for labels: with the model away, blobs keep their structural names and the server probes it
+again after 15, 30, then every 60 s; a failed ask is tried 3 times, then backed off. Runs are logged in
+demo/label-runs/NAME.live.jsonl.
+
+The model: a llama-server already answering at `--llm-url` (default http://127.0.0.1:8080, e.g. `./serve-llm.sh`) is
+used as it is and never started or stopped. Otherwise the server starts its own when there is something to ask and
+nvidia-smi shows 3,300 MiB of VRAM free (and 2 GiB of RAM available), on a free port, as its child (its own process
+group, killed with the server even on SIGKILL), with `-c 4096 -np 1 --cache-ram 0 --sleep-idle-seconds 60` (asleep
+after 60 s idle: ~100 MiB of VRAM, woken by the next ask in ~3 s, if the VRAM is free then), and stops it 10 min
+after it was last asked (`--idle-stop`), also while asks wait on a hot GPU; its whole process group goes with it. `--no-ask` serves cache hits and kept labels only. Options: liveserve.py's docstring.
+API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
 click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,

@@ -1,2 +1,4 @@
 # live.py stores (live/NAME/), built locally from transcripts
 live/
+demo/labels*.json.lock
+demo/label-runs/*.live.jsonl
