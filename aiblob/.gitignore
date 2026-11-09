@@ -2,5 +2,7 @@
 live/
 demo/labels*.json.lock
 demo/label-runs/*.live.jsonl
-# diffs layout of the aigource map (timeline.py --diffs), built locally like the map
+# diffs layouts of the demo maps (timeline.py --diffs), built locally like the map
 web/timeline-aigource.diffs/
+web/timeline-aiblob.diffs/
+web/timeline.diffs/
