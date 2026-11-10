@@ -570,6 +570,48 @@ def test_an_opened_cluster_wears_the_diff(b, tmp_path):
         srv.server_close()
 
 
+@chrome
+def test_the_overview_merges_hunks_before_raising_the_scale(b, tmp_path):
+    """engine.c with each draw_* function edited in three places (a line out, four in): unmerged, the draw cluster needs
+    more than CL_MARKS marks at scale 5, merged per function it fits; so the overview stays at 5 and its hairs hold the
+    real added lines"""
+    from test_clusters_page import GROUPS, engine
+    shutil.copy(PAGE, tmp_path / 'index.html')
+    src = engine().split('\n')
+    for w in GROUPS['draw']:
+        at = src.index(f'int draw_{w}(int x) {{') + 2
+        for j in (12, 6, 0):
+            src[at + j:at + j + 1] = [f'    x += {len(w) * 7 + j * 3 + k} * {k + 1};' for k in range(4)]        # (lines of their own)
+    snaps = [{'engine.c': engine(), 'notes.txt': 'notes\n'}, {'engine.c': '\n'.join(src), 'notes.txt': 'notes\n'}]
+    pairs = [(replay.Step(i, '', 'Write', 'engine.c', f'step {i}', 0), s) for i, s in enumerate(snaps)]
+    dw = diffs.Static(str(tmp_path / 'tl.diffs'))
+    steps = list(timeline.analyzed_steps(iter(pairs), timings=False, diffs=dw))
+    dw.close()
+    (tmp_path / 'tl.json').write_text(json.dumps({'schema': timeline.SCHEMA, 'session': 't', 'root': '/w', 'steps': timeline.compact(steps)}), encoding='utf-8')
+    reader = diffs.load_static(str(tmp_path / 'tl.json'), str(tmp_path / 'tl.diffs'))
+    srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Quiet, directory=str(tmp_path)))
+    threading.Thread(target=srv.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True).start()
+    try:
+        load(b, f'http://127.0.0.1:{srv.server_address[1]}')
+        bid = b.eval('STEPS[1].blobs.find(x => x.clusters?.length).id')
+        drill(b, 1, bid)
+        added = {e['key']: sum(1 for h in e['hunks'] for op, _ in h['lines'] if op == '+') for e in want(reader, 1, 1, bid) if e['state'] != 'same'}
+        assert sorted(added) == sorted(f'engine.draw_{w}' for w in GROUPS['draw']) and sum(added.values()) == 72, added
+        got = b.eval('''(() => { const v = diffDrill(drill.id); return [v.clB, CS.cl.list.map(c => diffClusterPrep(v, c)).filter(Boolean).map(p => [clCost(p.levels[0], 5), clCost(p.levels[1], 5)]),
+          DV.marks.filter(m => m.q.startsWith("cluster:")).map(m => ({ qs: CS.cl.list.find(c => "cluster:" + c.id === m.q).ids.map(i => CS.funcs[i].q),
+            held: m.hairs.reduce((s, h) => s + h.n, 0), marks: m.hairs.length + m.bites.length }))]; })()''')
+        B, costs, cls = got
+        assert costs and all(c0 > 60 >= c1 for c0, c1 in costs), costs          # (the case: fits only once merged)
+        assert B == 5, got
+        assert cls and all(c['held'] == sum(added.get(q, 0) for q in c['qs']) and c['marks'] <= 60 for c in cls), cls
+        frames(b)
+        assert 'thick hair = 5 added lines' in b.eval('$("#dleg").textContent')
+        assert b.errors() == []
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 # -- the same picture: an unchanged blob's drill-down, and any drill-down of a map without texts, as at HEAD --------
 FREEZE = '''(async (step, bid) => { window.requestAnimationFrame = () => 0; await new Promise(r => setTimeout(r, 50));
   setStep(step); openDrill(bid); PULSES.clear(); FPULSES.clear();
