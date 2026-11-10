@@ -16,11 +16,14 @@ PAGE = os.environ.get('AIBLOB_PAGE') or os.path.join(REPO, 'web', 'index.html')
 browser = pytest.importorskip('browser')
 pytest.importorskip('PIL')
 chrome = pytest.mark.skipif(not (browser.CHROME and shutil.which('node')), reason='needs Chrome and node')
-from test_diffs_page import APPB, UTILB, Quiet, fixture_build, frames, load, picture      # noqa: E402
+from test_diffs_page import APPB, FREEZE, UTILB, Quiet, fixture_build, frames, load      # noqa: E402
 from test_replay import msg, result, tool, ts, write_lines                                 # noqa: E402
 
 SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="40" height="30"><rect width="40" height="30" fill="#00f"/>'
        '<script>window.pwned = 1; document.title = "pwned"</script></svg>\n')
+# The page before format badges and thumbnails (7d8f374 added them): what code blobs, the scale and the layout must
+# still look like. Pinned, not HEAD: from 7d8f374 on HEAD is the badge page itself.
+BASE = '2fd80cf'
 ONE_PER_FMT = {'data.json': '{}\n', 'rows.jsonl': '{}\n', 't.csv': 'a\n', 't.tsv': 'a\n', 'a.xml': '<a/>\n',
                'c.toml': 'a = 1\n', 'c.yaml': 'a: 1\n', 'c.ini': '[a]\n', 'README.md': '# r\n', 'doc.html': '<p>\n',
                'site.css': 'a {}\n', 'f.woff2': '\x00w', '.gitignore': 'x\n', 'Makefile': 'all:\n',
@@ -62,10 +65,10 @@ def _repo(tmp_path):
 @pytest.fixture(scope='module')
 def site(tmp_path_factory):
     """Served: the page, the formats map with its sidecar (fx.json, fx.diffs) and without (bare.json); the diffs page
-    fixture's map (tl.json, tl.diffs) and the page at HEAD (head.html) for the pixel comparison."""
+    fixture's map (tl.json, tl.diffs) and the page before the badges (head.html, BASE) for the pixel comparison."""
     d = tmp_path_factory.mktemp('fmtpage')
     shutil.copy(PAGE, d / 'index.html')
-    head = subprocess.run(['git', 'show', 'HEAD:aiblob/web/index.html'], cwd=REPO, capture_output=True)
+    head = subprocess.run(['git', 'show', f'{BASE}:aiblob/web/index.html'], cwd=REPO, capture_output=True)
     if head.returncode == 0:
         (d / 'head.html').write_bytes(head.stdout)
     root, src = _repo(d)
@@ -82,6 +85,14 @@ def site(tmp_path_factory):
     yield {'url': f'http://127.0.0.1:{srv.server_address[1]}', 'dir': d, 'root': root}
     srv.shutdown()
     srv.server_close()
+
+
+def picture(b, url, page, src, step, bid):
+    """test_diffs_page.picture(), but waiting for the diffs index on any page (that one waits only on index.html):
+    the base page's drill-down is then drawn with its diff marks too, not in the moment before they load."""
+    load(b, url, page, src)
+    b.wait('DV.on !== null', 30000)
+    return b.eval(f'({FREEZE})({step}, {json.dumps(bid)})')
 
 
 @pytest.fixture
@@ -161,7 +172,7 @@ def test_without_the_sidecar_the_badge_alone(b, site):
 
 @chrome
 def test_code_drill_downs_are_the_picture_head_draws(b, site):
-    """The drill-down of a code blob is HEAD's picture pixel for pixel, but for the dimmed map behind it where a page
+    """The drill-down of a code blob is the pre-badge page's picture (BASE) pixel for pixel, but for the dimmed map behind it where a page
     of a known format (here notes.md) wears its badge instead of ruled lines: only that page's box differs."""
     if not (site['dir'] / 'head.html').exists():
         pytest.skip('no git HEAD to compare with')
@@ -213,8 +224,8 @@ def test_live_thumbnails_from_live_bodies(b, tmp_path, monkeypatch):
 
 @chrome
 def test_a_failing_thumbnail_is_asked_again_only_after_a_while(b, site):
-    """The sidecar's chunks answer 500: each image page asks again every TH_RETRY ms, not every frame."""
-    import time
+    """The sidecar's chunks answer 500. With the page's clock (performance.now) held by the test: asked for again and
+    again, a failed thumbnail is fetched no more until TH_RETRY ms have passed on that clock, then once more."""
     hits = []
 
     class Failing(Quiet):
@@ -226,15 +237,24 @@ def test_a_failing_thumbnail_is_asked_again_only_after_a_while(b, site):
             super().do_GET()
     srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), functools.partial(Failing, directory=str(site['dir'])))
     threading.Thread(target=srv.serve_forever, kwargs={'poll_interval': 0.05}, daemon=True).start()
+    ask = '(async (n) => { for (let k = 0; k < n; k++) { ' + THUMBS_IN + '; await new Promise(r => setTimeout(r, 20)); } ' \
+          'return Object.values(' + THUMBS_IN + ').every(v => v === null); })'
+    failed = '[...TH.img.values()].length === 2 && [...TH.img.values()].every(e => e.err > 0)'
     try:
         load(b, f'http://127.0.0.1:{srv.server_address[1]}', src='fx.json')
+        b.eval('window.__t = performance.now(); performance.now = () => __t; ' + THUMBS_IN)   # the clock stands still
         assert b.eval('DV.on') is True and b.eval('TH_RETRY') == 4000
-        b.eval('window.__asks = 0; setInterval(() => { __asks++; ' + THUMBS_IN + '; }, 16); 1')   # asked for all the time
-        n0, f0 = len(hits), b.eval('__fc')
-        time.sleep(5)
-        assert b.eval('__fc') - f0 > 20 and b.eval('__asks') > 30          # (the page kept drawing and asking)
-        assert len(hits) - n0 <= 2 * 2, hits                   # 2 image pages, at most one retry each in 5 s
-        assert b.eval(THUMBS_IN) == {'shot.png': None, 'logo.svg': None}
+        b.wait(failed, 30000)                       # both asked for and failed (their fetches are all answered)
+        first, chunks = len(hits), b.eval('new Set([...TH.img.keys()].map(h => DV.where.get(h))).size')
+        assert 1 <= chunks <= first
+        assert b.eval(f'({ask})(15)') is True       # asked 15 times more: nothing fetched
+        assert len(hits) == first
+        b.eval('__t = Math.min(...[...TH.img.values()].map(e => e.err)) + TH_RETRY - 1; 1')
+        assert b.eval(f'({ask})(5)') is True and len(hits) == first       # not yet
+        b.eval('__t = Math.max(...[...TH.img.values()].map(e => e.err)) + TH_RETRY + 1; ' + THUMBS_IN)
+        b.wait(failed + ' && [...TH.img.values()].every(e => e.err === __t)', 30000)    # the retries: both in one go,
+        assert len(hits) == first + chunks                                  # one fetch per chunk, then quiet
+        assert b.eval(f'({ask})(10)') is True and len(hits) == first + chunks
     finally:
         srv.shutdown()
         srv.server_close()
@@ -263,7 +283,8 @@ def test_each_thumbnail_is_fetched_and_decoded_once(b, site):
 
 @chrome
 def test_image_pages_leave_the_scale_and_the_code_blobs_as_head_has_them(b, site):
-    """IMG_SIZE makes the image pages bigger, never the scale K: K and every other blob's radius are HEAD's."""
+    """IMG_SIZE makes the image pages bigger, never the scale K: K and every other blob's radius are the pre-badge
+    page's (BASE)."""
     if not (site['dir'] / 'head.html').exists():
         pytest.skip('no git HEAD to compare with')
     sizes = 'JSON.stringify({ K, R: [...U.values()].map(u => [u.id, u.R]).sort() })'
