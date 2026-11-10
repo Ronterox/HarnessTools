@@ -107,23 +107,32 @@ after 60 s idle: ~100 MiB of VRAM, woken by the next ask in ~3 s, if the VRAM is
 after it last answered (`--idle-stop`), also while asks wait on a hot GPU; its whole process group goes with it. `--no-ask` serves cache hits and kept labels only. Options: liveserve.py's docstring.
 API (/live/timeline.json, /live/events, /live/status): liveserve.py's docstring.
 
-Diffs inside blobs (data side; the page part is not built yet): `timeline.py --diffs DIR` (or `make timeline
+Diffs inside blobs: `timeline.py --diffs DIR` (or `make timeline
 DIFFS=web/timeline.diffs`) also writes the texts the steps show, by the hashes the steps carry, as plain gzip files
 (DIR/index.json.gz + DIR/s/<step>.json.gz; timeline.json is byte-identical without it). The live writer always keeps
 them (live/NAME/diffs/), liveserve.py serves each step's file line as `fv` and the texts at `/live/bodies?h=...`, and
 `live.py export --diffs DIR` writes the static layout from a store. How a client gets the old and new text of a
 function or file between two steps: SCHEMA.md "Diffs", reference reader `diffs.Reader.range_texts()`. aigource:
-see PLAN.md "Diffs inside blobs, data side outcome" for sizes.
+see PLAN.md "Diffs inside blobs, data side outcome" for sizes. The page finds `<timeline>.diffs/` next to the map
+it loads (live: the server's `fv` and `/live/bodies`) and shows what changed inside a drill-down: in Skins a
+changed function wears a hair per added line (a thick hair = 5 added lines) and a bite per block of removed lines,
+on its own rim; in Twins its old version is a dashed ghost beside the new one. Hover a hunk for its lines, click it
+for the hunk, click a function for its whole diff (Twins: before | after). A text / file blob opens as a page with
+the same marks on its edge. Functions unchanged in the scope look as before; a map without the sidecar says diffs
+are unavailable and drills down as before.
 
 Keys on the page: space play/pause, ←/→ step, click a blob to drill down,
-click a function for its snippet, Esc back, L legend. A toggles the areas level (also the Areas button,
+click a function for its snippet, Esc back, L legend. In a drill-down with diffs: 1 / 2 Skins / Twins, 7 this
+step, 8 since the session started, 9 since you looked (the 👁 on the strip under the summary; ←/→ move it there),
+M morphs the twins, Esc closes the function or hunk diff first. In a clustered blob's overview each cluster wears
+its changed functions' hairs and bites (hover: which function and hunk; click: that cluster, the function pinned). A toggles the areas level (also the Areas button,
 remembered per browser, default off): blobs grouped into areas above the blob map; click or wheel into an area,
 drag to pan, Esc / Backspace / the breadcrumb go back up (Space stays play / pause, also with areas on). The top
 view never shows more than 12 areas: past that the 9-blob cap on joins gives way, and a session that grows
 module by module puts new modules into existing areas once 12 are in use. F toggles Follow (default off): during replay each step
 flies the camera to the area it edits (areas on) or the blob it edits (areas off). `?areas=1`, `?follow=1` and
-`?area=<id>` set them from the URL. The drill-down of a blob still at the cut size (500+ lines or 50+ functions)
-shows its call clusters instead (clusters.py): a big emoji and a caption each, the functions as dots, one ribbon per
+`?area=<id>` set them from the URL. The drill-down of a blob of 12+ functions in 3+ call groups (clusters.py)
+shows its call clusters instead: a big emoji and a caption each, the functions as dots, one ribbon per
 cluster pair, neighbour blobs as pills on the rim, five dials and the growth curve top left; click a cluster to open
 it, / finds a function, Esc / Backspace go back up.
 Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
@@ -131,7 +140,7 @@ Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
 web/timeline.json is schema v6 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
 the page rebuilds every step from those deltas. The blob map folds blobs under 20 lines into a neighbour
 (satellites on the page) and cuts blobs of 500+ lines at dominant callees (dashed pieces, a bite out of the
-parent), puts every blob in an area (areas.py) and gives a blob still that big its call clusters (clusters.py); `timeline.py --no-smart` keeps the analyzer's blobs, for
+parent), puts every blob in an area (areas.py) and gives a blob of 12+ functions in 3+ call groups its call clusters (clusters.py); `timeline.py --no-smart` keeps the analyzer's blobs, for
 debugging and tests. Analysis is incremental per step (only what an edit can affect
 is redone), so big repos stay usable: on TechnicalAnalysis (580 files, 71 steps) a step costs 0.22-0.37 s (p50,
 machine load dependent; --full: ~1.07 s) and the timeline is 6 MB (was 357 MB). `timeline.py --full` recomputes everything per step and `--v2` writes every step in full;

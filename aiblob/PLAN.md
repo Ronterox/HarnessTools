@@ -526,6 +526,72 @@ Plan: .omc/plans/aiblob-diffs.md (layout B, sink keyed by the existing hashes). 
   appears and serves the steps again as their file lines are written. liveserve reads the whole diffs/steps.ndjson
   when steps come (22 KB on aigource).
 
+## Diffs inside blobs, page outcome (2026-11-10)
+Plan: .omc/plans/aiblob-diffs.md "UI decided" (Skins + Twins); the look follows the approved draft (session scratchpad
+diff-draft/), ported into web/index.html's drill-down ("diffs inside blobs" section).
+- Data flow: at boot the page reads `<timeline>.diffs/index.json.gz` (fetch + DecompressionStream; gzip checked by
+  its magic bytes) for the file lines and which chunk holds which hash; live mode takes `fv` from the served steps
+  and `"diffs"` from "live". A drill-down asks for its blob's range (T: a = b = now; S: a = the session's first step;
+  L: a = the 👁 step + 1), cached by blob|a|b (DV.ranges): the <diffcore> block computes the entries as
+  diffs.Reader.range_texts() does (first appearances of new quals in one scan per range, not per qual), fetches only
+  hashes not in DV.texts (static: each chunk once, all its texts kept; live: /live/bodies?h= in batches of 256),
+  then line-diffs each entry as difflib does (grouped opcodes, 2 lines of context; texts over 2,000 lines on both
+  sides in a Web Worker running the same functions). Live: ranges over the old tail are dropped on new steps, all on
+  a reload. A map without the sidecar (or a store from before diffs): a note "diffs unavailable", the drill-down as
+  before (pages keep their file card).
+- Skins (key 1): the draft's hairPlan / skinFeats / notchedPath / skinBody / drawDendrite as they were; blobPath and
+  rimOf share wobPhases / wobK (the same arithmetic, so blobPath draws the same pixels); per hunk one faint chomp,
+  its notch edge in the scar colour; hairs, every 5 bundled; a changed function sized by kept + removed lines (also
+  in an opened cluster's layout). Twins (key 2): ghost + new, side-by-side lens, M morphs, gone drift off, new bud
+  from their caller. Pages (file / text blobs): a page drill-down with the marks on the left edge (Twins: before |
+  after pages joined by ribbons). Hover a hunk = its lines; click = the hunk bubble; click a body / ghost / page = the
+  whole diff (lens, capped at 400 rows), the circle eases smaller and left to make room.
+- Against the draft (the app's frame, not the look): no shelf; the look and scope switches sit in the header and the
+  summary (+a −r, changed / new / gone / moved out), the 👁 strip (session start, the blob's last 10 changes in the
+  session, now) and the legend are a DOM panel beside the circle, so the canvas of an unchanged drill-down stays
+  pixel-identical; the drill-down keeps relaxing a few passes a frame, so a scope / look change glides; "you looked"
+  defaults to the step at which that blob's drill-down was last closed (else the draft's third-latest change), and
+  that step and the eye's always sit on the strip, in order; the range keys are 7 / 8 / 9 (user's choice: keys that
+  clash with nothing; the page binds Space, arrows, Home, End, Esc, Backspace, Enter and / in the cluster search,
+  a, f, g, s, l, 1, 2, m), T / S / L keep their meaning everywhere; clustered blobs (user's choice "hairs + bites on
+  clusters"): in the overview each cluster wears its changed functions' marks on its own rim (functions in code
+  order, then hunks; past 60 marks the hunks merge per function, then per run of functions, and a hair stands for
+  10, 25, ... lines, said in the tip), hover = function and hunk, click = that cluster opened with the function
+  pinned; one scale for the whole overview (5, else 10, 25, ... said in the panel's legend), hunks merged per function
+  before it goes up, and every hair holds what it stands for (a part left over is a thinner hair of its own lines,
+  never rounded up); each cluster's skin is drawn once to an offscreen canvas (at rest, no sway) and blitted; Twins
+  there = a dashed ghost of the cluster's size before (cheap), never past the blob's rim; an opened cluster wears the looks; a
+  page's drill-down keeps the file card's facts in the panel; a changed binary says so; a satellite badge only on
+  changed functions; moved-out functions are counted, not drawn; moved / renamed / seeded notes in the tips and the
+  lens; ranges kept for the last 64 (an error asked again after 4 s); the panel on a plate, the circle clear of it
+  in narrow windows, and smaller (30%) when a lens opens; both themes. Note: in windows narrower than about 1,150 px
+  a map with diffs shifts every drill-down right (and smaller) to clear the panel, unchanged blobs too: there the
+  picture is not the one a map without diffs draws (at 1,400 px it is, pixel for pixel).
+- Tests: tests/test_diffs_page.py. Parity: the page's <diffcore> in node vs Reader.range_texts() + difflib hunks on
+  1,249 ranges (c-mini, Flask, the fixture; every state). Chrome on a three-step fixture (an entry blob, an untouched
+  orphan, a text file): Skins counts (bites = hunks with removals, hairs = n // 5 + n % 5 per hunk) in four scopes;
+  hair roots and notch mouths within 1 px of blobPath's outline at several t; notch pixels the scar's colour; hover
+  / click / lens / closing; Twins side by side, morph; T / S / L keys and ←/→ on the strip; the page's edge marks and
+  its Twins; an opened cluster (engine.c) and the overview arcs; live mode (texts from /live/bodies, a provisional
+  step); the headless page's own fetch / cache path equal to the reference on every range of the fixture, each chunk
+  read once; HEAD's page vs this one with a frozen clock, pixel-identical for unchanged drill-downs and for a map
+  without the sidecar. Mutants killed (6/6): the old side from step a, hairs not bundled, the notch stroked in the
+  border colour, the scope ignored, the cache key without a, marks ignoring the wobble's time. Review round
+  (REQUEST CHANGES): the eye on a step that is no change, the page's facts, binary changes, the page's legend, the
+  range cap, the panel; tests added for the eye, the range keys, a tail redone under a range (V5), the border off
+  the notch mouths (V6), hunks for every run of unchanged lines between edits (V2 without the worker test). Round 2:
+  honest hairs in the cluster overview (aigource "blocks of" at step 1253 drew 350 lines for 167, now 167; "stale
+  events" 155 for 78, now 78; tested: each cluster's hairs hold its added lines exactly at scale 10), the overview's
+  frame on Context data builder 32 ms -> 7.1 ms median (plain 6.0; skinBody 138 ms -> 0 a frame, cached); the
+  ~0.5 s stalls every ~20 frames in headless are there with diffs off too (not the diff's).
+- Screenshots (aigource, dark, both looks, next to the draft's): session scratchpad shots/aigource/; same totals as the
+  draft at all five samples (draw_legend +5 −5; model_update +16 −39, 2 changed 1 new 2 gone; README +6 −1 since the
+  session start; context_dump +179 −336; nvim +201 −123, 7 changed 5 new 1 gone).
+- Risks: headless Chrome draws the aigource map at about a frame a second, so a click's texts take seconds there (the
+  promises wait on frames), not in a real browser; difflib's worst case is quadratic in repeated lines (650 ms for a
+  3,000-line file whose lines repeat every 97: hence the worker); a range over a provisional step is made again
+  when the tail changes.
+
 ## Clusters inside blobs outcome (2026-11-09, rule changed 2026-11-10): schema v6
 Plan: .omc/plans/aiblob-clusters.md; the user picked draft variant A "Clusters" as it was, with the big emojis.
 - clusters.py, run by areas.Zoner after the areas (off with --no-smart): a code blob (not tests) gets `clusters`

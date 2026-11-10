@@ -123,6 +123,54 @@ body.multi #newPill { bottom: 148px; }
 .badge.ask.asking { --c: var(--add); } .badge.ask.asking i { animation: beat .8s ease-in-out infinite; }
 .badge.ask.waiting, .badge.ask.starting { --c: var(--mix); } .badge.ask.starting i { animation: beat 1.6s ease-in-out infinite; }
 .badge.ask.paused, .badge.ask.down, .badge.ask.error { --c: var(--rem); } .badge.ask.down i { background: none; border: 1.5px solid currentColor; width: 5px; height: 5px; }
+/* diffs inside blobs: the look and scope switches, the panel beside the drill-down, the code rows, the lens (a whole
+   function) and the bubble (a hunk) */
+#top .seg { display: flex; border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; flex: none; }
+#top .seg button { border: 0; border-radius: 6px; padding: 3px 10px; font-weight: 600; letter-spacing: .02em; color: var(--mute); display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+#top .seg button:hover { color: var(--ink); background: var(--line); }
+#top .seg button[aria-pressed="true"], #top .seg button[aria-selected="true"] { color: var(--bg); background: var(--mix); }
+#top .seg button .k { font: 10px var(--mono); opacity: .7; border: 1px solid currentColor; border-radius: 4px; padding: 0 3px; }
+#top .seg .lab { font: 10px var(--mono); color: var(--mute); text-transform: uppercase; letter-spacing: .1em; padding: 0 6px 0 4px; align-self: center; }
+@media (max-width: 1280px) { #top .seg button .k, #top .seg .lab { display: none; } }
+.mix { color: var(--mix); }
+#dbar { position: fixed; left: 14px; top: 170px; width: 340px; z-index: 2; display: flex; flex-direction: column; gap: 6px; font: 12px var(--mono); color: var(--mute);
+        padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--bg) 86%, transparent); }
+#dfile .fk { margin: 6px 0 1px; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; } #dfile .sum { font: 13px var(--sans); color: var(--ink); }
+#dfile .sym { display: inline-block; font: 11px var(--mono); padding: 0 5px; margin: 2px 3px 0 0; border-radius: 4px; border: 1px dotted var(--data); color: var(--data); }
+#dsum .l1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -.02em; }
+#dbar .bar { display: inline-flex; width: 52px; height: 6px; border-radius: 3px; overflow: hidden; background: var(--line); vertical-align: middle; margin-right: 6px; }
+#dbar .k { font-size: 11px; margin-top: 3px; } #dsum b { font-weight: 600; } #dnote { font-style: italic; }
+#dbar { pointer-events: none; } #dstrip { pointer-events: auto; width: 100%; height: 46px; display: block; cursor: pointer; border-radius: 6px; }      /* (the map under the panel keeps its clicks) */
+#dstrip:focus-visible { outline: 2px solid var(--mix); outline-offset: 2px; }
+#dleg { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; } #dleg span { display: inline-flex; align-items: center; gap: 6px; }
+#tip:has(.code) { max-width: 430px; }
+.code { font: 11.5px/1.6 var(--mono); margin-top: 6px; border-radius: 6px; background: var(--bg); overflow: hidden; }
+.code .r { display: grid; grid-template-columns: 34px 14px 1fr; white-space: pre; border-left: 3px solid transparent; }
+.code .r i { font-style: normal; color: var(--faint); text-align: right; padding-right: 6px; user-select: none; }
+.code .r s { text-decoration: none; color: var(--faint); user-select: none; }
+.code .r code { font: inherit; overflow: hidden; text-overflow: ellipsis; padding-right: 8px; }
+.code .r.p { background: color-mix(in srgb, var(--add) 13%, transparent); border-left-color: var(--add); } .code .r.p s { color: var(--add); }
+.code .r.m { background: color-mix(in srgb, var(--rem) 13%, transparent); border-left-color: var(--rem); } .code .r.m s { color: var(--rem); } .code .r.m code { color: color-mix(in srgb, var(--ink) 80%, var(--rem)); }
+.code .gap { padding: 1px 0 1px 51px; color: var(--mute); font-size: 10.5px; background: color-mix(in srgb, var(--line) 45%, transparent); letter-spacing: .04em; }
+.code .more { padding: 2px 0 2px 51px; color: var(--mute); font-size: 10.5px; }
+.code.sbs .row2 { display: grid; grid-template-columns: 1fr 1fr; } .code.sbs .row2 > .r { min-width: 0; }
+.code.sbs .row2 > .r.e { background: repeating-linear-gradient(135deg, transparent 0 5px, color-mix(in srgb, var(--line) 60%, transparent) 5px 6px); }
+.code.sbs .row2 > .r + .r { box-shadow: inset 1px 0 0 var(--line); }
+.code.sbs .heads { display: grid; grid-template-columns: 1fr 1fr; font: 10px var(--mono); text-transform: uppercase; letter-spacing: .1em; color: var(--mute); padding: 4px 0; }
+.code.sbs .heads span { padding-left: 51px; }
+#dlens { position: fixed; z-index: 5; display: none; padding: 12px 14px 10px; border-radius: 12px; background: var(--panel); border: 1px solid var(--line);
+         box-shadow: 0 18px 50px rgba(0,0,0,.5); flex-direction: column; opacity: 0; transform: translateX(14px); transition: opacity .2s, transform .25s cubic-bezier(.2,.9,.3,1.2); }
+#dlens.on { opacity: 1; transform: none; }
+#dlens h3 { margin: 0; font-size: 20px; display: flex; align-items: baseline; gap: 10px; }
+#dlens h3 .x { margin-left: auto; font: 12px var(--mono); padding: 2px 8px; color: var(--mute); }
+#dlens .loc { font: 12px var(--mono); color: var(--mute); margin-top: 2px; }
+#dlens .scroll { overflow: auto; min-height: 0; flex: 1; margin-top: 4px; border-radius: 6px; } #dlens .code { margin-top: 4px; }
+#dlens .bar { height: 6px; border-radius: 3px; display: flex; overflow: hidden; margin-top: 8px; background: var(--line); }
+#dbloom { position: fixed; z-index: 5; display: none; width: 380px; padding: 9px 11px 8px; border-radius: 22px; background: var(--panel);
+          border: 1.5px solid var(--mix); box-shadow: 0 14px 40px rgba(0,0,0,.5); opacity: 0; transform: scale(.12); transition: transform .42s cubic-bezier(.2,1.5,.35,1), opacity .18s; }
+#dbloom.on { opacity: 1; transform: none; }
+#dbloom .hd { font: 12px var(--mono); color: var(--mute); display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; } #dbloom .hd b { font: 600 15px var(--sans); color: var(--ink); }
+#dbloom .code { max-height: 300px; overflow: auto; }
 </style>
 </head>
 <body>
@@ -135,6 +183,16 @@ body.multi #newPill { bottom: 148px; }
   <span class="badge live" id="liveBadge" hidden title="live: steps are added as the session is written"><i></i>LIVE</span>
   <span class="badge ask" id="askChip" hidden role="status" aria-live="polite"></span>
   <button id="relayoutBtn" hidden title="Lay the map out again over every blob so far (live, new blobs are placed beside the others and nothing moves)">Re-layout</button>
+  <div class="seg" id="dlook" role="tablist" aria-label="Diff look" hidden>
+    <button role="tab" data-v="A" aria-selected="true" title="Skins: a hair per added line (5 make a thick one), a bite per hunk of removed lines (1)">Skins <span class="k">1</span></button>
+    <button role="tab" data-v="B" aria-selected="false" title="Twins: the old version as a dashed ghost overlapping the new one (2)">Twins <span class="k">2</span></button>
+  </div>
+  <div class="seg" id="dscope" role="radiogroup" aria-label="Diff scope" hidden>
+    <span class="lab">since</span>
+    <button data-s="step" aria-pressed="true" title="what this step changed (7)">this step <span class="k">7</span></button>
+    <button data-s="session" aria-pressed="false" title="everything since the session started, up to this step (8)">session start <span class="k">8</span></button>
+    <button data-s="since" aria-pressed="false" title="since you looked: pick the step on the strip (9, then ←/→)">you looked <span class="k">9</span></button>
+  </div>
   <button id="areasBtn" class="tog" aria-pressed="false" title="Areas: groups of blobs, one level above the blob map (A)">Areas <span class="k">A</span></button>
   <button id="followBtn" class="tog" aria-pressed="false" title="Follow: each step flies the camera to what it edits (F)">Follow <span class="k">F</span></button>
   <button id="legendBtn" aria-expanded="false" aria-controls="legend">Legend</button>
@@ -144,6 +202,9 @@ body.multi #newPill { bottom: 148px; }
 <div id="tip" role="tooltip"></div>
 <div id="clsearch" hidden><input id="clq" type="search" placeholder="find a function  /" aria-label="Find a function in this blob" autocomplete="off"><div id="clsugg"></div></div>
 <div id="card" role="dialog" aria-label="Function detail"></div>
+<div id="dbar" hidden aria-label="What changed in this blob"><div id="dfile" hidden></div><div id="dnote"></div><div id="dsum"></div><canvas id="dstrip" tabindex="0" role="slider" aria-label="Diff since step: left / right arrows move the eye"></canvas><div id="dleg"></div></div>
+<div id="dlens" role="dialog" aria-label="Function diff"></div>
+<div id="dbloom" role="dialog" aria-label="Hunk"></div>
 <button id="newPill" hidden aria-live="polite" title="new steps since you left the end: jump to the newest"></button>
 <footer id="bar">
   <div id="status" aria-live="polite"><div class="l1" id="l1"></div><div id="said"></div></div>
@@ -359,7 +420,7 @@ function normalizeStep(st, i) {
    it) x sqrt(their lines), generic words skipped; the 3 faces with most lines, ties by code point as Python sorts */
 const GENERIC = new Set(`engine manager handler data function functions utility helper new code system controller
 startup cleanup creation test tests runner renderer the and for of to with from into hub orphan module main post
-get put patch int str`.split(/\s+/)), FIXED_CAP = { tests: 'Tests', files: 'Files' };
+get put patch int str`.split(/\s+/)), FIXED_CAP = { tests: 'Tests', files: 'Files', data: 'Data', docs: 'Docs' };
 function cmpCP(p, q) {
   const a = [...p], b = [...q];
   for (let k = 0; k < Math.min(a.length, b.length); k++) { const d = a[k].codePointAt(0) - b[k].codePointAt(0); if (d) return d; }
@@ -993,7 +1054,8 @@ function areaTip(aid) {
 }
 
 /* ───────────────────────── view & canvas ───────────────────────── */
-const cv = $('#map'), ctx = cv.getContext('2d'), tl = $('#tl'), tctx = tl.getContext('2d');
+const cv = $('#map'), tl = $('#tl'), tctx = tl.getContext('2d');
+let ctx = cv.getContext('2d');          // (diffs: pointed at an offscreen canvas while a cluster's skin is cached, skinCached)
 let VW = 0, VH = 0, DPR = 1, VIEW = { s: 1, ox: 0, oy: 0 };
 const region = document.createElement('canvas'), rctx = region.getContext('2d');
 function resize() {
@@ -1030,11 +1092,13 @@ function moveCamera(dt) {
 const sx = x => x * VIEW.s + VIEW.ox, sy = y => y * VIEW.s + VIEW.oy;
 
 /* an organic closed outline: a circle whose radius breathes with a few seeded harmonics */
+/* its harmonics: seeded phases, and the radius factor at angle a (rimOf, the rim the diff marks ride, shares them) */
+const wobPhases = seed => { const r = rng(seed); return [r() * TAU, r() * TAU, r() * TAU]; };
+const wobK = (a, ph, t, wob) => 1 + wob * (0.045 * Math.sin(2 * a + ph[0] + t * 0.5) + 0.03 * Math.sin(3 * a + ph[1] - t * 0.37) + 0.018 * Math.sin(5 * a + ph[2]));
 function blobPath(c, x, y, R, seed, t, wob = 1) {
-  const r = rng(seed), p1 = r() * TAU, p2 = r() * TAU, p3 = r() * TAU, N = 30, pts = [];
+  const ph = wobPhases(seed), N = 30, pts = [];
   for (let i = 0; i < N; i++) {
-    const a = i / N * TAU;
-    const k = 1 + wob * (0.045 * Math.sin(2 * a + p1 + t * 0.5) + 0.03 * Math.sin(3 * a + p2 - t * 0.37) + 0.018 * Math.sin(5 * a + p3));
+    const a = i / N * TAU, k = wobK(a, ph, t, wob);
     pts.push([x + Math.cos(a) * R * k, y + Math.sin(a) * R * k]);
   }
   c.beginPath();
@@ -1400,21 +1464,26 @@ function drawMap(now, t) {
 let drill = null, cardFor = null;
 const drillMem = new Map();          // blob id → Map(qual → {x,y}) so a revisit keeps its arrangement
 function openDrill(id) {
-  const b = IDX[cur].blobs.get(id); if (b && PAGE(b.kind)) { showFileCard(id); return; }      // a page has no functions to open
-  hideCard(); drill = { id, pos: drillMem.get(id) || new Map(), sel: null, hov: null, t0: performance.now(), chips: [] }; drillMem.set(id, drill.pos); hover = null; hideTip(); if (AREAS_ON) crumbs(); }
-function closeDrill() { drill = null; hideCard(); if (AREAS_ON) crumbs(); }
-function drillGeo() {
-  const C = { x: VW / 2, y: TOP + (VH - TOP - BOTTOM) / 2 + 4 }, RR = Math.min(VW * 0.42, VH - TOP - BOTTOM - 130) * 0.5;
+  const b = IDX[cur].blobs.get(id); if (b && PAGE(b.kind) && !DV.on) { showFileCard(id); return; }      // a page has no functions to open (with diffs: its lines)
+  if (drill) DV.looked.set(drill.id, cur);
+  hideCard(); diffOpen(); drill = { id, pos: drillMem.get(id) || new Map(), sel: null, hov: null, t0: performance.now(), chips: [] }; drillMem.set(id, drill.pos); hover = null; hideTip(); if (AREAS_ON) crumbs(); }
+function closeDrill() { const id = drill?.id; drill = null; if (id != null) diffClose(id); hideCard(); if (AREAS_ON) crumbs(); }
+function drillGeo(k = DV.lensK) {     // k: a diff's lens is open (0..1), the circle eases smaller and to the left to make room
+  const C = { x: VW / 2, y: TOP + (VH - TOP - BOTTOM) / 2 + 4 }; let RR = Math.min(VW * 0.42, VH - TOP - BOTTOM - 130) * 0.5;
+  if (DV.on && C.x - RR < DIFF_PANEL) { RR = Math.max(60, Math.min(RR, (VW - 16 - DIFF_PANEL) / 2)); C.x = DIFF_PANEL + RR; }      // (a narrow window: clear of the diff panel)
+  if (k > 0.001) { const R2 = RR * (1 - 0.3 * k); return { C: { x: C.x + (Math.min(C.x, DIFF_PANEL + 10 + R2) - C.x) * k, y: C.y }, RR: R2 }; }
   return { C, RR };
 }
-function drillStep(b, RR) {
-  const fs = b.funcs, total = fs.reduce((s, f) => s + f.lines, 0) || 1, big = Math.max(1, ...fs.map(f => f.lines));
+const DIFF_PANEL = 372;          // the diff panel's right edge (#dbar) and a gap
+function drillStep(b, RR, dd) {      // dd: a diff's sizes (lines its rim runs over) and reaches past the rim (hairs, twins)
+  const size = dd ? dd.size : f => f.lines, fs = b.funcs, total = fs.reduce((s, f) => s + size(f), 0) || 1, big = Math.max(1, ...fs.map(size));
   const kf = Math.min(Math.sqrt(0.3 * RR * RR / total), 0.34 * RR / Math.sqrt(big));
   const nodes = fs.map(f => {
     let p = drill.pos.get(f.qual);
     if (!p) { const r = rng(hash(f.qual)), a = r() * TAU, d = r() * RR * 0.45; p = { x: Math.cos(a) * d, y: Math.sin(a) * d }; drill.pos.set(f.qual, p); }
-    p.r = Math.max(15, kf * Math.sqrt(f.lines)); p.f = f; return p;
+    p.r = Math.max(15, kf * Math.sqrt(size(f))); p.f = f; p.ext = 0; p.ox = 0; p.oy = 0; return p;
   });
+  if (dd) for (const p of nodes) p.ext = dd.ext(p, kf);
   const byQ = new Map(nodes.map(n => [n.f.qual, n]));
   for (let pass = 0; pass < 3; pass++) {
     for (const n of nodes) { n.dx = -n.x * 0.01; n.dy = -n.y * 0.01; }
@@ -1424,12 +1493,12 @@ function drillStep(b, RR) {
       n.dx += dx * f; n.dy += dy * f; m.dx -= dx * f; m.dy -= dy * f;
     }
     for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
-      const a = nodes[i], c = nodes[j], dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = a.r + c.r + 26;
+      const a = nodes[i], c = nodes[j], dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = a.r + c.r + 26 + a.ext + c.ext;
       if (d < min) { const p = (min - d) / d * 0.5; a.dx -= dx * p; a.dy -= dy * p; c.dx += dx * p; c.dy += dy * p; }
     }
     for (const n of nodes) {
       n.x += n.dx * 0.6; n.y += n.dy * 0.6;
-      const d = Math.hypot(n.x, n.y), lim = Math.max(0, RR - n.r - 12);
+      const d = Math.hypot(n.x, n.y), lim = Math.max(0, RR - n.r - n.ext - 12);
       if (d > lim) { n.x *= lim / d; n.y *= lim / d; }
     }
   }
@@ -1442,7 +1511,9 @@ function drawDrill(now, t) {
   drill.cv = !!b?.clusters?.length && IDX[cur].blobs.has(drill.id);
   if (!b) return;
   const present = IDX[cur].blobs.has(drill.id);
-  if (drill.cv) { drill.nodes = drill.chips = drill.stains = drill.edges = []; if (drill.sel) { drill.sel = null; hideCard(); } clDraw(now, t, b); return; }
+  DV.feats = []; DV.gones = []; DV.marks = []; DV.rows = [];          // (diffs inside blobs: this frame's hit targets and marks)
+  if (drill.cv) { drill.nodes = drill.chips = drill.stains = drill.edges = []; if (drill.sel) { drill.sel = null; hideCard(); } clDraw(now, t, b); diffBloomLink(); return; }
+  if (PAGE(b.kind)) { drill.nodes = drill.chips = drill.stains = drill.edges = []; drawPageDrill(now, t, b, present, C, RR, ease); diffBloomLink(); return; }
   const col = kindColors(b.kind), R = RR * (0.85 + 0.15 * ease);
   ctx.save(); ctx.globalAlpha = ease;
   blobPath(ctx, C.x, C.y, R, hash(drill.id), t, 0.35); ctx.fillStyle = col.fill; ctx.fill();
@@ -1455,11 +1526,13 @@ function drawDrill(now, t) {
    present ? 'click a function for its snippet · chips open neighbours' : 'not present at this step', 'esc / click outside → app map']
     .forEach((l, i) => ctx.fillText(l, 24, TOP + 60 + i * 16));
   if (!present) { ctx.restore(); return; }
-  const { nodes, byQ, kf } = drillStep(b, R);
-  const P = n => ({ x: C.x + n.x, y: C.y + n.y });
+  const dv = diffDrill(drill.id), { nodes, byQ, kf } = drillStep(b, R, dv?.dd);
+  const dnode = n => dv && diffNode(dv.by.get(n.f.qual), n.f, n.r, kf);      // a function's diff, null when unchanged in the scope
+  if (dv?.look === 'B') for (const n of nodes) { const nd = dnode(n); if (nd?.tw) { n.ox = TWIN_AX.x * (nd.tw.foot - n.r); n.oy = TWIN_AX.y * (nd.tw.foot - n.r); } }
+  const P = n => ({ x: C.x + n.x + n.ox, y: C.y + n.y + n.oy });
   drill.stains = []; drill.edges = [];
   // functions removed from this blob leave a red ghost the size they had, on the free floor of the circle
-  const ghosts = [...STEPS[cur].stains.values()].filter(s => s.gone && s.blob === drill.id);
+  const ghosts = [...STEPS[cur].stains.values()].filter(s => s.gone && s.blob === drill.id && !dv?.goneQ.has(s.q));
   for (const s of ghosts) {
     const r = Math.max(13, kf * Math.sqrt(s.lines)), g = rng(hash('ghost:' + s.q)), lim = Math.max(0, R - r - 14);
     let best = null, bd = -Infinity;
@@ -1477,6 +1550,11 @@ function drawDrill(now, t) {
     const tw = ctx.measureText(s.name).width; ctx.fillText(s.name, x, y); ctx.fillStyle = m.git ? T.git : T.rem; ctx.fillRect(x - tw / 2 - 2, y - 0.5, tw + 4, 1.6);
     ctx.globalAlpha = a0;
     drill.stains.push({ m, x, y, r, where: '' });
+  }
+  for (const g of dv ? diffGonePlace(dv, nodes, C, R, kf, drill.stains) : []) {       // deleted in the scope: the diff's ghosts
+    ctx.save(); diffGone(g, g.x, g.y, t, col, now); ctx.restore();
+    const gp = pulseAt(FPULSES, 'g:' + g.q, now);
+    if (gp) drawPulse(ctx, gp, g.x, g.y, g.r, rr => { ctx.beginPath(); ctx.arc(g.x, g.y, rr, 0, TAU); }, ctx.globalAlpha, false);
   }
   // edges between functions: calls (main / error) and shared data
   const sel = drill.hov || drill.sel;
@@ -1549,26 +1627,33 @@ function drawDrill(now, t) {
     const fshape = rr => blobPath(ctx, p.x, p.y, rr, seed, t * 1.3);
     ctx.globalAlpha = ease * (sel && sel !== f.qual && !f.calls.some(c => c.to === sel) && !byQ.get(sel)?.f.calls.some(c => c.to === f.qual) ? 0.4 : 1);
     if (fp) drawPulse(ctx, fp, p.x, p.y, r, fshape, ctx.globalAlpha, true);
-    fshape(r); ctx.fillStyle = col.fill; ctx.fill();
-    const fm = funcMark(f.qual);
-    if (fm) { const s = stainSpot(f.qual, fm, r, f.lines); ctx.save(); ctx.clip(); drawStain(ctx, p.x + s.dx, p.y + s.dy, s.r, fm, s.seed, now); ctx.restore();
+    // changed in the diff's scope: the body in its look (Skins / Twins), else as ever
+    const nd = dnode(n) && diffNode(dv.by.get(f.qual), f, r, kf), caller = nd && DV.look === 'B' && nodes.find(o => o !== n && o.f.calls.some(c => c.to === f.qual));
+    const db = nd && diffBody(nd, p.x, p.y, t, col, { now, lw: lineW(f.branches), caller: caller && { ...P(caller), r: caller.r } });
+    if (!db) { fshape(r); ctx.fillStyle = col.fill; ctx.fill(); }
+    const fm = db ? db.fm : funcMark(f.qual);
+    if (fm && !db) { const s = stainSpot(f.qual, fm, r, f.lines); ctx.save(); ctx.clip(); drawStain(ctx, p.x + s.dx, p.y + s.dy, s.r, fm, s.seed, now); ctx.restore();
               drill.stains.push({ m: fm, x: p.x + s.dx, y: p.y + s.dy, r: s.r, where: f.name }); }
-    ctx.lineWidth = lineW(f.branches); ctx.strokeStyle = col.stroke; fshape(r); ctx.stroke();
+    else if (fm) drill.stains.push({ m: fm, x: p.x + db.sp.dx, y: p.y + db.sp.dy, r: db.sp.r, where: f.name });
+    if (!db) { ctx.lineWidth = lineW(f.branches); ctx.strokeStyle = col.stroke; fshape(r); ctx.stroke(); }
     if (f.delta.state === 'moved') shimmer(ctx, p.x, p.y, r + 3, seed, t * 1.3, ctx.globalAlpha);
-    if (f.delta.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; fshape(r + 4); ctx.stroke(); }
+    if (f.delta.state === 'new' && !db) { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; fshape(r + 4); ctx.stroke(); }
+    if (db && DV.look === 'A' && nd.d.state === 'new') { ctx.save(); ctx.strokeStyle = T.flash; ctx.globalAlpha *= 0.7; ctx.lineWidth = 1.5; fshape(r + ribLen(r) + 5); ctx.stroke(); ctx.restore(); }
+    if (db) diffSat(b, f.qual, p.x, p.y, r, col);
     if (fp) drawPulse(ctx, fp, p.x, p.y, r, fshape, ctx.globalAlpha, false);
-    if (isSel || drill.hov === f.qual) { ctx.strokeStyle = T.mix; ctx.lineWidth = 2; fshape(r + 6); ctx.stroke(); }
+    if (isSel || drill.hov === f.qual || DV.lensQ === f.qual) { ctx.strokeStyle = T.mix; ctx.lineWidth = 2; fshape(r + 6 + (db ? n.ext : 0)); ctx.stroke(); }
     const fs = clamp(n.r * 0.36, 11, 15); ctx.font = `600 ${fs}px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const name = f.name.length > 22 ? f.name.slice(0, 21) + '…' : f.name, tw = ctx.measureText(name).width, inside = tw < n.r * 1.7;
-    if (inside && fm) {
+    if (inside && (fm || db)) {
       ctx.save(); ctx.globalAlpha *= 0.8; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.roundRect(p.x - tw / 2 - 5, p.y - 4 - fs * 0.62, tw + 10, fs * 1.24, 4); ctx.fill(); ctx.restore(); ctx.fillStyle = T.ink;
     }
-    if (inside) { ctx.fillText(name, p.x, p.y - 4); ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.fillText(`${f.lines}L`, p.x, p.y + fs * 0.7); }
+    if (inside) { ctx.fillText(name, p.x, p.y - 4); if (db) diffCount(nd.d, p.x, p.y + fs * 0.7 + 1); else { ctx.font = `10px ${MONO}`; ctx.fillStyle = T.mute; ctx.fillText(`${f.lines}L`, p.x, p.y + fs * 0.7); } }
     else outside.push({ n, p, name, fs, w: tw + 10, h: fs + 6, alpha: ctx.globalAlpha });
   }
-  placeAround(outside, nodes.map(n => ({ ...P(n), r: n.r, n })));
+  placeAround(outside, nodes.map(n => ({ ...P(n), r: n.r + n.ext, n })));
   drill.nodes = nodes.map(n => ({ q: n.f.qual, f: n.f, ...P(n), r: n.r }));
   ctx.restore();
+  diffBloomLink();
   if (drill.sel && cardFor !== drill.sel + '@' + cur) showCard(drill.nodes.find(n => n.q === drill.sel));
 }
 /* labels of small function blobs: try below, above, right, left; keep clear of other nodes and placed labels;
@@ -1582,7 +1667,7 @@ function placeAround(items, circles) {
     return o;
   };
   for (const it of items.sort((a, b) => b.n.r - a.n.r)) {
-    const { p, w, h } = it, r = it.n.r + 3;
+    const { p, w, h } = it, r = it.n.r + it.n.ext + 3;
     const cands = [[p.x, p.y + r + h / 2], [p.x, p.y - r - h / 2], [p.x + r + w / 2, p.y], [p.x - r - w / 2, p.y]].map(([x, y]) => ({ x0: x - w / 2, x1: x + w / 2, y0: y - h / 2, y1: y + h / 2, x, y }));
     let best = cands[0], bo = Infinity;
     for (const c of cands) { const o = overlap(c, it.n); if (o < bo) { bo = o; best = c; } if (!o) break; }
@@ -1593,8 +1678,1180 @@ function placeAround(items, circles) {
     ctx.fillText(it.name, best.x, best.y + 0.5); ctx.restore();
   }
 }
+/* ───────────────────────── diffs inside blobs ─────────────────────────
+   SCHEMA.md "Diffs": the texts behind each function's `hash` (and each file / text blob's) sit beside the timeline:
+   static, <timeline>.diffs/index.json.gz (a file line `fv` per step, and which chunk holds which hash) and
+   s/<step>.json.gz (the texts; gzip read with DecompressionStream); live, `fv` on each served step and GET
+   live/bodies?h=. The index is read once at boot; texts on a click, only those not in memory (DV.texts), and each
+   range once (DV.ranges, by blob and steps, the last DIFF_RANGES). A drill-down shows what changed in its blob over the
+   chosen scope: 7 this step, 8 since its session started, 9 since a step N (the 👁 on the strip; ←/→ there). The range is what
+   diffs.Reader.range_texts() gives (the <diffcore> block: tests/test_diffs_page.py runs it in node against it),
+   line-diffed as difflib does (its hunks, DIFF_CTX lines of context). Two looks, the approved draft:
+   - Skins (1): per hunk, its removed lines one faint chomp cut into the outline (the notch's edge stroked in the scar
+     colour, never the border's), its added lines hairs, one per line, every HAIR_BUNDLE bundled into one thick hair;
+     every mark rides the blob's own wobbling rim (rimOf: the harmonics blobPath draws with). Hover a hunk: its mini
+     diff; click it: the hunk; click the body: the whole function.
+   - Twins (2): the old version a dashed ghost overlapping the new one (click: before | after side by side; M morphs
+     one into the other); deleted functions drift off, new ones bud out of their caller.
+   A page (file / text blob) wears the same marks on its left edge. A function with no change in the scope is drawn
+   as ever: the drill-down of a blob nothing changed in is the same picture, pixel for pixel. A map without the
+   sidecar keeps the old drill-down, and a note says diffs are unavailable. Clusters (v6) wear the looks too: in the
+   overview each cluster carries its changed functions' hairs and bites on its own rim (functions in code order, then
+   their hunks; past CL_MARKS marks the hunks merge per function, then per run of functions, and a hair stands for
+   more lines), Twins a dashed ghost of the cluster's size before; an opened cluster's functions as in a drill-down. */
+
+/* <diffcore> diffs.Reader.range_texts() and difflib's grouped opcodes, pure (no DOM). D = { steps (full states),
+   fvs (file line per step), funcsAt(i) -> Map qual -> function at step i }. diffEntries(D, a, b, blob id) -> the
+   entries without texts; diffHashes() the hashes they need; diffFill() puts the texts on; diffHunks(old, new) the
+   difflib hunks {os, ns, lines: [[op, text]]} of their lines (split at \n, a last empty one dropped). */
+const DIFF_CTX = 2, DIFF_PAGE = k => k === 'file' || k === 'text';
+const dOwn = (o, k) => o != null && Object.prototype.hasOwnProperty.call(o, k) ? o[k] : undefined;
+const diffState = (oh, nh) => oh == null ? 'new' : nh == null ? 'deleted' : oh === nh ? 'same' : 'changed';
+function diffFmap(fvs, i) {          // {path: hash | "bin:N"} of the file / text blobs after step i
+  const m = new Map();
+  for (let k = 0; k <= i; k++) { const f = fvs[k] && fvs[k].f; if (f) for (const p of Object.keys(f)) { if (f[p] == null) m.delete(p); else m.set(p, f[p]); } }
+  return m;
+}
+function diffSeed(fvs, a, b, kind, key, first) {     // the earliest seed of key at a..min(b, first) -> [hash, step]
+  for (let i = a; i <= Math.min(b, first); i++) { const h = dOwn(fvs[i] && fvs[i][kind], key); if (h != null) return [h, i]; }
+  return [null, null];
+}
+function diffEntries(D, a, b, bid) {
+  const old = a > 0 ? D.steps[a - 1] : { blobs: [] }, nw = D.steps[b];
+  const b0 = old.blobs.find(x => x.id === bid), b1 = nw.blobs.find(x => x.id === bid), bb = b1 || b0;
+  if (!bb) return [];
+  return DIFF_PAGE(bb.kind) ? [diffFile(D, a, b, bb.path ?? bb.id.replace(/^file:/, ''))] : diffCode(D, a, b, old, nw, bid);
+}
+function diffFile(D, a, b, path) {
+  const f0 = diffFmap(D.fvs, a - 1), f1 = diffFmap(D.fvs, b), e = { kind: 'file', key: path, group: 'file:' + path };
+  let oh = f0.has(path) ? f0.get(path) : null;
+  const nh = f1.has(path) ? f1.get(path) : null;
+  if (oh == null) {
+    let first = b;
+    for (let i = a; i <= b; i++) if (dOwn(D.fvs[i] && D.fvs[i].f, path) != null) { first = i; break; }
+    [oh] = diffSeed(D.fvs, a, b, 'seed', path, first);
+    if (oh != null) e.seeded = true;
+  }
+  if (oh == null && nh != null) for (const [p, h] of f0) if (h === nh && !f1.has(p)) { oh = nh; e.renamed_from = p; break; }
+  if ([oh, nh].some(h => h && h.startsWith('bin:'))) e.binary = true;
+  return Object.assign(e, { state: diffState(oh, nh), oldh: oh, newh: nh });
+}
+const diffQmap = st => { const m = new Map(); for (const x of st.blobs) for (const f of x.funcs || []) m.set(f.qual, [f, x.id]); return m; };
+function diffCode(D, a, b, old, nw, bid) {
+  const fam0 = old.blobs.filter(x => x.id === bid || x.cut === bid), fam1 = nw.blobs.filter(x => x.id === bid || x.cut === bid);
+  const ids = new Set([...fam0, ...fam1].map(x => x.id)), group = new Map();
+  for (const x of [...fam0, ...fam1]) {
+    for (const f of x.funcs || []) group.set(f.qual, x.id);
+    for (const m of x.merged || []) for (const q of m.funcs) group.set(q, m.id);
+  }
+  const q0 = diffQmap(old), q1 = diffQmap(nw), mine0 = fam0.flatMap(x => (x.funcs || []).map(f => f.qual)), mine1 = fam1.flatMap(x => (x.funcs || []).map(f => f.qual));
+  // where each qual new to the family first shows in a..b: one scan for all of them (a seed after it is no base)
+  const need = new Set(mine1.filter(q => !q0.has(q))), first = new Map();
+  for (let i = a; i <= b && first.size < need.size; i++) { const fm = D.funcsAt(i); for (const q of need) if (!first.has(q) && fm.has(q)) first.set(q, i); }
+  const out = [], by = new Map();
+  for (const q of mine1) {
+    const [f] = q1.get(q), e = { kind: 'func', key: q, group: group.get(q), name: f.name };
+    let oh = null;
+    if (q0.has(q)) { oh = q0.get(q)[0].hash ?? null; if (!ids.has(q0.get(q)[1])) e.moved_from = q0.get(q)[1]; }
+    else {
+      let s; [oh, s] = diffSeed(D.fvs, a, b, 'sq', q, first.has(q) ? first.get(q) : b);
+      if (oh != null) { e.seeded = true; if ((D.fvs[s].sqa || []).includes(q)) e.approx = true; }
+    }
+    e.oldh = oh; e.newh = f.hash ?? null;
+    out.push(e); by.set(q, e);
+  }
+  for (const q of mine0) {
+    if (by.has(q)) continue;
+    const [f] = q0.get(q), e = { kind: 'func', key: q, group: group.get(q), name: f.name, oldh: f.hash ?? null, newh: null };
+    if (q1.has(q)) { e.moved_to = q1.get(q)[1]; e.newh = q1.get(q)[0].hash ?? null; }
+    out.push(e); by.set(q, e);
+  }
+  const added = out.filter(e => e.oldh == null), gone = out.filter(e => e.newh == null);
+  for (const same of [(x, y) => x.oldh === y.newh, (x, y) => x.name === y.name])         // renames, each once
+    for (const e of added) {
+      const g = gone.find(g => same(g, e));
+      if (g && e.oldh == null) { e.oldh = g.oldh; e.renamed_from = g.key; gone.splice(gone.indexOf(g), 1); out.splice(out.indexOf(g), 1); }
+    }
+  for (const e of out) { e.state = diffState(e.oldh, e.newh); delete e.name; }
+  return out;
+}
+const diffHashes = es => [...new Set(es.flatMap(e => [e.oldh, e.newh]).filter(h => h && !h.startsWith('bin:')))];
+function diffFill(es, texts) {
+  for (const e of es) {
+    e.old = e.oldh && !e.binary ? texts.get(e.oldh) ?? null : null;
+    e.new = e.newh && !e.binary ? texts.get(e.newh) ?? null : null;
+  }
+  return es;
+}
+const diffLines = t => { if (t == null || t === '') return []; const L = t.split('\n'); if (L.length > 1 && L[L.length - 1] === '') L.pop(); return L; };
+/* SequenceMatcher(None, A, B, autojunk=False): matching blocks, opcodes, grouped opcodes (difflib, line for line) */
+function diffMatch(A, B) {
+  const b2j = new Map();
+  B.forEach((x, j) => { let l = b2j.get(x); if (!l) b2j.set(x, l = []); l.push(j); });
+  const longest = (alo, ahi, blo, bhi) => {
+    let bi = alo, bj = blo, bk = 0, j2len = new Map();
+    for (let i = alo; i < ahi; i++) {
+      const nj = new Map(), js = b2j.get(A[i]);
+      if (js) for (const j of js) {
+        if (j < blo) continue;
+        if (j >= bhi) break;
+        const k = (j2len.get(j - 1) || 0) + 1; nj.set(j, k);
+        if (k > bk) { bi = i - k + 1; bj = j - k + 1; bk = k; }
+      }
+      j2len = nj;
+    }
+    while (bi > alo && bj > blo && A[bi - 1] === B[bj - 1]) { bi--; bj--; bk++; }
+    while (bi + bk < ahi && bj + bk < bhi && A[bi + bk] === B[bj + bk]) bk++;
+    return [bi, bj, bk];
+  };
+  const queue = [[0, A.length, 0, B.length]], blocks = [];
+  while (queue.length) {
+    const [alo, ahi, blo, bhi] = queue.pop(), x = longest(alo, ahi, blo, bhi), [i, j, k] = x;
+    if (k) {
+      blocks.push(x);
+      if (alo < i && blo < j) queue.push([alo, i, blo, j]);
+      if (i + k < ahi && j + k < bhi) queue.push([i + k, ahi, j + k, bhi]);
+    }
+  }
+  blocks.sort((p, q) => p[0] - q[0] || p[1] - q[1] || p[2] - q[2]);
+  const out = []; let i1 = 0, j1 = 0, k1 = 0;
+  for (const [i2, j2, k2] of blocks) {
+    if (i1 + k1 === i2 && j1 + k1 === j2) k1 += k2;
+    else { if (k1) out.push([i1, j1, k1]); [i1, j1, k1] = [i2, j2, k2]; }
+  }
+  if (k1) out.push([i1, j1, k1]);
+  out.push([A.length, B.length, 0]);
+  return out;
+}
+function diffGroups(A, B, n) {
+  const codes = []; let i = 0, j = 0;
+  for (const [ai, bj, size] of diffMatch(A, B)) {
+    const tag = i < ai && j < bj ? 'replace' : i < ai ? 'delete' : j < bj ? 'insert' : '';
+    if (tag) codes.push([tag, i, ai, j, bj]);
+    i = ai + size; j = bj + size;
+    if (size) codes.push(['equal', ai, i, bj, j]);
+  }
+  if (!codes.length) codes.push(['equal', 0, 1, 0, 1]);
+  if (codes[0][0] === 'equal') { const [t, i1, i2, j1, j2] = codes[0]; codes[0] = [t, Math.max(i1, i2 - n), i2, Math.max(j1, j2 - n), j2]; }
+  const L = codes.length - 1;
+  if (codes[L][0] === 'equal') { const [t, i1, i2, j1, j2] = codes[L]; codes[L] = [t, i1, Math.min(i2, i1 + n), j1, Math.min(j2, j1 + n)]; }
+  const groups = []; let g = [];
+  for (let [tag, i1, i2, j1, j2] of codes) {
+    if (tag === 'equal' && i2 - i1 > n + n) {
+      g.push([tag, i1, Math.min(i2, i1 + n), j1, Math.min(j2, j1 + n)]); groups.push(g); g = [];
+      i1 = Math.max(i1, i2 - n); j1 = Math.max(j1, j2 - n);
+    }
+    g.push([tag, i1, i2, j1, j2]);
+  }
+  if (g.length && !(g.length === 1 && g[0][0] === 'equal')) groups.push(g);
+  return groups;
+}
+function diffHunks(oldT, newT) {
+  const A = diffLines(oldT), B = diffLines(newT), hunks = []; let add = 0, rem = 0;
+  for (const g of diffGroups(A, B, DIFF_CTX)) {
+    const lines = [];
+    for (const [tag, i1, i2, j1, j2] of g) {
+      if (tag === 'equal') { for (let i = i1; i < i2; i++) lines.push([' ', A[i]]); continue; }
+      if (tag !== 'insert') { for (let i = i1; i < i2; i++) lines.push(['-', A[i]]); rem += i2 - i1; }
+      if (tag !== 'delete') { for (let j = j1; j < j2; j++) lines.push(['+', B[j]]); add += j2 - j1; }
+    }
+    hunks.push({ os: g[0][1] + 1, ns: g[0][3] + 1, lines });
+  }
+  return { hunks, a: add, r: rem, L: B.length, Lo: A.length };
+}
+/* </diffcore> */
+
+/* ── loading: the index at boot, texts by hash on a click, ranges once ── */
+const DV = { on: null, why: '', base: '', fv: null, where: null, chunks: new Map(), texts: new Map(), ranges: new Map(),
+  look: store.get('aiblob.diffLook') === 'B' ? 'B' : 'A', scope: 'step', since: new Map(), looked: new Map(), strips: new Map(),
+  at: 0, key: '', morph: 0, morphTo: 0, lensK: 0, feats: [], gones: [], rows: [], marks: [], page: null, hov: null, bloomK: null, bloomAt: null, lensQ: null, lensSig: '', ui: '' };
+async function gzJson(url, fresh) {
+  const r = await fetch(url, fresh ? { cache: 'no-store' } : {});
+  if (!r.ok) throw new Error(`no ${url} (${r.status})`);
+  const buf = new Uint8Array(await r.arrayBuffer());
+  const txt = buf[0] === 0x1f && buf[1] === 0x8b ? await new Response(new Blob([buf]).stream().pipeThrough(new DecompressionStream('gzip'))).text() : new TextDecoder().decode(buf);
+  return JSON.parse(txt);
+}
+async function diffInit() {
+  DV.ranges.clear(); DV.strips.clear(); DV.fv = null; DV.where = null; DV.chunks.clear();
+  if (LIVE) { DV.on = !!LHEAD.live?.diffs; DV.why = DV.on ? '' : 'diffs unavailable: this live store keeps no texts (written before diffs)'; return; }
+  DV.on = null; DV.why = 'loading diffs…'; DV.base = SRC.replace(/\.json$/i, '') + '.diffs/';
+  try {
+    if (typeof DecompressionStream === 'undefined') throw new Error('this browser cannot read gzip (no DecompressionStream)');
+    const ix = await gzJson(DV.base + 'index.json.gz', true);
+    if (ix.steps !== STEPS.length || !Array.isArray(ix.fv) || ix.fv.length !== STEPS.length) throw new Error(`${DV.base} is for ${ix.steps} steps, the map has ${STEPS.length}`);
+    DV.where = new Map(); for (const s of Object.keys(ix.chunks || {})) for (const h of ix.chunks[s]) DV.where.set(h, s);
+    DV.fv = ix.fv; DV.on = true; DV.why = '';
+  } catch (e) { DV.on = false; DV.why = `diffs unavailable: ${e.message || e} (timeline.py --diffs writes them)`; }
+}
+const diffFvs = () => DV.fv || STEPS.map(s => s.fv || {});
+async function diffGet(hs) {
+  const miss = hs.filter(h => !DV.texts.has(h));
+  if (miss.length && LIVE) {
+    for (let k = 0; k < miss.length; k += 256) {
+      const r = await fetch('live/bodies?h=' + miss.slice(k, k + 256).join(','), { cache: 'no-store' });
+      if (!r.ok) throw new Error(`live/bodies: ${r.status}`);
+      const got = await r.json(); for (const h of Object.keys(got)) if (typeof got[h] === 'string') DV.texts.set(h, got[h]);
+    }
+  } else if (miss.length) {
+    await Promise.all([...new Set(miss.map(h => DV.where.get(h)).filter(s => s != null))].map(s => {
+      let p = DV.chunks.get(s);
+      if (!p) DV.chunks.set(s, p = gzJson(`${DV.base}s/${s}.json.gz`).then(o => { for (const h of Object.keys(o)) DV.texts.set(h, o[h]); }, e => { DV.chunks.delete(s); throw e; }));
+      return p;
+    }));
+  }
+  return DV.texts;
+}
+/* blob bid from before step a to after step b: {ok, es, by: qual / path -> entry} once its texts are in; each entry
+   gets its hunks and counts (a added, r removed, L / Lo lines after / before); `missing`: a text the store lacks */
+function diffRange(bid, a, b) {
+  const key = `${bid}|${a}|${b}`;
+  let r = DV.ranges.get(key);
+  if (r?.err && performance.now() - r.errAt > 4000) r = null;                 // (an error: asked again after a while)
+  if (r) { DV.ranges.delete(key); DV.ranges.set(key, r); return r; }          // (the most recently used last)
+  DV.ranges.set(key, r = { key, bid, a, b, ok: false, err: '' });
+  for (const k of DV.ranges.keys()) { if (DV.ranges.size <= DIFF_RANGES) break; DV.ranges.delete(k); }
+  try {
+    const es = diffEntries({ steps: STEPS, fvs: diffFvs(), funcsAt: i => IDX[i].funcs }, a, b, bid);
+    diffGet(diffHashes(es)).then(texts => {
+      diffFill(es, texts);
+      return Promise.all(es.map(e => {
+        e.missing = !e.binary && (e.oldh != null && e.old == null || e.newh != null && e.new == null);
+        return e.missing || e.binary ? { hunks: [], a: 0, r: 0, L: 0, Lo: 0 } : diffHunksOff(e.old, e.new);
+      }));
+    }).then(hs => {
+      es.forEach((e, i) => Object.assign(e, hs[i]));
+      Object.assign(r, { es, by: new Map(es.map(e => [e.key, e])), ok: true });
+    }).catch(err => { r.err = String(err.message || err); r.errAt = performance.now(); });
+  } catch (err) { r.err = String(err.message || err); r.errAt = performance.now(); }
+  return r;
+}
+const DIFF_RANGES = 64;
+/* big texts (over DIFF_BIG lines on both sides) are line-diffed in a Web Worker running the same <diffcore>
+   functions (their source), so a click never stalls the page; where a worker cannot start, here */
+const DIFF_BIG = 2000, nlines = t => t ? t.split('\n').length : 0;
+let DW = null;
+function diffHunksOff(o, n) {
+  if (nlines(o) + nlines(n) <= DIFF_BIG) return diffHunks(o, n);
+  try {
+    if (!DW) {
+      const src = `'use strict';const DIFF_CTX=${DIFF_CTX};const diffLines=${diffLines};${diffMatch}\n${diffGroups}\n${diffHunks}\nonmessage=e=>postMessage([e.data[0],diffHunks(e.data[1],e.data[2])]);`;
+      const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })));
+      DW = { w, n: 0, jobs: new Map() };
+      w.onmessage = e => { const j = DW.jobs.get(e.data[0]); DW.jobs.delete(e.data[0]); j?.[0](e.data[1]); };
+      w.onerror = ev => { ev.preventDefault?.(); const jobs = DW.jobs; DW = null; for (const [res, a, b] of jobs.values()) res(diffHunks(a, b)); };
+    }
+    return new Promise(res => { const id = ++DW.n; DW.jobs.set(id, [res, o, n]); DW.w.postMessage([id, o, n]); });
+  } catch (err) { DW = null; return diffHunks(o, n); }
+}
+/* the scopes: the step whose state the diff starts from (n: after step n; -1 before the first) */
+function sessStart(i) {
+  const s = STEPS[i];
+  if (!isGit(s)) { const o = SESS.get(s.session || ''); if (o) return o.first; }
+  let k = 0; for (const j of BOUNDS) if (j <= i) k = j;
+  return k;
+}
+function diffStrip(bid, base = diffBase(bid)) {       // the points, with the eye's step and the one you looked at among them, in order
+  let pts = diffStripPts(bid);
+  for (const n of new Set([base, DV.looked.get(bid)])) {
+    if (n == null || n >= cur || pts.some(p => p.n === n)) continue;
+    const x = IDX[n]?.blobs.get(bid);
+    pts = [...pts, { n, a: x ? x.delta.added : 0, r: x ? x.delta.removed : 0 }].sort((p, q) => p.n - q.n);
+  }
+  return pts;
+}
+function diffStripPts(bid) {          // session start, the blob's changes in it before now (the last 10), the step before now
+  const key = `${bid}|${cur}`;
+  let pts = DV.strips.get(key);
+  if (pts) return pts;
+  const s0 = sessStart(cur), ch = [];
+  for (let j = s0; j < cur; j++) { const x = IDX[j].blobs.get(bid); if (x && (x.delta.state === 'new' || x.delta.added + x.delta.removed > 0)) ch.push(j); }
+  pts = [{ n: s0 - 1, start: true }, ...ch.slice(-10).map(n => ({ n, a: IDX[n].blobs.get(bid).delta.added, r: IDX[n].blobs.get(bid).delta.removed }))];
+  if (!pts.some(p => p.n === cur - 1)) pts.push({ n: cur - 1 });
+  DV.strips.set(key, pts);
+  return pts;
+}
+function diffBase(bid) {
+  if (DV.scope === 'step') return cur - 1;
+  if (DV.scope === 'session') return sessStart(cur) - 1;
+  let n = DV.since.get(bid) ?? DV.looked.get(bid);
+  if (n == null || n >= cur) { const ch = diffStripPts(bid).filter(p => !p.start); n = ch.length > 2 ? ch[ch.length - 3].n : sessStart(cur) - 1; }
+  return clamp(n, -1, cur - 1);
+}
+const diffSpan = bid => [clamp(diffBase(bid) + 1, 0, cur), cur];
+
+/* the drill-down's view of the diff: null while nothing in the blob changed in the scope (or it is loading): the
+   drill-down is then drawn as ever. by: entries by qual; gone: functions deleted from the blob; dd: drillStep's sizes */
+function diffDrill(bid) {
+  if (!DV.on || !IDX[cur]?.blobs.has(bid)) return null;
+  const [a, b] = diffSpan(bid), r = diffRange(bid, a, b);
+  if (!r.ok) return null;
+  if (DV.key !== r.key + DV.look) { DV.key = r.key + DV.look; DV.at = performance.now(); }
+  if (r.view?.look === DV.look) return r.view.show ? r.view : null;
+  const blob = IDX[b].blobs.get(bid), mine = new Set(blob.funcs.map(f => f.qual)), was = a > 0 ? IDX[a - 1].owner : null;
+  if (PAGE(blob.kind)) {
+    const e = r.es[0], ch = !!e && e.state !== 'same' && e.hunks.length > 0;
+    r.view = { look: DV.look, show: ch, r, by: new Map(), gone: [], goneQ: new Set(), page: e, dd: null,
+               tot: { a: ch ? e.a : 0, r: ch ? e.r : 0, changed: ch && e.state === 'changed' ? 1 : 0, fresh: ch && e.state === 'new' ? 1 : 0, gone: 0, out: 0 } };
+    return ch ? r.view : null;
+  }
+  const shown = e => e.hunks.length > 0, gone = r.es.filter(e => e.kind === 'func' && e.newh == null && shown(e) && was?.get(e.key) === bid);
+  const fs = r.es.filter(e => e.kind === 'func' && mine.has(e.key) && e.state !== 'same' && shown(e));
+  const tot = { a: 0, r: 0, changed: 0, fresh: 0, gone: gone.length, out: r.es.filter(e => e.moved_to && was?.get(e.key) === bid).length };
+  for (const e of [...fs, ...gone]) { tot.a += e.a; tot.r += e.r; }
+  for (const e of fs) { if (e.state === 'changed') tot.changed++; else if (e.state === 'new') tot.fresh++; }
+  const by = new Map(fs.map(e => [e.key, e])), look = DV.look;
+  const dd = { size: f => { const e = by.get(f.qual); return look === 'A' && e?.state === 'changed' ? f.lines + e.r : f.lines; },
+               ext: (p, kf) => diffNode(by.get(p.f.qual), p.f, p.r, kf)?.ext || 0 };
+  r.view = { look, show: fs.length + gone.length > 0, r, by, gone, goneQ: new Set(gone.map(e => e.key)), tot, dd };
+  return r.view.show ? r.view : null;
+}
+/* the diff node of function f at radius r (kf: the drill-down's lines-to-radius factor): its marks (Skins) or its
+   twin (Twins), cached on the entry per radius and look */
+function diffNode(e, f, r, kf) {
+  if (!e) return null;
+  const k = DV.look + Math.round(r * 100);
+  if (e.nd?.k === k) return e.nd;
+  const nd = { k, q: f.qual, name: f.name, f, d: e, r, u: diffUnify(e.hunks, e.L) };
+  if (DV.look === 'A') { nd.feats = skinFeats(nd); nd.out = Math.max(0, ...nd.feats.flatMap(g => g.hairs.map(h => h.L))); nd.ext = nd.feats.length ? nd.out + 4 : 0; }
+  else if (e.state === 'changed') { nd.tw = twinGeo(nd, kf); nd.ext = nd.tw.foot - r; }
+  else nd.ext = 0;
+  return e.nd = nd;
+}
+function diffGoneNode(e, r) {
+  const k = DV.look + Math.round(r * 100);
+  if (e.gnd?.k === k) return e.gnd;
+  const g = { k, q: e.key, name: e.key.split('.').pop(), d: e, r, u: diffUnify(e.hunks, 0), gone: true, f: { lines: e.Lo, name: e.key.split('.').pop() } };
+  if (DV.look === 'A') g.feats = skinFeats(g);
+  return e.gnd = g;
+}
+
+/* ── Skins: unified positions, then per hunk a chomp and its hairs placed round the rim ──
+   every line of the function, now plus removed, in order; the rim runs over them clockwise from 12 o'clock, so a
+   mark's angle says where in the function the line sits */
+function diffUnify(hunks, L) {
+  let rem = 0; const marks = [], spans = [];
+  hunks.forEach((h, hi) => {
+    let u = (h.ns - 1) + rem; const u0 = u; let a = 0, r = 0;
+    for (const [op] of h.lines) { if (op === '-') { marks.push({ u, op }); rem++; r++; } else if (op === '+') { marks.push({ u, op }); a++; } u++; }
+    spans.push({ u0, u1: u, a, r, h, hi });
+  });
+  return { U: Math.max(1, L + rem), marks, spans };
+}
+const hunkAng = (u, U) => -Math.PI / 2 + (u + 0.5) / U * TAU;
+const ribLen = r => clamp(r * 0.3, 6, 18);
+const ribLenOf = (r, text, seed) => { const g = rng(seed ^ 0x51ed), n = String(text || '').trim().length; return ribLen(r) * clamp(0.45 + 0.85 * Math.min(1, n / 64), 0.45, 1.3) * (0.85 + 0.3 * g()); };
+const HAIR_BUNDLE = 5, THIN_GAP = 3.8, IN_GAP = 6, HUNK_GAP = 11;
+/* the hairs of a hunk's added lines: [{L, w, seed, slot, big}], seeded by the lines themselves (stable across steps) */
+function hairPlan(lines, r, key) {
+  const out = [], full = Math.floor(lines.length / HAIR_BUNDLE);
+  for (let i = 0; i < full; i++) {
+    const seed = hash(key + '|B' + lines.slice(i * HAIR_BUNDLE, (i + 1) * HAIR_BUNDLE).join('\n') + '|' + i), L = clamp(r * 0.5, 16, 42) * (0.85 + 0.3 * rng(seed ^ 0x51ed)());
+    const w = clamp(L * 0.2, 3.2, 8); out.push({ L, w, seed, slot: w * 1.7 + 2, big: true, n: HAIR_BUNDLE });
+  }
+  lines.slice(full * HAIR_BUNDLE).forEach((text, k) => {
+    const seed = hash(key + '|+' + text + '|' + k), L = ribLenOf(r, text, seed) * 1.15;
+    out.push({ L, w: clamp(0.9 + L * 0.17, 1.2, 5.5) * (0.85 + 0.3 * rng(seed ^ 0x777)()), seed, slot: THIN_GAP, big: false, n: 1 });
+  });
+  return out;
+}
+function skinFeats(nd) {
+  const r = nd.r, U = nd.u.U, C = TAU * r, gs = [];
+  for (const sp of nd.u.spans) {
+    if (!(sp.a + sp.r)) continue;
+    const us = nd.u.marks.filter(m => m.u >= sp.u0 && m.u < sp.u1).map(m => m.u), mid = us.reduce((s, u) => s + u, 0) / Math.max(1, us.length);
+    const ls = op => sp.h.lines.filter(l => l[0] === op).map(l => l[1]), rem = ls('-'), add = ls('+'), fr = sp.r / U;
+    const g = { hunks: [sp], a: sp.a, r: sp.r, k: nd.q + '#' + sp.hi, pos: hunkAng(mid, U) * r, hairs: nd.B > HAIR_BUNDLE ? scaledHairs(sp, r, nd.q, nd.B) : hairPlan(add, r, nd.q) };
+    // a 1-line hunk still shows, a gutting one never swallows the blob; narrow and deep, a chomp not a slice
+    if (sp.r) g.mb = { hw: clamp(0.14 + 0.62 * Math.sqrt(fr), 0.18, 0.72), d: r * clamp(0.1 + 0.6 * Math.sqrt(fr), 0.14, 0.66), seed: hash(nd.q + '|-' + rem.join('\n')) };
+    g.L = (g.mb ? 2 * g.mb.hw * r : 0) + g.hairs.reduce((s, h) => s + h.slot, 0) + (g.mb && g.hairs.length ? IN_GAP : 0);
+    gs.push(g);
+  }
+  if (!gs.length) return gs;
+  const n = gs.length, gap = Math.min(HUNK_GAP, C * 0.3 / n), sumL = gs.reduce((s, g) => s + g.L, 0), f = clamp((C * 0.94 - n * gap) / sumL, 0.12, 1);
+  for (const g of gs) g.L *= f;
+  gs.sort((p, q) => p.pos - q.pos);
+  for (let pass = 0; pass < 40 && n > 1; pass++) for (let i = 0; i < n; i++) {     // spread round the rim, a gap between hunks
+    const p = gs[i], q = gs[(i + 1) % n]; let dlt = q.pos - p.pos; if (i === n - 1) dlt += C;
+    const need = (p.L + q.L) / 2 + gap; if (dlt < need) { const push = (need - dlt) / 2; p.pos -= push; q.pos += push; }
+  }
+  for (const g of gs) {                     // the chomp first, then the hairs, as a diff lists them
+    let at = g.pos - g.L / 2;
+    if (g.mb) { g.mb.hw *= f; g.mb.a = (at + g.mb.hw * r) / r; at += 2 * g.mb.hw * r + (g.hairs.length ? IN_GAP * f : 0); }
+    for (const h of g.hairs) { h.slot *= f; h.a = (at + h.slot / 2) / r; at += h.slot; }
+  }
+  return gs;
+}
+const featHot = g => DV.hov?.g.k === g.k || DV.bloomK === g.k;     // a hunk's chomp and hairs light up together
+/* a hunk's bunch, outlined: a soft white band along the rim over it */
+function diffHalo(x, y, rad, a0, a1, width) {
+  width = Math.min(width, 22);
+  ctx.save(); ctx.lineCap = 'round';
+  ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.lineWidth = width; ctx.beginPath(); ctx.arc(x, y, rad, a0, a1); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.2;
+  ctx.beginPath(); ctx.arc(x, y, rad + width / 2, a0, a1); ctx.stroke(); ctx.beginPath(); ctx.arc(x, y, Math.max(1, rad - width / 2), a0, a1); ctx.stroke();
+  ctx.restore();
+}
+/* a polar hit target round a bunch: at least ~24px of rim, the band from inside the rim to past the hairs */
+function polarHit(cx, cy, r, a0, a1, rin, rout) {
+  const mid = (a0 + a1) / 2, half = Math.max((a1 - a0) / 2 + 6 / r, 12 / r);
+  return (x, y) => { const d = Math.hypot(x - cx, y - cy); let da = Math.atan2(y - cy, x - cx) - mid; da = Math.atan2(Math.sin(da), Math.cos(da));
+    return d > rin - 6 && d < rout + 8 && Math.abs(da) < half ? Math.abs(da) * r + Math.abs(d - (rin + rout) / 2) * 0.5 : Infinity; };
+}
+/* a hair: a tapered, curved green twig out of the rim at (px, py), pointing at angle a; seeded so each line keeps its
+   own: length follows the line's characters, thickness / bend / lean vary, some fork, some end in a bulb */
+function drawDendrite(px, py, a, L, w0, seed, t, dense, rootCol, inset = 0, forks = null) {
+  const g = rng(seed), lean = (g() - 0.5) * (dense ? 0.9 : 0.55), bend = (g() - 0.5) * 0.9, sway = 0.07 * Math.sin(t * 1.1 + (seed % 97));
+  const dir = a + lean + sway, ux = Math.cos(dir), uy = Math.sin(dir), nx = -uy, ny = ux;
+  const pt = s => { const b = bend * L * s * (1 - s) * 1.6 + sway * L * s * s; return [px + ux * L * s + nx * b, py + uy * L * s + ny * b]; };
+  const twig = (from, s0, s1, w, wt) => {
+    const N = 7, left = [], right = [];
+    for (let i = 0; i <= N; i++) {
+      const s = s0 + (s1 - s0) * i / N, [x, y] = from(s), [x2, y2] = from(Math.min(1, s + 0.02)), dx = x2 - x || ux * 1e-3, dy = y2 - y || uy * 1e-3, dl = Math.hypot(dx, dy) || 1;
+      const ww = (w + (wt - w) * i / N) / 2; left.push([x - dy / dl * ww, y + dx / dl * ww]); right.push([x + dy / dl * ww, y - dx / dl * ww]);
+    }
+    ctx.beginPath(); ctx.moveTo(...left[0]); for (const q of left.slice(1)) ctx.lineTo(...q); for (const q of right.reverse()) ctx.lineTo(...q); ctx.closePath(); ctx.fill();
+  };
+  if (rootCol) {                                        // grows out of the border: the border's colour at the root, green past it
+    const [ex, ey] = pt(1), gr = ctx.createLinearGradient(px, py, ex, ey), s1 = clamp((inset + 3.5) / Math.max(L, 1), 0.12, 0.5);
+    gr.addColorStop(0, rootCol); gr.addColorStop(clamp(inset / Math.max(L, 1), 0, s1 - 0.01), rootCol); gr.addColorStop(s1, T.add); gr.addColorStop(1, T.add);
+    ctx.fillStyle = gr;
+  } else ctx.fillStyle = T.add;
+  twig(pt, 0, 1, w0, w0 * 0.2);
+  const nf = forks != null ? forks : L > 7 && g() < 0.32 ? 1 : 0;
+  for (let f = 0; f < nf; f++) {
+    const s0 = forks != null ? 0.3 + 0.5 * (f + 0.5) / nf + (g() - 0.5) * 0.08 : 0.45 + 0.25 * g(), [fx, fy] = pt(s0);
+    const side = forks != null ? (f % 2 ? 1 : -1) : g() < 0.5 ? -1 : 1, fa = dir + side * (0.45 + 0.35 * g()), fl = L * (forks != null ? 0.22 + 0.2 * g() : 0.28 + 0.22 * g());
+    const fw = w0 * (forks != null ? 0.55 * (1 - s0 * 0.6) : 0.6);
+    twig(s => [fx + Math.cos(fa) * fl * s, fy + Math.sin(fa) * fl * s], 0, 1, fw, fw * 0.25);
+    if (g() < 0.5) { ctx.beginPath(); ctx.arc(fx + Math.cos(fa) * fl, fy + Math.sin(fa) * fl, fw * 0.7, 0, TAU); ctx.fill(); }
+  }
+  if (g() < 0.38) { const [bx, by] = pt(1); ctx.beginPath(); ctx.arc(bx, by, w0 * (0.45 + 0.4 * g()), 0, TAU); ctx.fill(); }     // a bulb
+}
+/* a painted bite on a page's edge at (px, py), outward angle a: an uneven notch, a red wash on its inner side and a
+   thin scar line along it */
+function drawBite(px, py, a, br, seed, hostFill) {
+  const g = rng(seed), w = br * (0.7 + 0.8 * g()), d = br * (0.55 + 1.05 * g()), skew = (g() - 0.5) * 0.7, teeth = 0.06 + 0.16 * g();
+  const ux = Math.cos(a), uy = Math.sin(a), tx = -uy, ty = ux, cx = px - ux * d * 0.18, cy = py - uy * d * 0.18, N = 16, pts = [];
+  for (let k = 0; k < N; k++) {
+    const th = k / N * TAU, jag = 1 + (g() - 0.5) * 0.28 + (k % 2 ? -teeth : teeth * 0.6);
+    const tc = Math.cos(th) * w * jag, rc = Math.sin(th) * d * jag;
+    pts.push([cx + tx * (tc + rc * skew) + ux * rc, cy + ty * (tc + rc * skew) + uy * rc, Math.sin(th)]);
+  }
+  ctx.fillStyle = hostFill; ctx.beginPath(); ctx.moveTo(pts[0][0], pts[0][1]); for (const q of pts) ctx.lineTo(q[0], q[1]); ctx.closePath(); ctx.fill();
+  const inner = pts.filter(q => q[2] < 0.05);
+  if (inner.length > 2) { ctx.save(); ctx.globalAlpha *= 0.08; ctx.fillStyle = T.rem; ctx.beginPath(); ctx.moveTo(inner[0][0], inner[0][1]); for (const q of inner) ctx.lineTo(q[0], q[1]); ctx.closePath(); ctx.fill(); ctx.restore(); }
+  ctx.save(); ctx.strokeStyle = T.rem; ctx.lineCap = 'round'; ctx.globalAlpha *= 0.7;
+  for (let k = 0; k < N; k++) {
+    const p = pts[k], q = pts[(k + 1) % N]; if (p[2] > 0.15 && q[2] > 0.15) continue;
+    ctx.lineWidth = 1.1 + 0.4 * g(); ctx.beginPath(); ctx.moveTo(p[0], p[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+  }
+  ctx.restore();
+}
+/* the rim a blob is drawn with: blobPath's harmonics (wobPhases / wobK) with the same seed, wobble and t, as a function
+   of angle, so marks computed from it ride the animated outline */
+function rimOf(x, y, R, seed, t, wob) {
+  const ph = wobPhases(seed), rad = a => R * wobK(a, ph, t, wob);
+  const pt = (a, rr = rad(a)) => [x + Math.cos(a) * rr, y + Math.sin(a) * rr];
+  const normal = a => { const [x1, y1] = pt(a - 0.004), [x2, y2] = pt(a + 0.004); return Math.atan2(-(x2 - x1), y2 - y1); };
+  return { rad, pt, normal };
+}
+const angDiff = (a, b) => Math.atan2(Math.sin(a - b), Math.cos(a - b));
+/* the outline with bites cut into it -> {path, border}: where bites overlap the deeper cut wins; the border follows the
+   rim only (a notch's edge between its two mouth corners is the scar's alone) */
+function notchedPath(rim, bites) {
+  const A0 = -Math.PI / 2, norm = a => A0 + ((a - A0) % TAU + TAU) % TAU, samples = [];
+  const prof = (b, a) => { const u = angDiff(a, b.a) / b.hw; return Math.abs(u) >= 1 ? 0 : b.d * Math.max(0, Math.sqrt(1 - u * u) * (1 + b.skew * u)); };
+  const cutAt = (a, own, ownCut) => { let c = ownCut || 0; for (const b of bites) if (b !== own) c = Math.max(c, prof(b, a)); return c; };
+  for (let i = 0; i < 144; i++) { const a = A0 + i / 144 * TAU; if (!bites.some(b => Math.abs(angDiff(a, b.a)) < b.hw)) samples.push({ a, r: rim.rad(a) - cutAt(a) }); }
+  for (const b of bites) {
+    const g = rng(b.seed ^ 0x2545F491), M = b.M || 16; b.pts = [];
+    for (let j = 0; j <= M; j++) {
+      const u = -1 + 2 * j / M, a = b.a + u * b.hw, edge = j === 0 || j === M, jag = edge ? 0 : (j % 2 ? -b.teeth : b.teeth * 0.6) + (g() - 0.5) * 0.3;
+      const sc = b.scal ? b.scalA * Math.sin(u * Math.PI * b.scal + b.ph) : 0, own = prof(b, a) * (1 + jag + sc), o = { a: norm(a), r: rim.rad(a) - cutAt(a, b, own), inb: !edge };
+      samples.push(o); b.pts.push(o);
+    }
+  }
+  samples.sort((p, q) => p.a - q.a);
+  const path = new Path2D(); samples.forEach((o, i) => { const [px, py] = rim.pt(o.a, o.r); i ? path.lineTo(px, py) : path.moveTo(px, py); }); path.closePath();
+  const border = new Path2D(), P = samples.map(o => rim.pt(o.a, o.r));
+  samples.forEach((o, i) => { const j = (i + 1) % samples.length; if (o.inb || samples[j].inb) return; border.moveTo(...P[i]); border.lineTo(...P[j]); });
+  return { path, border };
+}
+/* a function wearing its skin: hairs first (their roots under the fill and the border), the notched body, its stain,
+   the border along the rim, the scars in the notches; DV.marks keeps where each mark sits (the tests read it) */
+function skinBody(nd, x, y, t, col, grow, o = {}) {
+  const r = nd.r, seed = o.seed ?? hash(nd.q), tt = o.t ?? t * 1.3, wob = o.wob ?? 1, rim = rimOf(x, y, r, seed, tt, wob);
+  const lw = o.lw ?? lineW(nd.f.branches || 0), stroke = o.stroke || col.stroke, bites = [], sway = motionQ.matches ? 0 : t;
+  for (const g of nd.feats || []) if (g.mb) {          // the chomp: width, depth, lean, 2-4 tooth lobes and jagged teeth from its seed
+    const q = rng(g.mb.seed);
+    bites.push({ a: g.mb.a, seed: g.mb.seed, hw: g.mb.hw, d: g.mb.d * (0.4 + 0.6 * grow), skew: (q() - 0.5) * 0.5, teeth: 0.07, M: 48, scal: 2 + Math.floor(q() * 3), scalA: 0.2 + 0.12 * q(), ph: q() * TAU });
+  }
+  const inset = lw / 2 + 1.5, rec = { q: nd.q, x, y, r, seed, t: tt, wob, hairs: [], bites: [], stroke, scar: T.rem, border: null };
+  ctx.save();
+  for (const g of nd.feats || []) for (const h of g.hairs) {
+    const n = rim.normal(h.a), [px, py] = rim.pt(h.a);
+    drawDendrite(px - Math.cos(n) * inset, py - Math.sin(n) * inset, n, h.L * grow + inset, h.w, h.seed, sway, !h.big && h.slot < 2.6, stroke, inset);
+    rec.hairs.push({ a: h.a, x: px, y: py, big: h.big, k: g.k, n: h.n });
+  }
+  ctx.restore();
+  const { path, border } = notchedPath(rim, bites);
+  ctx.fillStyle = o.fill || col.fill; ctx.fill(path);
+  const fm = !o.noStain && funcMark(nd.q);
+  let sp = null;
+  if (fm) { sp = stainSpot(nd.q, fm, r, nd.f.lines); ctx.save(); ctx.clip(path); drawStain(ctx, x + sp.dx, y + sp.dy, sp.r, fm, sp.seed, o.now, o.k ?? 1); ctx.restore(); }
+  ctx.lineWidth = lw; ctx.strokeStyle = stroke; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke(border); rec.border = border;
+  // the scar, quiet: a faint bruise just inside the notch and a light red line on its edge, never the border colour
+  for (const b of bites) {
+    const P = b.pts.map(q => rim.pt(q.a, q.r)), g = rng(b.seed ^ 0x1B873593);
+    ctx.save(); ctx.clip(path); ctx.globalAlpha *= 0.07; ctx.strokeStyle = T.rem; ctx.lineWidth = 5; ctx.lineJoin = 'round';
+    ctx.beginPath(); P.forEach((p, i) => i ? ctx.lineTo(...p) : ctx.moveTo(...p)); ctx.stroke(); ctx.restore();
+    ctx.save(); ctx.strokeStyle = T.rem; ctx.lineCap = 'round'; ctx.globalAlpha *= 0.7;
+    for (let i = 0; i < P.length - 1; i++) { ctx.lineWidth = clamp(lw * 0.75, 1.1, 3) * (0.9 + 0.2 * g()); ctx.beginPath(); ctx.moveTo(...P[i]); ctx.lineTo(...P[i + 1]); ctx.stroke(); }
+    ctx.restore();
+    rec.bites.push({ a: b.a, mouth: [P[0], P[P.length - 1]], pts: P.slice(1, -1) });
+  }
+  DV.marks.push(rec);
+  return { fm, sp };
+}
+/* halos and hit targets of a function's bunches (the marks themselves are part of skinBody) */
+function skinHits(nd, x, y, grow) {
+  const r = nd.r;
+  for (const g of nd.feats || []) {
+    const hot = featHot(g);
+    if (g.hairs.length) {
+      const hs = g.hairs, a0 = hs[0].a - hs[0].slot / 2 / r, a1 = hs[hs.length - 1].a + hs[hs.length - 1].slot / 2 / r, m = (a0 + a1) / 2, rib = Math.max(...hs.map(h => h.L)) * grow;
+      if (hot) diffHalo(x, y, r + rib * 0.5 + 1, a0, a1, rib + 8);
+      DV.feats.push({ nd, g, kind: '+', k: g.k + '+', hit: polarHit(x, y, r, a0, a1, r, r + rib), x: x + Math.cos(m) * (r + rib / 2), y: y + Math.sin(m) * (r + rib / 2) });
+    }
+    if (g.mb) {
+      const d = g.mb.d * (0.4 + 0.6 * grow), a0 = g.mb.a - g.mb.hw, a1 = g.mb.a + g.mb.hw, m = g.mb.a;
+      if (hot) diffHalo(x, y, r - d * 0.5, a0, a1, d + 8);
+      DV.feats.push({ nd, g, kind: '-', k: g.k + '-', hit: polarHit(x, y, r, a0, a1, r - d, r + 4), x: x + Math.cos(m) * (r - d * 0.5), y: y + Math.sin(m) * (r - d * 0.5) });
+    }
+  }
+}
+
+/* ── Twins: before (a red-dashed ghost) and after, overlapping by the lines that stayed ── */
+const TWIN_AX = { x: Math.cos(-0.32), y: Math.sin(-0.32) };     // before sits down-left, after up-right
+function lensArea(r1, r2, d) {
+  if (d >= r1 + r2) return 0;
+  if (d <= Math.abs(r1 - r2)) return Math.PI * Math.min(r1, r2) ** 2;
+  const a = r1 * r1 * Math.acos(clamp((d * d + r1 * r1 - r2 * r2) / (2 * d * r1), -1, 1)), b = r2 * r2 * Math.acos(clamp((d * d + r2 * r2 - r1 * r1) / (2 * d * r2), -1, 1));
+  return a + b - 0.5 * Math.sqrt(Math.max(0, (-d + r1 + r2) * (d + r1 - r2) * (d - r1 + r2) * (d + r1 + r2)));
+}
+/* circle areas are lines before / after, their overlap the unchanged lines (solved for the distance) */
+function twinGeo(nd, kf) {
+  const L = nd.d.L, a = nd.d.a, Lo = Math.max(1, nd.d.Lo), same = Math.max(0, L - a), rn = nd.r, ro = Math.max(12, kf * Math.sqrt(Lo));
+  let d;
+  if (same <= 0) d = ro + rn + 6;
+  else {
+    const want = Math.min(Math.PI * kf * kf * same, Math.PI * Math.min(ro, rn) ** 2 * 0.995);
+    let lo = Math.abs(ro - rn), hi = ro + rn;
+    for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (lensArea(ro, rn, m) > want) lo = m; else hi = m; }
+    d = (lo + hi) / 2;
+  }
+  return { ro, d, foot: (d + ro + rn) / 2, Lo };
+}
+const dEase3 = p => 1 - Math.pow(1 - clamp(p, 0, 1), 3);
+const dBack = p => { p = clamp(p, 0, 1); const c = 1.9; return 1 + (c + 1) * Math.pow(p - 1, 3) + c * Math.pow(p - 1, 2); };
+const blobP = (x, y, R, seed, t, wob) => { const p = new Path2D(); blobPath({ beginPath() {}, moveTo: (a, b) => p.moveTo(a, b), quadraticCurveTo: (a, b, c, d) => p.quadraticCurveTo(a, b, c, d), closePath: () => p.closePath() }, x, y, R, seed, t, wob); return p; };
+/* the body of a changed function in the chosen look at (x, y) (Twins: the new one's centre) -> {fm, sp} (its stain)
+   or null when the look draws it as ever. o: {now, k (stain dimming), lw, caller (a point a new function buds from)} */
+function diffBody(nd, x, y, t, col, o) {
+  const grow = dEase3((o.now - DV.at) / 650);
+  if (DV.look === 'A') {
+    if (!nd.feats?.length) return null;
+    const res = skinBody(nd, x, y, t, col, grow, { lw: o.lw, now: o.now, k: o.k });
+    skinHits(nd, x, y, grow);
+    return res;
+  }
+  const seed = hash(nd.q);
+  if (nd.tw) {
+    const { ro, foot } = nd.tw, m = dEase3(DV.morph), rn = nd.r;
+    const O0 = { x: x - TWIN_AX.x * (foot - rn) - TWIN_AX.x * (foot - ro), y: y - TWIN_AX.y * (foot - rn) - TWIN_AX.y * (foot - ro) };
+    const O = { x: x + (O0.x - x) * grow * (1 - m), y: y + (O0.y - y) * grow * (1 - m) }, rO = ro + (rn - ro) * m;
+    const oldP = blobP(O.x, O.y, rO, seed ^ 0x9e37, t * 0.9, 0.8), newP = blobP(x, y, rn, seed, t * 1.3, 0.8);
+    const all = new Path2D(); all.rect(-4000, -4000, 8000 + VW, 8000 + VH);
+    // before: the ghost, and the part of it the new one does not cover = what was removed
+    ctx.save(); ctx.globalAlpha *= 0.9; ctx.fillStyle = T.rem + '1F'; ctx.fill(oldP);
+    ctx.save(); ctx.clip(oldP); const cut = new Path2D(all); cut.addPath(newP); ctx.fillStyle = T.rem + '55'; ctx.fill(cut, 'evenodd'); ctx.restore();
+    ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = T.rem; ctx.stroke(oldP); ctx.restore();
+    // after: solid, the part outside the ghost = what was added
+    ctx.fillStyle = col.fill; ctx.fill(newP);
+    ctx.save(); ctx.clip(newP); const cut2 = new Path2D(all); cut2.addPath(oldP); ctx.fillStyle = T.add + '50'; ctx.fill(cut2, 'evenodd'); ctx.restore();
+    ctx.lineWidth = o.lw; ctx.strokeStyle = col.stroke; ctx.stroke(newP);
+    if (m < 0.5 && rO > 16) {          // the ghost's own count: how big it was
+      ctx.save(); ctx.font = `10px ${MONO}`; ctx.fillStyle = T.rem; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.globalAlpha *= 0.9 * (1 - 2 * m);
+      ctx.fillText(`${nd.tw.Lo}L`, O.x - TWIN_AX.x * rO * 0.55, O.y - TWIN_AX.y * rO * 0.55 + 4); ctx.restore();
+    }
+    DV.gones.push({ q: nd.q, x: O.x, y: O.y, r: rO, twin: true });
+    return { fm: null, sp: null };
+  }
+  if (nd.d.state !== 'new') return null;
+  const pop = dBack((o.now - DV.at) / 520);
+  if (o.caller) {                      // a bud: a new function grows out of the one that calls it
+    const cp = o.caller, dx = x - cp.x, dy = y - cp.y, d = Math.hypot(dx, dy) || 1, ux = dx / d, uy = dy / d;
+    const ex = x - ux * nd.r * pop, ey = y - uy * nd.r * pop, len = Math.min(26, Math.max(0, d - nd.r - cp.r)), sx = ex - ux * len, sy = ey - uy * len;
+    ctx.save(); ctx.strokeStyle = T.add; ctx.globalAlpha *= 0.55; ctx.lineCap = 'round';
+    for (let i = 0; i < 6; i++) { const a = i / 6, b2 = (i + 1) / 6; ctx.lineWidth = 4.5 - 3.4 * a; ctx.beginPath(); ctx.moveTo(sx + (ex - sx) * a, sy + (ey - sy) * a); ctx.lineTo(sx + (ex - sx) * b2, sy + (ey - sy) * b2); ctx.stroke(); }
+    ctx.restore();
+  }
+  const path = blobP(x, y, Math.max(1, nd.r * pop), seed, t * 1.3, 1);
+  ctx.fillStyle = col.fill; ctx.fill(path); ctx.save(); ctx.globalAlpha *= 0.3; ctx.fillStyle = T.add; ctx.fill(path); ctx.restore();
+  ctx.lineWidth = 2; ctx.strokeStyle = T.add; ctx.stroke(path);
+  return { fm: null, sp: null };
+}
+/* a function deleted from the blob in the scope: Skins, the app's red ghost wearing bites for its removed lines;
+   Twins, a hatched ghost drifting off */
+function diffGone(g, x, y, t, col, now) {
+  const seed = hash('ghost:' + g.q), grow = dEase3((now - DV.at) / 650);
+  if (DV.look === 'B') {
+    const dd = Math.hypot(x - g.cx, y - g.cy) || 1, ux = (x - g.cx) / dd, uy = (y - g.cy) / dd, drift = 10 * grow + 3 * Math.sin(t * 0.7 + seed % 5);
+    x += ux * drift; y += uy * drift;
+    ctx.save(); ctx.setLineDash([1, 5]); ctx.lineCap = 'round'; ctx.strokeStyle = T.rem; ctx.lineWidth = 2; ctx.globalAlpha *= 0.5;
+    ctx.beginPath(); ctx.moveTo(x - ux * (g.r + 4), y - uy * (g.r + 4)); ctx.lineTo(x - ux * (g.r + 46), y - uy * (g.r + 46)); ctx.stroke(); ctx.restore();
+    const p = blobP(x, y, g.r, seed, t * 0.8, 0.9);
+    ctx.save(); ctx.globalAlpha *= 0.85; ctx.fillStyle = T.bg + 'AA'; ctx.fill(p);
+    ctx.save(); ctx.clip(p); ctx.strokeStyle = T.rem; ctx.globalAlpha *= 0.4; ctx.lineWidth = 1.2; ctx.beginPath();        // hatched: deleted
+    for (let k = -g.r * 2; k < g.r * 2; k += 6) { ctx.moveTo(x + k - g.r, y - g.r); ctx.lineTo(x + k + g.r, y + g.r); } ctx.stroke(); ctx.restore();
+    ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = T.rem; ctx.stroke(p); ctx.restore();
+  } else {
+    const wash = ctx.createRadialGradient(x, y, 0, x, y, g.r * 1.15);
+    wash.addColorStop(0, T.rem + '40'); wash.addColorStop(0.62, T.rem + '75'); wash.addColorStop(1, T.rem + 'C8');
+    skinBody(g, x, y, 0, col, grow, { seed, t: 0, wob: 2.4, fill: wash, stroke: T.rem, lw: 1.8, noStain: true });
+    skinHits(g, x, y, grow);
+  }
+  ctx.save(); ctx.font = `600 12px ${SANS}`; ctx.fillStyle = T.ink; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const tw = ctx.measureText(g.name).width; ctx.fillText(g.name, x, y); ctx.fillStyle = T.rem; ctx.fillRect(x - tw / 2 - 2, y - 0.5, tw + 4, 1.6); ctx.restore();
+  if (DV.lensQ === g.q) { ctx.save(); ctx.strokeStyle = T.mix; ctx.lineWidth = 2; ctx.beginPath(); blobPath(ctx, x, y, g.r + 5, seed, t); ctx.stroke(); ctx.restore(); }
+  DV.gones.push({ q: g.q, x, y, r: g.r + 3 });
+}
+/* the deleted functions' places: on the free floor of the circle, clear of the functions (and their hairs) and stains */
+function diffGonePlace(view, nodes, C, R, kf, taken) {
+  const out = [];
+  for (const e of view.gone) {
+    const r = Math.max(13, kf * Math.sqrt(Math.max(1, e.Lo))), g = rng(hash('ghost:' + e.key)), lim = Math.max(0, R - r - 14);
+    let best = { x: 0, y: 0 }, bd = -Infinity;
+    for (let k = 0; k < 60; k++) {
+      const a = g() * TAU, d = (DV.look === 'B' ? 0.72 + 0.28 * g() : Math.sqrt(g())) * lim, x = Math.cos(a) * d, y = Math.sin(a) * d;
+      const free = Math.min(...nodes.map(n => Math.hypot(n.x - x, n.y - y) - n.r - n.ext - r), ...taken.map(o => Math.hypot(o.x - C.x - x, o.y - C.y - y) - o.r - r), ...out.map(o => Math.hypot(o.x - C.x - x, o.y - C.y - y) - o.r - r - ribLen(r)), 1e9);
+      if (free > bd) { bd = free; best = { x, y }; }
+    }
+    out.push({ ...diffGoneNode(e, r), x: C.x + best.x, y: C.y + best.y, cx: C.x, cy: C.y, r });
+  }
+  return out;
+}
+/* a changed function that came from a folded-in blob carries that blob's face on its rim (as on the map) */
+function diffSat(b, q, x, y, r, col) {
+  const m = (b.merged || []).find(m => m.funcs.includes(q)); if (!m) return;
+  const a = -Math.PI * 0.25, rs = clamp(r * 0.28, 7, 11), bx = x + Math.cos(a) * (r + rs * 0.6), by = y + Math.sin(a) * (r + rs * 0.6);
+  ctx.save(); ctx.beginPath(); ctx.arc(bx, by, rs, 0, TAU); ctx.fillStyle = col.fill; ctx.fill(); ctx.setLineDash([2, 2]); ctx.strokeStyle = col.stroke; ctx.lineWidth = 1.2; ctx.stroke(); ctx.restore();
+  drawEmoji(m.label?.emoji || m.emoji || '•', bx, by, rs * 1.2, ctx.globalAlpha);
+}
+/* the counts under a changed function's name */
+function diffCount(e, x, y) {
+  ctx.save(); ctx.font = `10px ${MONO}`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+  const A = e.a ? `+${e.a}` : '', Rm = e.r ? `−${e.r}` : '', wa = ctx.measureText(A).width, gap = A && Rm ? 5 : 0, w = wa + gap + ctx.measureText(Rm).width;
+  ctx.globalAlpha *= 0.85; ctx.fillStyle = T.bg; ctx.beginPath(); ctx.roundRect(x - w / 2 - 4, y - 7, w + 8, 14, 4); ctx.fill(); ctx.globalAlpha /= 0.85;
+  ctx.fillStyle = T.add; ctx.fillText(A, x - w / 2, y); ctx.fillStyle = T.rem; ctx.fillText(Rm, x - w / 2 + wa + gap, y);
+  ctx.restore();
+}
+/* a cluster of the overview as one diff node: its functions in code order, each one's unified lines (kept + removed)
+   after the one before, so its hunks run clockwise round the cluster's rim. One scale for the whole overview (B: a
+   thick hair's added lines, a thin one's B / 5, said in the legend when not 5): the smallest of CL_BUNDLES at which
+   every cluster fits in CL_MARKS marks, each cluster merging its hunks per function, then per run of functions,
+   before the scale goes up. A hair holds what it stands for: a part left over is one thinner hair of its own lines.
+   Prepared per view (range and look), the node per radius */
+const CL_MARKS = 60, CL_BUNDLES = [5, 10, 25, 50, 100, 250, 500, 1000, 2500];
+const clCost = (ss, B) => ss.reduce((s, sp) => { const thick = Math.floor(sp.a / B), rest = sp.a - thick * B; return s + thick + Math.ceil(rest / (B / 5)) + (sp.r ? 1 : 0); }, 0);
+function diffClusterPrep(view, c) {
+  view.cp ||= new Map();
+  if (view.cp.has(c.id)) return view.cp.get(c.id);
+  const fs = c.ids.map(i => CS.funcs[i]).sort((p, q) => cmpStr(p.file, q.file) || p.s - q.s);
+  const hunks = [], marks = []; let U = 0, L = 0, Lo = 0;
+  for (const f of fs) {
+    const e = view.by.get(f.q);
+    if (!e) { U += Math.max(1, f.L); L += f.L; Lo += f.L; continue; }
+    const u = diffUnify(e.hunks, e.L);
+    for (const m of u.marks) marks.push({ u: m.u + U, op: m.op });
+    for (const sp of u.spans) hunks.push({ ...sp, u0: sp.u0 + U, u1: sp.u1 + U, fq: f.q, fname: f.n, fstart: f.s });
+    U += u.U; L += e.L; Lo += e.Lo;
+  }
+  let pr = null;
+  if (hunks.length) {
+    const merge = ss => ss.length === 1 ? ss[0] : { u0: ss[0].u0, u1: ss[ss.length - 1].u1, a: ss.reduce((s, x) => s + x.a, 0), r: ss.reduce((s, x) => s + x.r, 0),
+      h: { ns: ss[0].h.ns, lines: ss.flatMap(x => x.h.lines) }, hi: ss[0].hi, fq: ss[0].fq, fname: ss[0].fname, fstart: ss[0].fstart, parts: ss.flatMap(x => x.parts || [x]) };
+    const byF = [...hunks.reduce((m, sp) => m.set(sp.fq, [...(m.get(sp.fq) || []), sp]), new Map()).values()].map(merge);
+    const runs = Math.ceil(byF.length / 12), byRun = byF.reduce((o, sp, i) => (i % runs ? o[o.length - 1].push(sp) : o.push([sp]), o), []).map(merge);
+    pr = { levels: [hunks, byF, byRun], U, L, Lo, marks };
+  }
+  view.cp.set(c.id, pr);
+  return pr;
+}
+function diffClusterScale(view) {         // the overview's one scale, once per view
+  if (view.clB) return view.clB;
+  const ps = CS.cl.list.map(c => diffClusterPrep(view, c)).filter(Boolean);
+  return view.clB = CL_BUNDLES.find(B => ps.every(p => p.levels.some(ss => clCost(ss, B) <= CL_MARKS))) || CL_BUNDLES[CL_BUNDLES.length - 1];
+}
+function diffClusterNode(view, c, r) {
+  const k = DV.look + Math.round(r * 100);
+  view.cn ||= new Map();
+  const had = view.cn.get(c.id); if (had?.k === k) return had.none ? null : had;
+  const pr = diffClusterPrep(view, c);
+  if (!pr) { view.cn.set(c.id, { k, none: true }); return null; }
+  const B = diffClusterScale(view), ss = pr.levels.find(ss => clCost(ss, B) <= CL_MARKS) || pr.levels[2];
+  const spans = ss.map((sp, hi) => ({ ...sp, hi, parts: sp.parts || [sp] }));
+  const nd = { k, q: 'cluster:' + c.id, name: c.cap, cluster: c, r, B, L: pr.L, Lo: pr.Lo, u: { U: Math.max(1, pr.U), marks: pr.marks, spans }, f: { lines: pr.U } };
+  nd.feats = skinFeats(nd);
+  view.cn.set(c.id, nd);
+  return nd;
+}
+/* the hairs of a hunk's sp.a added lines at scale B (over HAIR_BUNDLE): a thick hair per B, a thin one per B / 5, and
+   what is left a thinner, shorter one of its own lines; seeded by the function and hunk (n: the lines each stands for) */
+function scaledHairs(sp, r, key, B) {
+  const per = B / 5, thick = Math.floor(sp.a / B), rest = sp.a - thick * B, thin = Math.floor(rest / per), part = rest - thin * per, out = [];
+  const seed = i => hash(key + '|' + sp.fq + '|' + sp.hi + '|' + i);
+  for (let i = 0; i < thick; i++) { const L = clamp(r * 0.5, 16, 42) * (0.85 + 0.3 * rng(seed(i) ^ 0x51ed)()), w = clamp(L * 0.2, 3.2, 8); out.push({ L, w, seed: seed(i), slot: w * 1.7 + 2, big: true, n: B }); }
+  for (let i = 0; i < thin + (part ? 1 : 0); i++) {
+    const s = seed(thick + i), k = i < thin ? 1 : Math.max(0.4, Math.sqrt(part / per)), L = ribLen(r) * 1.15 * (0.85 + 0.3 * rng(s ^ 0x51ed)()) * k;
+    out.push({ L, w: clamp(0.9 + L * 0.17, 1.2, 5.5) * (0.85 + 0.3 * rng(s ^ 0x777)()) * (i < thin ? 1 : k), seed: s, slot: THIN_GAP, big: false, n: i < thin ? per : part });
+  }
+  return out;
+}
+/* a cluster's skin drawn once to an offscreen canvas (still: no sway, the rim at rest) per node, colours and pixel
+   ratio, then blitted each frame; while its marks grow in, drawn live. Its marks go to DV.marks where they sit */
+function skinCached(cn, x, y, col, grow, o) {
+  if (grow < 1) { skinBody(cn, x, y, 0, col, grow, { ...o, t: 0 }); return; }
+  const key = [cn.k, col.fill, col.stroke, o.lw, DPR, T.rem, T.add].join('|');
+  let im = cn.img;
+  if (im?.key !== key) {
+    const reach = Math.max(0, ...cn.feats.flatMap(g => g.hairs.map(h => h.L))) + 16, half = Math.ceil(cn.r * 1.12 + reach), c = document.createElement('canvas');
+    c.width = c.height = Math.ceil(2 * half * DPR);
+    const g = c.getContext('2d'), keep = ctx, at = DV.marks.length;
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx = g;
+    try { skinBody(cn, half, half, 0, col, 1, { ...o, t: 0 }); } finally { ctx = keep; }
+    const rec = DV.marks.splice(at)[0];
+    im = cn.img = { key, c, half, rec: { ...rec, x: 0, y: 0, border: null } };
+  }
+  ctx.drawImage(im.c, x - im.half, y - im.half, 2 * im.half, 2 * im.half);
+  const mv = ([px, py]) => [px - im.half + x, py - im.half + y], R = im.rec;
+  DV.marks.push({ ...R, x, y, cached: true, hairs: R.hairs.map(h => ({ ...h, x: h.x - im.half + x, y: h.y - im.half + y })),
+                  bites: R.bites.map(b => ({ ...b, mouth: b.mouth.map(mv), pts: b.pts.map(mv) })) });
+}
+/* Twins in the overview: the cluster's size before (its changed functions' old lines), a dashed ghost round its centre,
+   never past the blob's rim (cap) */
+function diffClusterGhost(nd, x, y, r, seed, t, cap) {
+  const ro = Math.min(r * Math.sqrt(Math.max(1, nd.Lo) / Math.max(1, nd.L)), Math.max(r, cap / 1.075));
+  if (Math.abs(ro - r) < 1.5) return;
+  ctx.save(); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.strokeStyle = T.rem; ctx.globalAlpha *= 0.85;
+  ctx.beginPath(); blobPath(ctx, x, y, ro, seed ^ 0x9e37, t * 0.9, 0.8); ctx.stroke(); ctx.restore();
+  DV.marks.push({ q: nd.q, twin: true, r, ro, cap, hairs: [], bites: [] });
+}
+function diffClusterTip(f) {
+  const c = f.nd.cluster, parts = f.g.hunks.flatMap(sp => sp.parts || [sp]);
+  let html = '';
+  for (const sp of parts.slice(0, 4)) {
+    const h = sp.h; let nn = h.ns; const rows = [];
+    for (const [op, t] of h.lines) { if (op !== ' ') rows.push(dRow(op, op === '-' ? '' : sp.fstart + nn - 1, t, 60)); if (op !== '-') nn++; }
+    html += `<div class="gap">${esc(sp.fname)} · hunk ${sp.hi + 1} · line ${sp.fstart + h.ns - 1} · +${sp.a} −${sp.r}</div>` + rows.slice(0, 4).join('');
+    if (rows.length > 4) html += `<div class="more">+${rows.length - 4} more line${rows.length - 4 > 1 ? 's' : ''}</div>`;
+  }
+  if (parts.length > 4) html += `<div class="more">… ${parts.length - 4} more hunk${parts.length - 4 > 1 ? 's' : ''}</div>`;
+  const a = parts.reduce((s, x) => s + x.a, 0), r = parts.reduce((s, x) => s + x.r, 0);
+  const what = f.kind === '+' ? `<span class="add">hairs · +${a} added</span>` : `<span class="rem">bite · −${r} removed</span>`;
+  return `<b>${esc(c.e)} ${esc(c.cap)}</b> <span class="k">${esc(parts[0].fname)}${parts.length > 1 ? ` + ${parts.length - 1} more hunk${parts.length > 2 ? 's' : ''}` : ''} · ${what}</span><div class="code">${html}</div>
+    ${f.nd.B > HAIR_BUNDLE ? `<div class="k">here a thick hair = ${f.nd.B} added lines, a thin one ${f.nd.B / 5}</div>` : ''}<div class="k" style="margin-top:4px">click: open the cluster at ${esc(parts[0].fname)}</div>`;
+}
+
+/* ── a page (file / text blob): its lines as rows, the marks on its left edge (Skins) or before | after (Twins) ── */
+function diffPageRows(e) {
+  const text = diffLines(e.new ?? e.old), rows = []; let k = 0;
+  if (e.new == null) return text.map(t => ({ op: '-', t, hi: 0 }));
+  e.hunks.forEach((h, hi) => {
+    while (k < h.ns - 1 && k < text.length) rows.push({ op: ' ', t: text[k], k: k++ });
+    for (const [op, t] of h.lines) rows.push(op === '-' ? { op, t, hi } : { op, t, k: k++, hi: op === ' ' ? -1 : hi });
+  });
+  while (k < text.length) rows.push({ op: ' ', t: text[k], k: k++ });
+  return rows;
+}
+function rowBars(rows, x0, y0, w, H, col, fold) {
+  const rh = H / Math.max(1, rows.length), th = clamp(rh * 0.62, 1, 5), cw = w / 96, out = [];
+  rows.forEach((row, i) => {
+    const y = y0 + (i + 0.5) * rh, s = (row.t || '').replace(/\t/g, '    '), ind = s.length - s.trimStart().length, len = s.trimEnd().length - ind;
+    if (row.op !== ' ') { ctx.fillStyle = row.op === '+' ? T.add + '33' : T.rem + '33'; ctx.fillRect(x0 - 6, y - rh / 2, w + 12, rh); }
+    if (len > 0) {
+      let bx = x0 + Math.min(ind, 24) * cw, bw = Math.min(len * cw, x0 + w - bx);
+      if (fold && y < fold.y) bw = Math.min(bw, fold.x - bx);
+      ctx.fillStyle = row.op === '+' ? T.add : row.op === '-' ? T.rem : col.rule; ctx.globalAlpha *= row.op === ' ' ? 0.9 : 1;
+      ctx.beginPath(); ctx.roundRect(bx, y - th / 2, Math.max(2, bw), th, th / 2); ctx.fill(); ctx.globalAlpha /= row.op === ' ' ? 0.9 : 1;
+    }
+    out.push({ y, row, i });
+  });
+  return { rh, out };
+}
+function drawPageDrill(now, t, b, present, C, RR, ease) {
+  const col = kindColors(b.kind, b.region);
+  ctx.save(); ctx.globalAlpha = ease; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillStyle = T.ink;
+  ctx.font = `700 24px ${SANS}`; ctx.fillText(`${b.face ? b.face + ' ' : ''}${b.title}`, 24, TOP + 38);
+  ctx.font = `11px ${MONO}`; ctx.fillStyle = T.mute;
+  [`${KIND_LABEL[b.kind] || b.kind} · ${b.region} · ${b.path}`, `${b.size} lines`, present ? 'hover a line · click the page for the whole file diff' : 'not present at this step', 'esc / click outside → app map']
+    .forEach((l, i) => ctx.fillText(l, 24, TOP + 60 + i * 16));
+  ctx.restore();
+  const [a, bb] = diffSpan(drill.id), r = present && DV.on ? diffRange(drill.id, a, bb) : null, e = r?.ok ? r.es[0] : null;
+  if (r?.ok && DV.key !== r.key + DV.look) { DV.key = r.key + DV.look; DV.at = now; }
+  const R = RR * 0.98 * (0.85 + 0.15 * ease), w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42, grow = dEase3((now - DV.at) / 650);
+  ctx.save(); ctx.globalAlpha = ease; ctx.translate(C.x, C.y);
+  DV.page = { C, w, h, R };
+  const rows = e && !e.binary && !e.missing ? diffPageRows(e) : [];
+  if (DV.look === 'B' && e && e.state !== 'same' && rows.length) { drawPageTwins(e, rows, col, R, grow); ctx.restore(); return; }
+  pagePath(ctx, 0, 0, R); ctx.fillStyle = col.fill; ctx.fill();
+  const ms = marksAt(cur).get(drill.id) || [];
+  if (ms.length) { ctx.save(); pagePath(ctx, 0, 0, R); ctx.clip(); for (const m of ms) { const p = stainSpot(drill.id, m, R, b.size); drawStain(ctx, p.dx, p.dy, p.r, m, p.seed, now, 0.32); } ctx.restore(); }
+  ctx.lineWidth = 1.6; ctx.strokeStyle = col.stroke; pagePath(ctx, 0, 0, R); ctx.stroke(); pageDetailFold(0, 0, R, col);
+  const x0 = -w + 18, y0 = -h + 16, W = 2 * w - 36, H = 2 * h - 30;
+  const { rh, out } = rowBars(rows, x0, y0, W, H, col, { x: w - f - 8, y: -h + f + 4 });
+  DV.rows = out.map(o => ({ ...o, x0: C.x - w, x1: C.x + w, y: C.y + o.y, h: rh }));
+  if (DV.look === 'A' && e && e.state !== 'same') {      // the page's left edge wears the skin, a bunch per hunk
+    const hs = new Map();
+    for (const o of out) if (o.row.hi >= 0 && o.row.op !== ' ') {
+      let g = hs.get(o.row.hi);
+      if (!g) hs.set(o.row.hi, g = { hunks: [{ h: e.hunks[o.row.hi] || { ns: 1, lines: [] }, hi: o.row.hi, a: 0, r: 0 }], a: 0, r: 0, k: 'file#' + o.row.hi, ya: [], yr: [], ta: [], tr: [] });
+      if (o.row.op === '+') { g.a++; g.hunks[0].a++; g.ya.push(o.y); g.ta.push(o.row.t); } else { g.r++; g.hunks[0].r++; g.yr.push(o.y); g.tr.push(o.row.t); }
+    }
+    const rec = { q: 'file', page: true, hairs: [], bites: [] };
+    ctx.save(); ctx.lineCap = 'round';
+    for (const g of hs.values()) for (const [ys, kind] of [[g.yr, '-'], [g.ya, '+']]) {
+      if (!ys.length) continue;
+      const y0g = ys[0] - rh / 2, y1g = ys[ys.length - 1] + rh / 2, xo = kind === '+' ? -w - 9 : -w + 1;
+      if (featHot(g)) { ctx.save(); ctx.fillStyle = 'rgba(255,255,255,.16)'; ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.roundRect(xo - 11, y0g - 4, 22, y1g - y0g + 8, 8); ctx.fill(); ctx.stroke(); ctx.restore(); }
+      if (kind === '-') { const by = (ys[0] + ys[ys.length - 1]) / 2; drawBite(-w - 1, by, Math.PI, clamp(3 + 2.2 * Math.sqrt(ys.length), 4, 22) * (0.4 + 0.6 * grow), hash('file|-' + g.tr.join('\n')), T.bg); rec.bites.push({ x: C.x - w, y: C.y + by }); }
+      else {                     // bundles of 5 rows: one thick hair at their middle; the rest one thin hair per row
+        const plan = hairPlan(g.ta, 44, 'file'), nb = plan.filter(p => p.big).length;
+        plan.forEach((hp, i) => {
+          const rs = hp.big ? ys.slice(i * HAIR_BUNDLE, (i + 1) * HAIR_BUNDLE) : [ys[nb * HAIR_BUNDLE + (i - nb)]], hy = (rs[0] + rs[rs.length - 1]) / 2;
+          drawDendrite(-w + 2, hy, Math.PI, hp.L * grow + 2, hp.w, hp.seed, motionQ.matches ? 0 : t, false, col.stroke, 2);
+          rec.hairs.push({ x: C.x - w, y: C.y + hy, big: hp.big, k: g.k });
+        });
+      }
+      const ym = (y0g + y1g) / 2, half = Math.max((y1g - y0g) / 2 + 3, 10), fx = C.x + xo, fy = C.y + ym;
+      DV.feats.push({ nd: { q: 'file', file: true, name: b.title }, g, kind, k: g.k + kind, x: fx, y: fy,
+                      hit: (x, y) => x > fx - 16 && x < fx + 14 && Math.abs(y - fy) < half ? Math.abs(y - fy) : Infinity });
+    }
+    ctx.restore();
+    DV.marks.push(rec);
+  }
+  ctx.restore();
+}
+function pageDetailFold(x, y, R, col) {          // the folded corner alone (pageDetail draws ruled lines too)
+  const w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42;
+  ctx.save(); ctx.fillStyle = col.fold; ctx.strokeStyle = col.stroke; ctx.lineWidth = 1; ctx.lineJoin = 'round';
+  ctx.beginPath(); ctx.moveTo(x + w - f, y - h); ctx.lineTo(x + w - f, y - h + f); ctx.lineTo(x + w, y - h + f); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+}
+/* Twins for a page: before and after side by side, joined by ribbons where the hunks are (as a merge tool draws them) */
+function drawPageTwins(e, rows, col, R, grow) {
+  const C = DV.page.C, oldRows = rows.filter(r => r.op !== '+'), newRows = rows.filter(r => r.op !== '-'), maxL = Math.max(oldRows.length, newRows.length, 1);
+  const base = R * 0.66, Ro = base * Math.sqrt(Math.max(1, oldRows.length) / maxL), Rn = base * Math.sqrt(Math.max(1, newRows.length) / maxL);
+  const gapX = 70 + 30 * grow, ox = -(Ro * 0.74 + gapX / 2), nx = Rn * 0.74 + gapX / 2;
+  const draw = (Rp, cx, rs, ghost) => {
+    const w = Rp * 0.74, h = Rp * 0.92, f = Math.min(w, h) * 0.42;
+    ctx.save(); if (ghost) ctx.globalAlpha *= 0.62; pagePath(ctx, cx, 0, Rp); ctx.fillStyle = col.fill; ctx.fill();
+    if (ghost) { ctx.setLineDash([5, 4]); ctx.strokeStyle = T.rem; } else ctx.strokeStyle = col.stroke;
+    ctx.lineWidth = 1.6; ctx.stroke(); ctx.setLineDash([]); pageDetailFold(cx, 0, Rp, col);
+    const res = rowBars(rs, cx - w + 16, -h + 14, 2 * w - 32, 2 * h - 26, col, { x: cx + w - f - 6, y: -h + f + 4 });
+    ctx.restore();
+    return { ...res, w, h, cx };
+  };
+  const O = draw(Ro, ox, oldRows, true), N = draw(Rn, nx, newRows, false);
+  let oi = 0, ni = 0; for (const r of rows) { r.oi = oi; r.ni = ni; if (r.op !== '+') oi++; if (r.op !== '-') ni++; }
+  const yAt = (G, i) => G.out.length ? G.out[0].y - G.rh / 2 + i * G.rh : 0;
+  e.hunks.forEach((h, hi) => {
+    const rm = rows.filter(r => r.hi === hi && r.op === '-'), ad = rows.filter(r => r.hi === hi && r.op === '+');
+    if (!rm.length && !ad.length) return;
+    const L = rm.length ? [yAt(O, rm[0].oi), yAt(O, rm[rm.length - 1].oi + 1)] : [yAt(O, ad[0].oi) - 0.5, yAt(O, ad[0].oi) + 0.5];
+    const Rr = ad.length ? [yAt(N, ad[0].ni), yAt(N, ad[ad.length - 1].ni + 1)] : [yAt(N, rm[0].ni) - 0.5, yAt(N, rm[0].ni) + 0.5];
+    const c = ad.length && rm.length ? T.mix : ad.length ? T.add : T.rem, xa = O.cx + O.w + 2, xb = N.cx - N.w - 2, mx = (xa + xb) / 2;
+    ctx.save(); ctx.globalAlpha *= 0.42 * grow + 0.08; ctx.fillStyle = c;
+    ctx.beginPath(); ctx.moveTo(xa, L[0]); ctx.bezierCurveTo(mx, L[0], mx, Rr[0], xb, Rr[0]); ctx.lineTo(xb, Rr[1]); ctx.bezierCurveTo(mx, Rr[1], mx, L[1], xa, L[1]); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = Math.min(1, ctx.globalAlpha * 2); ctx.strokeStyle = c; ctx.lineWidth = 1; ctx.stroke(); ctx.restore();
+  });
+  ctx.save(); ctx.font = `10px ${MONO}`; ctx.textAlign = 'center'; ctx.fillStyle = T.rem; ctx.fillText(`BEFORE · ${oldRows.length} lines`, O.cx, -O.h - 12);
+  ctx.fillStyle = T.mute; ctx.fillText(`AFTER · ${newRows.length} lines`, N.cx, -N.h - 12); ctx.restore();
+  DV.rows = [...O.out.map(o => ({ ...o, x0: C.x + O.cx - O.w, x1: C.x + O.cx + O.w, y: C.y + o.y, h: O.rh })), ...N.out.map(o => ({ ...o, x0: C.x + N.cx - N.w, x1: C.x + N.cx + N.w, y: C.y + o.y, h: N.rh }))];
+  DV.page = { ...DV.page, x0: C.x + O.cx - O.w, x1: C.x + N.cx + N.w, twins: true };
+}
+
+/* ── code: mini diff (hover), lens (click a body: the whole function), bloom (click a hunk) ── */
+const dUntab = s => String(s).replace(/\t/g, '    ');
+const dTrunc = (s, n) => { s = dUntab(s); return s.length > n ? s.slice(0, n - 1) + '…' : s; };
+const dRow = (op, num, t, n = 400) => `<div class="r ${op === '+' ? 'p' : op === '-' ? 'm' : ''}"><i>${num ?? ''}</i><s>${op === ' ' ? '' : op === '-' ? '−' : '+'}</s><code>${esc(dTrunc(t, n)) || ' '}</code></div>`;
+const dGap = n => `<div class="gap">⋯ ${n} unchanged line${n > 1 ? 's' : ''}</div>`;
+function unifiedHtml(hunks, start, total, cap = 400) {
+  let html = '', prevEnd = 0, shown = 0;
+  for (const h of hunks) {
+    const hidden = h.ns - 1 - prevEnd; if (hidden > 0) html += dGap(hidden);
+    let nn = h.ns;
+    for (const [op, t] of h.lines) { if (shown++ < cap) html += dRow(op, op === '-' ? '' : start + nn - 1, t); if (op !== '-') nn++; }
+    prevEnd = nn - 1;
+  }
+  if (shown > cap) html += `<div class="more">… ${shown - cap} more lines (capped at ${cap})</div>`;
+  const tail = total - prevEnd; if (tail > 0 && hunks.length) html += dGap(tail);
+  return html;
+}
+function sbsHtml(hunks, start, total, cap = 400) {
+  let html = `<div class="heads"><span>before</span><span>after</span></div>`, prevEnd = 0, shown = 0;
+  const cell = (op, num, t) => t == null ? `<div class="r e"><i></i><s></s><code> </code></div>` : dRow(op, num, t, 200);
+  for (const h of hunks) {
+    const hidden = h.ns - 1 - prevEnd; if (hidden > 0) html += dGap(hidden);
+    let nn = h.ns, i = 0; const L = h.lines;
+    while (i < L.length) {
+      if (L[i][0] === ' ') { if (shown++ < cap) html += `<div class="row2">${cell(' ', start + nn - 1, L[i][1])}${cell(' ', start + nn - 1, L[i][1])}</div>`; nn++; i++; continue; }
+      const rm = [], ad = []; while (i < L.length && L[i][0] === '-') rm.push(L[i++][1]); while (i < L.length && L[i][0] === '+') ad.push(L[i++][1]);
+      for (let k = 0; k < Math.max(rm.length, ad.length); k++) {
+        if (shown++ < cap) html += `<div class="row2">${cell('-', '', rm[k])}${cell('+', ad[k] != null ? start + nn - 1 : '', ad[k])}</div>`;
+        if (ad[k] != null) nn++;
+      }
+    }
+    prevEnd = nn - 1;
+  }
+  if (shown > cap) html += `<div class="more">… ${shown - cap} more rows (capped at ${cap})</div>`;
+  const tail = total - prevEnd; if (tail > 0 && hunks.length) html += dGap(tail);
+  return html;
+}
+/* the mini diff: the biggest hunk's changed lines, 5 at most */
+function miniHtml(hunks, start) {
+  if (!hunks.length) return '';
+  const ch = h => h.lines.filter(l => l[0] !== ' ').length, h = hunks.reduce((p, q) => ch(q) > ch(p) ? q : p);
+  const L = h.lines, first = Math.max(0, L.findIndex(l => l[0] !== ' ') - 1), take = L.slice(first, first + 5);
+  let nn = h.ns; for (let i = 0; i < first; i++) if (L[i][0] !== '-') nn++;
+  let html = ''; for (const [op, t] of take) { html += dRow(op, op === '-' ? '' : start + nn - 1, t, 56); if (op !== '-') nn++; }
+  const left = L.slice(first + 5).filter(l => l[0] !== ' ').length, more = hunks.length - 1;
+  if (left || more) html += `<div class="more">${left ? `+${left} more changed line${left > 1 ? 's' : ''}` : ''}${left && more ? ' · ' : ''}${more ? `${more} more hunk${more > 1 ? 's' : ''}` : ''} · click</div>`;
+  return `<div class="code">${html}</div>`;
+}
+const dStateWord = s => s === 'new' ? `<span class="add">new</span>` : s === 'deleted' ? `<span class="rem">deleted</span>` : s === 'same' ? `<span class="dim">unchanged in this scope</span>` : `<span class="mix">changed</span>`;
+const dNotes = e => [e.moved_from && `moved from ${esc(IDX[cur].blobs.get(e.moved_from)?.title || e.moved_from)}`, e.moved_to && `moved to ${esc(IDX[cur].blobs.get(e.moved_to)?.title || e.moved_to)}`,
+  e.renamed_from && `renamed from ${esc(e.renamed_from)}`, e.seeded && `before: the text the edit applied to${e.approx ? ' (approximate)' : ''}`, e.binary && 'binary: no texts'].filter(Boolean).join(' · ');
+function diffEntryOf(q) {               // the entry and where the function starts, for function q (or 'file') in the open drill-down
+  if (!drill) return null;
+  const [a, b] = diffSpan(drill.id), r = DV.on ? diffRange(drill.id, a, b) : null;
+  if (!r?.ok) return null;
+  if (q === 'file') { const e = r.es[0], bl = IDX[cur].blobs.get(drill.id); return e && { e, name: bl?.title || e.key, start: 1, loc: e.key }; }
+  const e = r.by.get(q), f = IDX[cur].funcs.get(q);
+  if (!e) return null;
+  return { e, name: f?.name || q.split('.').pop(), start: e.newh != null && f ? f.start : 1, loc: f && e.newh != null ? `${f.file}:${f.start}-${f.end}` : `was ${e.Lo} lines` };
+}
+function diffFuncTip(q) {
+  const x = diffEntryOf(q); if (!x) return '';
+  const { e } = x, notes = dNotes(e);
+  return `<b>${esc(x.name)}</b> <span class="k">${esc(x.loc)}</span>
+    <div class="k">${dStateWord(e.state)} · <span class="add">+${e.a}</span> <span class="rem">−${e.r}</span> · ${e.hunks.length} hunk${e.hunks.length === 1 ? '' : 's'}${notes ? ' · ' + notes : ''}</div>${miniHtml(e.hunks, x.start)}`;
+}
+function featHead(f, start) {
+  const hs = f.g.hunks;
+  return hs.length > 1 ? `${hs.length} hunks · lines ${start + hs[0].h.ns - 1}–${start + hs[hs.length - 1].h.ns - 1}` : `hunk ${hs[0].hi + 1} · line ${start + hs[0].h.ns - 1}`;
+}
+const featStart = f => f.nd.file ? 1 : diffEntryOf(f.nd.q)?.start ?? 1;
+/* hover on a hair bunch or a bite: that hunk's changed lines only (a cluster's: each hunk under its function's name) */
+function diffFeatTip(f) {
+  if (f.nd.cluster) return diffClusterTip(f);
+  const g = f.g, start = featStart(f), many = g.hunks.length > 1;
+  let html = '';
+  for (const sp of g.hunks.slice(0, 4)) {
+    const h = sp.h; let nn = h.ns; const rows = [];
+    for (const [op, t] of h.lines) { if (op !== ' ') rows.push(dRow(op, op === '-' ? '' : start + nn - 1, t, 60)); if (op !== '-') nn++; }
+    if (many) html += `<div class="gap">hunk ${sp.hi + 1} · line ${start + h.ns - 1} · +${sp.a} −${sp.r}</div>`;
+    const cap = many ? 4 : 8; html += rows.slice(0, cap).join('');
+    if (rows.length > cap) html += `<div class="more">+${rows.length - cap} more line${rows.length - cap > 1 ? 's' : ''}</div>`;
+  }
+  const what = f.kind === '+' ? `<span class="add">hairs · +${g.a} added</span>` : `<span class="rem">bite · −${g.r} removed</span>`;
+  return `<b>${esc(f.nd.name)}</b> <span class="k">${featHead(f, start)} · ${what}</span><div class="code">${html}</div><div class="k" style="margin-top:4px">click: open ${many ? 'these hunks' : 'this hunk'}</div>`;
+}
+const dlens = $('#dlens'), dbloom = $('#dbloom');
+function diffLensOpen(q) {
+  const x = diffEntryOf(q); if (!x) { diffLensClose(); return; }
+  DV.lensQ = q; DV.lensSig = diffSpan(drill.id).join() + DV.look; diffBloomOff(); hideTip(); hideCard();
+  const { e } = x, total = e.newh != null ? e.L : 0, sum = e.a + e.r || 1, sw = diffScopeWords(drill.id), notes = dNotes(e);
+  const body = !e.hunks.length ? `<div class="loc" style="margin:10px 0">${e.binary ? 'binary: no texts' : e.missing ? 'the store has no text for this' : 'no change in this scope'}</div>`
+    : DV.look === 'B' ? `<div class="code sbs">${sbsHtml(e.hunks, x.start, total)}</div>` : `<div class="code">${unifiedHtml(e.hunks, x.start, total)}</div>`;
+  dlens.innerHTML = `<h3>${esc(x.name)} <button class="x" aria-label="Close">esc ✕</button></h3><div class="loc">${esc(x.loc)} · ${dStateWord(e.state)} · <span class="add">+${e.a}</span> <span class="rem">−${e.r}</span></div>
+    ${notes ? `<div class="loc">${notes}</div>` : ''}<div class="loc">${esc(sw)}</div><div class="bar"><i style="width:${100 * e.a / sum}%;background:var(--add)"></i><i style="width:${100 * e.r / sum}%;background:var(--rem)"></i></div>
+    <div class="scroll">${body}</div>`;
+  dlens.querySelector('.x').onclick = diffLensClose;
+  const cl = !!drill.cv, { C, RR } = cl ? clGeo() : drillGeo(1), right = VW - (C.x + RR + 28), w = clamp(right - 16, 360, 760), x0 = Math.min(C.x + RR + 28, VW - w - 16);
+  Object.assign(dlens.style, { left: x0 + 'px', top: TOP + 12 + 'px', width: w + 'px', maxHeight: VH - TOP - BOTTOM - 24 + 'px', display: 'flex' });
+  requestAnimationFrame(() => dlens.classList.add('on'));
+}
+function diffLensClose() { DV.lensQ = null; dlens.classList.remove('on'); dlens.style.display = 'none'; }
+const diffLensToggle = q => DV.lensQ === q ? diffLensClose() : diffLensOpen(q);
+function diffBloomOpen(f) {
+  diffLensClose(); hideCard(); DV.bloomK = f.g.k; hideTip();
+  const g = f.g, start = featStart(f);
+  let html = '';
+  g.hunks.forEach((sp, i) => {
+    const h = sp.h; if (i) html += `<div class="gap">hunk ${sp.hi + 1} · line ${start + h.ns - 1}</div>`;
+    let nn = h.ns; for (const [op, t] of h.lines) { html += dRow(op, op === '-' ? '' : start + nn - 1, t, 70); if (op !== '-') nn++; }
+  });
+  dbloom.innerHTML = `<div class="hd"><b>${esc(f.nd.name)}</b> ${featHead(f, start)} · <span class="add">+${g.a}</span> <span class="rem">−${g.r}</span></div><div class="code">${html}</div>`;
+  dbloom.style.borderColor = g.a && g.r ? 'var(--mix)' : g.a ? 'var(--add)' : 'var(--rem)';
+  dbloom.classList.remove('on'); dbloom.style.display = 'block'; DV.bloomAt = { x: f.x, y: f.y }; diffBloomPlace(true);
+  requestAnimationFrame(() => requestAnimationFrame(() => dbloom.classList.add('on')));
+}
+function diffBloomPlace(first) {
+  if (!DV.bloomAt) return;
+  const now = DV.feats.find(f => f.g.k === DV.bloomK); if (now) Object.assign(DV.bloomAt, { x: now.x, y: now.y });
+  const b = DV.bloomAt, w = dbloom.offsetWidth, h = dbloom.offsetHeight, { C } = drill?.cv ? clGeo() : drillGeo(), right = b.x >= C.x;
+  let x = right ? b.x + 22 : b.x - w - 22, y = b.y - Math.min(40, h / 2);
+  if (x + w > VW - 8) x = b.x - w - 22; if (x < 8) x = b.x + 22;
+  x = clamp(x, 8, VW - w - 8); y = clamp(y, TOP + 8, VH - BOTTOM - h - 8);
+  dbloom.style.left = x + 'px'; dbloom.style.top = y + 'px';
+  if (first) dbloom.style.transformOrigin = `${b.x - x}px ${b.y - y}px`;
+  Object.assign(b, { sx: x, sy: y, sw: w });
+}
+function diffBloomOff() { DV.bloomK = null; DV.bloomAt = null; dbloom.classList.remove('on'); dbloom.style.display = 'none'; }
+function diffBloomLink() {
+  const b = DV.bloomAt; if (!b || b.sx == null) return;
+  ctx.save(); ctx.strokeStyle = T.mix; ctx.globalAlpha = 0.7; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+  ctx.beginPath(); ctx.moveTo(b.x, b.y); ctx.lineTo(b.sx + (b.x > b.sx ? b.sw : 0), b.sy + 24); ctx.stroke(); ctx.restore();
+}
+/* hit tests in the drill-down: hunk bunches first (generous, nearest wins), then deleted / twin ghosts, page rows */
+function diffFeatAt(x, y) { let bf = null, bd = Infinity; for (const f of DV.feats) { const d = f.hit(x, y); if (d < bd) { bd = d; bf = f; } } return bf; }
+const diffGoneAt = (x, y) => DV.gones.find(g => Math.hypot(g.x - x, g.y - y) < g.r) || null;
+const diffChanged = q => !!(drill && diffDrill(drill.id)?.by.has(q));
+function diffPageAt(x, y) {
+  const P = DV.page; if (!P || !drill || !PAGE(IDX[cur]?.blobs.get(drill.id)?.kind)) return null;
+  const x0 = P.x0 ?? P.C.x - P.w, x1 = P.x1 ?? P.C.x + P.w;
+  if (x < x0 || x > x1 || y < P.C.y - P.h || y > P.C.y + P.h) return null;
+  return { row: DV.rows.find(r => x > r.x0 - 14 && x < r.x1 && Math.abs(r.y - y) <= Math.max(r.h / 2, 2)) || null };
+}
+function diffRowTip(h) {
+  const rowsIn = DV.rows.filter(r => Math.abs(r.x0 - h.row.x0) < 1), k = rowsIn.indexOf(h.row), near = rowsIn.slice(Math.max(0, k - 2), k + 3);
+  return `<b>${esc(IDX[cur].blobs.get(drill.id)?.title)}</b> <span class="k">${h.row.row.k != null ? 'line ' + (h.row.row.k + 1) : 'removed line'} · click for the whole file diff</span><div class="code">${near.map(o => dRow(o.row.op, o.row.k != null && o.row.op !== '-' ? o.row.k + 1 : '', o.row.t, 56)).join('')}</div>`;
+}
+
+/* ── the controls: look (1 / 2), scope (T / S / L) in the header; the summary, the 👁 strip, the legend beside the blob ── */
+const dstrip = $('#dstrip'), sctx = dstrip.getContext('2d');
+function diffScopeWords(bid) {
+  const [a] = diffSpan(bid), n = a - 1, st = k => `step ${k + 1}`;
+  if (DV.scope === 'step') return `this step · ${st(cur)} against ${cur ? st(cur - 1) : 'nothing'}`;
+  if (DV.scope === 'session') return `since session start · ${st(n + 1)} → ${st(cur)} · ${cur - n} step${cur - n === 1 ? '' : 's'}`;
+  return `since you looked · after ${n < 0 ? 'nothing' : st(n)} → ${st(cur)} · ${cur - n} step${cur - n === 1 ? '' : 's'}`;
+}
+function setDiffLook(v) { if (v === DV.look) return; DV.look = v; store.set('aiblob.diffLook', v); DV.at = performance.now(); diffBloomOff(); if (DV.lensQ) DV.lensSig = ''; }
+function setDiffScope(s, n) {
+  if (!drill) return;
+  if (n != null) { const s0 = sessStart(cur) - 1; s = n === cur - 1 ? 'step' : n === s0 ? 'session' : 'since'; if (s === 'since') DV.since.set(drill.id, n); }
+  DV.scope = s; DV.at = performance.now(); diffBloomOff(); if (DV.lensQ) DV.lensSig = '';
+}
+function diffSince(dir) {
+  if (!drill) return;
+  const pts = diffStrip(drill.id).map(p => p.n), k = pts.indexOf(diffBase(drill.id)), to = pts[clamp((k < 0 ? pts.length - 1 : k) + dir, 0, pts.length - 1)];
+  setDiffScope(null, to);
+}
+function diffKey(e) {
+  if (!drill || !DV.on || e.ctrlKey || e.metaKey || e.altKey) return false;
+  const k = e.key;
+  if (k === '1' || k === '2') setDiffLook('AB'[+k - 1]);
+  else if (k === '7') { setDiffScope('step'); dstrip.blur(); }         // (7 / 8 / 9: no other key of the page; T, S, L stay theirs)
+  else if (k === '8') { setDiffScope('session'); dstrip.blur(); }
+  else if (k === '9') { setDiffScope('since'); dstrip.focus(); }
+  else if ((k === 'm' || k === 'M') && DV.look === 'B') DV.morphTo = DV.morphTo ? 0 : 1;
+  else if (k === 'Escape' && (DV.lensQ || DV.bloomK)) { diffLensClose(); diffBloomOff(); }
+  else return false;
+  e.preventDefault();
+  return true;
+}
+function diffOpen() { DV.hov = null; diffBloomOff(); diffLensClose(); DV.morph = DV.morphTo = 0; }
+function diffClose(id) { if (id != null) DV.looked.set(id, cur); diffBloomOff(); diffLensClose(); DV.feats = []; DV.gones = []; DV.rows = []; DV.page = null; diffUi(0); }
+function drawDiffStrip(bid) {
+  const W = dstrip.clientWidth, H = dstrip.clientHeight; if (!W) return;
+  if (dstrip.width !== Math.round(W * DPR) || dstrip.height !== Math.round(H * DPR)) { dstrip.width = Math.round(W * DPR); dstrip.height = Math.round(H * DPR); }
+  sctx.setTransform(DPR, 0, 0, DPR, 0, 0); sctx.clearRect(0, 0, W, H);
+  const base = diffBase(bid), pts = [...diffStrip(bid, base), { n: cur, now: true }], x0 = 22, x1 = W - 26, y = 20, stp = (x1 - x0) / Math.max(1, pts.length - 1), at = i => x0 + i * stp;
+  const bi = pts.findIndex(p => p.n === base), ni = pts.length - 1;
+  DV.stripEye = bi >= 0 ? base : null;
+  sctx.strokeStyle = T.line; sctx.lineWidth = 2; sctx.beginPath(); sctx.moveTo(x0, y); sctx.lineTo(x1, y); sctx.stroke();
+  if (bi >= 0) { sctx.strokeStyle = T.mix; sctx.lineWidth = 4; sctx.lineCap = 'round'; sctx.beginPath(); sctx.moveTo(at(bi), y); sctx.lineTo(at(ni), y); sctx.stroke(); }
+  sctx.font = `10px ${MONO}`; sctx.textAlign = 'center'; sctx.textBaseline = 'alphabetic';
+  DV.stripGeo = [];
+  pts.forEach((p, i) => {
+    const x = at(i), sum = (p.a || 0) + (p.r || 0), r = p.now ? 7 : clamp(3 + 1.1 * Math.sqrt(sum), 3.5, 7), g = sum ? (p.a || 0) / sum : 0;
+    if (p.start) { sctx.fillStyle = T.mute; sctx.beginPath(); sctx.roundRect(x - 2, y - 8, 4, 16, 2); sctx.fill(); }
+    else {
+      sctx.globalAlpha = bi >= 0 && i > bi || p.now ? 1 : 0.55;
+      if (sum) { sctx.fillStyle = T.add; sctx.beginPath(); sctx.moveTo(x, y); sctx.arc(x, y, r, -Math.PI / 2, -Math.PI / 2 + g * TAU); sctx.closePath(); sctx.fill();
+                 sctx.fillStyle = T.rem; sctx.beginPath(); sctx.moveTo(x, y); sctx.arc(x, y, r, -Math.PI / 2 + g * TAU, Math.PI * 1.5); sctx.closePath(); sctx.fill(); }
+      else { sctx.fillStyle = T.faint; sctx.beginPath(); sctx.arc(x, y, r * 0.7, 0, TAU); sctx.fill(); }
+      if (p.now) { sctx.strokeStyle = T.flash; sctx.lineWidth = 2; sctx.beginPath(); sctx.arc(x, y, r + 3, 0, TAU); sctx.stroke(); }
+      sctx.globalAlpha = 1;
+    }
+    sctx.fillStyle = p.now ? T.ink : i === bi ? T.mix : T.mute;           // labels: start, now, the eye's step; all when there is room
+    if (stp > 30 || p.now || p.start || i === bi && at(ni) - x > 36 && x - x0 > 30) sctx.fillText(p.start ? 'start' : `${p.n + 1}`, x, y + 22);
+    if (i === bi) { sctx.font = `14px ${EMOJI_FONT}`; sctx.fillText('👁', x, y - 9); sctx.font = `10px ${MONO}`; }
+    DV.stripGeo.push({ x, p });
+  });
+}
+const DLEG = {
+  A: (svg) => [[svg(`<circle cx="4" cy="8" r="5.5" fill="none" stroke="${T.mute}" stroke-width="1.4"/><path d="M10 7.3L18 6.6M10 9.5L16 10.6" stroke="${T.add}" stroke-width="1.3" stroke-linecap="round"/>`), 'hair = an added line'],
+    [svg(`<circle cx="4" cy="8" r="5.5" fill="none" stroke="${T.mute}" stroke-width="1.4"/><path d="M9.5 5.6 Q15 7 21 8 Q15 9 9.5 10.4Z" fill="${T.add}"/>`), 'thick hair = 5 added lines'],
+    [svg(`<path d="M2 1.5C9 4 9 12 2 14.5" fill="none" stroke="${T.mute}" stroke-width="1.4"/><path d="M2.6 4.5C6 6 6 10 2.6 11.5" fill="none" stroke="${T.rem}" stroke-opacity=".7" stroke-width="1.1"/>`), 'bite = a block of removed lines']],
+  B: (svg) => [[svg(`<circle cx="8" cy="9" r="6" fill="${T.rem}33" stroke="${T.rem}" stroke-dasharray="3 2"/><circle cx="14" cy="7" r="6" fill="${T.add}44" stroke="${T.mute}"/>`), 'before · after: overlap = lines kept'],
+    [svg(`<circle cx="11" cy="8" r="6" fill="${T.add}44" stroke="${T.add}" stroke-width="1.6"/>`), 'new: buds from its caller'], [svg(`<circle cx="11" cy="8" r="6" fill="${T.rem}22" stroke="${T.rem}" stroke-dasharray="3 2"/>`), 'gone: drifts off']],
+};
+/* the DOM around the drill-down, written again only when what it shows changes; the morph eased */
+function diffUi(dt) {
+  DV.morph += (DV.morphTo - DV.morph) * (1 - Math.exp(-dt * 4));
+  const lk = DV.lensQ && drill && !drill.cv ? 1 : 0;
+  DV.lensK += (lk - DV.lensK) * (1 - Math.exp(-dt * 7)); if (Math.abs(lk - DV.lensK) < 1e-3) DV.lensK = lk;
+  const b = drill && (IDX[cur]?.blobs.get(drill.id) || VIS.get(drill.id)?.blob), on = !!b && DV.on === true;
+  const span = on ? diffSpan(drill.id) : [], r = on && IDX[cur]?.blobs.has(drill.id) ? diffRange(drill.id, span[0], span[1]) : null, view = on && r ? diffDrill(drill.id) : null;
+  const sig = [!!b, DV.on, DV.why, on && drill.id, !!drill?.cv, cur, DV.look, DV.scope, span.join(), r?.ok, r?.err, view?.r.key, view?.clB, VW, VH, T.bg].join('|');
+  if (DV.lensQ && drill && DV.lensSig !== span.join() + DV.look && r?.ok) diffLensOpen(DV.lensQ);
+  if (DV.bloomAt) diffBloomPlace(false);
+  if (sig === DV.ui) return;
+  DV.ui = sig;
+  $('#dlook').hidden = $('#dscope').hidden = !on;
+  document.querySelectorAll('#dlook button').forEach(x => x.setAttribute('aria-selected', String(x.dataset.v === DV.look)));
+  document.querySelectorAll('#dscope button').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.s === DV.scope)));
+  const bar = $('#dbar');
+  if (!b || DV.on == null && !drill) { bar.hidden = true; return; }
+  bar.hidden = false; bar.style.top = (drill.cv ? TOP + 282 : TOP + 124) + 'px';
+  $('#dnote').textContent = !on ? DV.why || 'loading diffs…' : r?.err ? `diffs: ${r.err}` : r && !r.ok ? 'loading diffs…' : '';
+  $('#dnote').hidden = !$('#dnote').textContent;
+  $('#dsum').hidden = $('#dstrip').hidden = $('#dleg').hidden = !on;
+  const page = PAGE(b.kind) && IDX[cur]?.blobs.has(drill.id);
+  $('#dfile').hidden = !page; if (page) $('#dfile').innerHTML = fileFacts(b, drill.id);
+  if (!on) return;
+  const t = view?.tot, sum = t ? t.a + t.r : 0, bin = r?.ok && r.es.find(e => e.binary && e.state !== 'same');
+  $('#dsum').innerHTML = (sum ? `<div class="l1"><span class="bar"><i style="width:${100 * t.a / sum}%;background:var(--add)"></i><i style="width:${100 * t.r / sum}%;background:var(--rem)"></i></span>
+    <b class="add">+${t.a}</b> <b class="rem">−${t.r}</b>${t.changed ? ` <span class="mix">${t.changed} changed</span>` : ''}${t.fresh ? ` <span class="add">${t.fresh} new</span>` : ''}${t.gone ? ` <span class="rem">${t.gone} gone</span>` : ''}${t.out ? ` <span class="dim">${t.out} moved out</span>` : ''}</div>`
+    : bin ? `<span class="mix">binary: ${bin.state} (no texts)</span>` : r?.ok ? '<span class="dim">nothing changed in this scope</span>' : '') + `<div class="k">${esc(diffScopeWords(drill.id))}</div>`;
+  drawDiffStrip(drill.id);
+  const svg = s => `<svg width="22" height="16" viewBox="0 0 22 16" aria-hidden="true">${s}</svg>`;
+  const clB = drill.cv && view?.clB > HAIR_BUNDLE ? view.clB : 0;
+  $('#dleg').innerHTML = DLEG[DV.look](svg).map(([g, s]) => `<span>${g}${esc(clB && s.startsWith('thick hair') ? `thick hair = ${clB} added lines here (a thin one ${clB / 5})` : s)}</span>`).join('') +
+    `<span class="k">${PAGE(b.kind) ? (DV.look === 'A' ? 'by hunk, down the left edge = top to bottom · hover or click a hunk' : 'before | after, joined where the hunks are · click a page for its diff')
+      : DV.look === 'A' ? 'by hunk, clockwise from 12 = top to bottom · hover or click a hunk' : 'click: before | after · M morphs'}</span>`;
+}
+document.querySelectorAll('#dlook button').forEach(x => x.onclick = () => setDiffLook(x.dataset.v));
+document.querySelectorAll('#dscope button').forEach(x => x.onclick = () => { setDiffScope(x.dataset.s); if (x.dataset.s === 'since') dstrip.focus(); });
+dstrip.addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); e.stopPropagation(); diffSince(e.key === 'ArrowLeft' ? -1 : 1); } });
+dstrip.addEventListener('click', e => {
+  const x = e.offsetX; let best = null, bd = 1e9;
+  for (const g of DV.stripGeo || []) { const d = Math.abs(g.x - x); if (d < bd) { bd = d; best = g; } }
+  if (best && !best.p.now) setDiffScope(null, best.p.n);
+});
+dstrip.addEventListener('mousemove', e => {
+  const g = (DV.stripGeo || []).find(g => Math.abs(g.x - e.offsetX) < 10); if (!g) { hideTip(); return; }
+  const p = g.p, s = STEPS[p.n];
+  showTip(p.start ? `<b>session start</b><div class="k">click: everything since the session started</div>`
+    : `<b>${p.now ? 'now · ' : ''}step ${p.n + 1}</b> <span class="k">${esc(s?.tool || '')} ${esc(s?.file || '')}${p.a != null ? ` · this blob <span class="add">+${p.a}</span> <span class="rem">−${p.r}</span>` : ''}</span>${p.now ? '' : '<div class="k">click: what changed since you looked here</div>'}`, e.clientX, e.clientY - 70);
+});
+dstrip.addEventListener('mouseleave', hideTip);
 /* ───────────────────────── clusters inside a big blob ─────────────────────────
-   SCHEMA.md v6: a blob at the cut size (CL_LINES lines or CL_FUNCS functions, clusters.py) comes with `clusters`, the
+   SCHEMA.md v6: a blob with 12+ functions in 3+ call groups (clusters.py) comes with `clusters`, the
    call communities of its functions, and its drill-down shows those instead of every function (the approved draft,
    variant A). Each cluster is a sub-blob: a big emoji on a hollow centre, a 1-2 word caption with its function count,
    its functions as a ring of dots (size = lines, stain inside, green halo = edited in the last RECENCY steps, a pulsing
@@ -1714,7 +2971,7 @@ function clWhy(now) {
   y += 22;
   const over = sn.M.filter(m => m.r >= 1), worst = sn.M.slice(0, 2).sort((p, q) => q.r - p.r)[0];
   ctx.font = `700 15px ${SANS}`; ctx.fillStyle = over.length ? T.rem : T.add;
-  ctx.fillText(over.length ? `${worst.r.toFixed(1)}× the cut size · ${over.length}/5 over` : 'within limits', x0, y + 8);
+  ctx.fillText(over.length ? `${worst.r < 1 ? 'under the cut size' : worst.r.toFixed(1) + '× the cut size'} · ${over.length}/5 over` : 'within limits', x0, y + 8);
   y += 22;
   CWHY = [];
   sn.M.forEach((m, i) => {
@@ -1801,9 +3058,13 @@ function clFunc(f, x, y, r, t, now, o = {}) {
     if (f.now) { ctx.globalAlpha = a; ctx.strokeStyle = T.add; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + 2.5 + 1.5 * Math.sin(now / 200), 0, TAU); ctx.stroke(); }
     if (o.ring) { ctx.globalAlpha = a; ctx.strokeStyle = o.ring; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r + 3, 0, TAU); ctx.stroke(); }
   } else {
-    blobPath(ctx, x, y, r, seed, t * 1.3); ctx.fillStyle = col.fill; ctx.fill();
-    if (f.mark) { const s = stainSpot(f.q, f.mark, r, f.L); ctx.save(); ctx.clip(); drawStain(ctx, x + s.dx, y + s.dy, s.r, f.mark, s.seed, now, ctx.globalAlpha); ctx.restore(); }
-    ctx.lineWidth = Math.min(lineW(f.br), r * 0.35); ctx.strokeStyle = col.stroke; blobPath(ctx, x, y, r, seed, t * 1.3); ctx.stroke();
+    const nd = o.dv && diffNode(o.dv.by.get(f.q), f.f, r, r / Math.sqrt(Math.max(1, f.L)));       // changed in the diff's scope: its look
+    const db = nd && diffBody(nd, x, y, t, col, { now, lw: Math.min(lineW(f.br), r * 0.35), k: ctx.globalAlpha });
+    if (!db) {
+      blobPath(ctx, x, y, r, seed, t * 1.3); ctx.fillStyle = col.fill; ctx.fill();
+      if (f.mark) { const s = stainSpot(f.q, f.mark, r, f.L); ctx.save(); ctx.clip(); drawStain(ctx, x + s.dx, y + s.dy, s.r, f.mark, s.seed, now, ctx.globalAlpha); ctx.restore(); }
+      ctx.lineWidth = Math.min(lineW(f.br), r * 0.35); ctx.strokeStyle = col.stroke; blobPath(ctx, x, y, r, seed, t * 1.3); ctx.stroke();
+    }
     if (f.d.state === 'new') { ctx.strokeStyle = T.flash; ctx.lineWidth = 2; blobPath(ctx, x, y, r + 4, seed, t * 1.3); ctx.stroke(); }
     if (f.now) { ctx.strokeStyle = T.add; ctx.lineWidth = 2; ctx.globalAlpha = a * (0.6 + 0.4 * Math.sin(now / 220)); blobPath(ctx, x, y, r + 5, seed, t * 1.3); ctx.stroke(); ctx.globalAlpha = a; }
     if (o.ring) { ctx.strokeStyle = o.ring; ctx.lineWidth = 2.2; blobPath(ctx, x, y, r + 7, seed, t * 1.3); ctx.stroke(); }
@@ -1888,17 +3149,18 @@ function clLayout(sn) {
   return sn.LA = { nodes };
 }
 /* an opened cluster: its functions spread over the blob, linked by their calls */
-function clLayoutOpen(sn, ci) {
-  sn.LAO ||= new Map(); if (sn.LAO.has(ci)) return sn.LAO.get(ci);
-  const F = sn.funcs, c = sn.cl.list[ci], total = c.lines, big = F[c.ids[0]].L, mem = clMem(sn.b.id), pm = mem.open.get(c.id) || new Map();
+function clLayoutOpen(sn, ci, dv) {   // dv: a diff in Skins sizes a changed function by the lines its rim runs over (kept + removed)
+  const sz = dv?.look === 'A' ? f => f.L + (dv.by.get(f.q)?.state === 'changed' ? dv.by.get(f.q).r : 0) : null, key = sz ? ci + '|' + dv.r.key : ci;
+  sn.LAO ||= new Map(); if (sn.LAO.has(key)) return sn.LAO.get(key);
+  const F = sn.funcs, c = sn.cl.list[ci], total = sz ? c.ids.reduce((s, i) => s + sz(F[i]), 0) : c.lines, big = sz ? Math.max(...c.ids.map(i => sz(F[i]))) : F[c.ids[0]].L, mem = clMem(sn.b.id), pm = mem.open.get(c.id) || new Map();
   const kf = Math.min(Math.sqrt(0.13 * WR * WR / total), 0.22 * WR / Math.sqrt(big));
   const R = rng(ci + 3);
-  const nodes = c.ids.map(i => { const a = R() * TAU, d = R() * WR * 0.6, p = pm.get(F[i].q); return { f: F[i], r: Math.max(30, kf * Math.sqrt(F[i].L)), x: p ? p.x : Math.cos(a) * d, y: p ? p.y : Math.sin(a) * d }; });
+  const nodes = c.ids.map(i => { const a = R() * TAU, d = R() * WR * 0.6, p = pm.get(F[i].q); return { f: F[i], r: Math.max(30, kf * Math.sqrt(sz ? sz(F[i]) : F[i].L)), x: p ? p.x : Math.cos(a) * d, y: p ? p.y : Math.sin(a) * d }; });
   const byI = new Map(nodes.map(n => [n.f.i, n])), links = [];
   for (const n of nodes) for (const o of n.f.out) { const m = byI.get(o.t); if (m) links.push([n, m, 0.01, n.r + m.r + 120]); }
   relaxCircles(nodes, WR - 70, 600, { pad: clamp(700 / Math.sqrt(nodes.length), 90, 170), links, centre: 0.002 });
   mem.open.set(c.id, new Map(nodes.map(n => [n.f.q, { x: n.x, y: n.y }])));
-  const L = { nodes, byI }; sn.LAO.set(ci, L); return L;
+  const L = { nodes, byI }; sn.LAO.set(key, L); return L;
 }
 function clDraw(now, t, b) {
   const sn = clPrep(b), A = clState(), { C, RR } = clGeo(), s = RR / WR, LA = clLayout(sn), F = sn.funcs;
@@ -1911,7 +3173,8 @@ function clDraw(now, t, b) {
   blobPath(ctx, C.x, C.y, RR, hash(b.id), t, 0.35); ctx.fillStyle = col.fill; ctx.fill();
   ctx.lineWidth = lineW(b.complexity) * 1.2; ctx.strokeStyle = col.stroke; ctx.stroke();
   ctx.restore();
-  if (ci >= 0) { clDrawOpen(now, t, C, RR, s, ci, clamp((now - A.t0) / 320, 0, 1)); clWhy(now); return; }
+  const dv = diffDrill(b.id);
+  if (ci >= 0) { clDrawOpen(now, t, C, RR, s, ci, clamp((now - A.t0) / 320, 0, 1), dv); clWhy(now); return; }
   const hov = A.hov, sel = A.sel != null ? sn.byQ.get(A.sel) : null;
   const related = new Set(hov != null ? sn.cl.W.filter(w => w.a === hov || w.b === hov).flatMap(w => [w.a, w.b]) : []);
   const ghostCircles = clGhostsFree(LA.nodes.map(n => ({ x: n.x, y: n.y, r: n.r })), C, s, now);
@@ -1921,8 +3184,16 @@ function clDraw(now, t, b) {
     const shape = rr => blobPath(ctx, p.x, p.y, rr, seed, t * 0.8, 0.8);
     if (cp) drawPulse(ctx, cp, p.x, p.y, r, shape, dim, true);
     ctx.save(); ctx.globalAlpha = dim;
-    shape(r); ctx.fillStyle = clFill(c.hue); ctx.fill();
-    ctx.lineWidth = clamp(1 + Math.sqrt(c.br) * 0.22, 1.5, 6); ctx.strokeStyle = clStroke(c.hue); ctx.stroke();
+    const cn = dv && diffClusterNode(dv, c, r);
+    if (cn && DV.look === 'A' && cn.feats.length) {          // its changed functions' hairs and bites on its rim
+      const grow = dEase3((now - DV.at) / 650);
+      skinCached(cn, p.x, p.y, { fill: clFill(c.hue), stroke: clStroke(c.hue) }, grow, { seed, t: t * 0.8, wob: 0.8, lw: clamp(1 + Math.sqrt(c.br) * 0.22, 1.5, 6), noStain: true });
+      skinHits(cn, p.x, p.y, grow);
+    } else {
+      shape(r); ctx.fillStyle = clFill(c.hue); ctx.fill();
+      ctx.lineWidth = clamp(1 + Math.sqrt(c.br) * 0.22, 1.5, 6); ctx.strokeStyle = clStroke(c.hue); ctx.stroke();
+    }
+    if (cn && DV.look === 'B') diffClusterGhost(cn, p.x, p.y, r, seed, t, RR - Math.hypot(p.x - C.x, p.y - C.y) - 4);
     if (c.heat > 0) { ctx.globalAlpha = dim * (0.4 + 0.6 * c.heat) * (c.now ? 0.65 + 0.35 * Math.sin(now / 220) : 1); ctx.strokeStyle = T.add; ctx.lineWidth = 2; shape(r + 6); ctx.stroke(); }
     ctx.restore();
     if (cp) drawPulse(ctx, cp, p.x, p.y, r, shape, dim, false);
@@ -2027,8 +3298,8 @@ function clGhostsFree(obst, C, s, now) {
   return sn.ghosts.map((g, i) => { const p = sn.ghostPos[i], x = C.x + p.x * s, y = C.y + p.y * s, r = Math.max(12, p.r * s); clGhost(g, x, y, r, now, 0.9, p.named);
     drill.ca.hits.push({ ghost: g, x, y, r: Math.max(r, 10) }); if (!p.named) return { x, y, r: 0 }; const w = g.n.length * 3.2; return { x, y, r: Math.max(r, w) + 4 }; });
 }
-function clDrawOpen(now, t, C, RR, s, ci, open) {
-  const sn = CS, A = drill.ca, F = sn.funcs, c = sn.cl.list[ci], L = clLayoutOpen(sn, ci), P = n => ({ x: C.x + n.x * s, y: C.y + n.y * s });
+function clDrawOpen(now, t, C, RR, s, ci, open, dv) {
+  const sn = CS, A = drill.ca, F = sn.funcs, c = sn.cl.list[ci], L = clLayoutOpen(sn, ci, dv), P = n => ({ x: C.x + n.x * s, y: C.y + n.y * s });
   // the opened cluster fills the blob: tinted disc, the parent blob's rim kept underneath
   const R = RR * (0.94 + 0.06 * open);
   ctx.save(); ctx.globalAlpha = open;
@@ -2073,7 +3344,7 @@ function clDrawOpen(now, t, C, RR, s, ci, open) {
   clOverflow(over, C, R, pills);
   // function blobs, named inside when the name fits, else beside with collision avoidance, else on hover only
   const circles = L.nodes.map(n => ({ ...P(n), r: n.r * s + 2, f: n.f }));
-  for (const n of L.nodes) { const p = P(n); clFunc(n.f, p.x, p.y, n.r * s, t, now, { alpha: open * alphaOf(n.f.i), ring: selF === n.f || A.hovF === n.f.i || clHitQ(n.f) ? T.mix : null }); A.hits.push({ f: n.f, x: p.x, y: p.y, r: n.r * s }); }
+  for (const n of L.nodes) { const p = P(n); clFunc(n.f, p.x, p.y, n.r * s, t, now, { alpha: open * alphaOf(n.f.i), ring: selF === n.f || A.hovF === n.f.i || clHitQ(n.f) || DV.lensQ === n.f.q ? T.mix : null, dv }); A.hits.push({ f: n.f, x: p.x, y: p.y, r: n.r * s }); }
   // the open cluster's own face, top centre
   ctx.save(); ctx.globalAlpha = open; ctx.font = `700 16px ${SANS}`;
   ctx.fillStyle = clFill(c.hue); ctx.strokeStyle = clStroke(c.hue); ctx.lineWidth = 1.6; ctx.beginPath(); ctx.roundRect(C.x - hw / 2, hy - 22, hw, 44, 22); ctx.fill(); ctx.stroke();
@@ -2122,7 +3393,10 @@ function clHitAt(x, y) {
   return null;
 }
 function clMove(x, y) {
-  const A = drill.ca, h = clHitAt(x, y);
+  const A = drill.ca, ft = diffFeatAt(x, y), dg = A.open != null && !ft ? diffGoneAt(x, y) : null;
+  DV.hov = ft;
+  if (ft || dg) { A.hov = null; A.hovF = null; cv.style.cursor = 'pointer'; showTip(ft ? diffFeatTip(ft) : diffFuncTip(dg.q), x, y); return; }
+  const h = clHitAt(x, y);
   A.hov = null; A.hovF = null;
   cv.style.cursor = h && !h.why && !h.over && !h.ghost ? 'pointer' : 'default';
   if (!h) { hideTip(); return; }
@@ -2132,9 +3406,19 @@ function clMove(x, y) {
   if (h.ghost) { showTip(`<b style="color:var(--rem)">removed: ${esc(h.ghost.n)}</b> <span class="k">${h.ghost.L} L · step ${h.ghost.step + 1}</span>`, x, y); return; }
   if (h.cluster) { A.hov = h.ci; const c = h.c, F = CS.funcs;
     showTip(`<b>${esc(c.e)} ${esc(c.cap)}</b> <span class="k">${c.n} fn · ${c.lines} L · ${c.inner} calls inside · ${c.stained} stained</span><div>${c.ids.slice(0, 8).map(i => `<span class="sym">${esc(F[i].n)}</span>`).join('')}${c.n > 8 ? `<span class="sym">+${c.n - 8}</span>` : ''}</div><div class="k">click to open</div>`, x, y); return; }
-  if (h.f) { A.hovF = h.f.i; if (A.open == null) A.hov = h.ci; showTip(clFuncTip(h.f), x, y); }
+  if (h.f) { A.hovF = h.f.i; if (A.open == null) A.hov = h.ci; showTip(A.open != null && diffChanged(h.f.q) ? diffFuncTip(h.f.q) : clFuncTip(h.f), x, y); }
 }
 function clClick(x, y) {
+  const fc = drill.ca.open == null ? diffFeatAt(x, y) : null;
+  if (fc?.nd.cluster) {                 // a cluster's hunk: that cluster opened, its function pinned
+    const sp = fc.g.hunks[0].parts?.[0] || fc.g.hunks[0];
+    Object.assign(drill.ca, { open: fc.nd.cluster.id, t0: performance.now(), sel: sp.fq }); hideTip(); DV.hov = null; return;
+  }
+  if (drill.ca.open != null) {          // an opened cluster wears the diff: a hunk opens its bubble, a ghost its whole diff
+    const ft = diffFeatAt(x, y), dg = ft ? null : diffGoneAt(x, y);
+    if (ft) { DV.bloomK === ft.g.k ? diffBloomOff() : diffBloomOpen(ft); return; }
+    if (dg) { diffLensToggle(dg.q); return; }
+  }
   const A = drill.ca, h = clHitAt(x, y), { C, RR } = clGeo();
   const go = c => { A.open = c.id; A.t0 = performance.now(); hideTip(); };
   if (h?.pill && h.pill.ci == null && h.pill.id) { const ob = IDX[cur].blobs.get(h.pill.id); if (ob && PAGE(ob.kind)) showFileCard(h.pill.id, { x: (h.pill.x0 + h.pill.x1) / 2, y: h.pill.y1 }); else openDrill(h.pill.id); crumbs(); return; }
@@ -2144,8 +3428,8 @@ function clClick(x, y) {
     return;
   }
   if (h?.pill && h.pill.ci != null) { go(CS.cl.list[h.pill.ci]); A.sel = null; return; }
-  if (h?.f) { A.sel = A.sel === h.f.q ? null : h.f.q; return; }
-  if (!h && Math.hypot(x - C.x, y - C.y) > RR) { A.open = null; A.sel = null; }
+  if (h?.f) { A.sel = A.sel === h.f.q ? null : h.f.q; if (diffChanged(h.f.q)) diffLensToggle(h.f.q); else diffLensClose(); return; }
+  if (!h && Math.hypot(x - C.x, y - C.y) > RR) { A.open = null; A.sel = null; diffLensClose(); diffBloomOff(); }
 }
 /* the search box shows with the clusters view and gives way to the legend (both sit top right) */
 function clSearchShow() { const box = $('#clsearch'), want = !!drill?.cv && !$('#legend').classList.contains('on'); if (box.hidden === want) box.hidden = !want; }
@@ -2195,19 +3479,22 @@ let fileCard = null, fileAt = null;
 function showFileCard(id, at = null) {
   const b = IDX[cur].blobs.get(id), card = $('#card');
   if (!b) { hideCard(); return; }
+  card.innerHTML = `<h3>${esc(b.name)}</h3><div class="loc">${esc(b.path)}</div>
+    <div class="loc">${b.size} lines · ${esc(KIND_LABEL[b.kind])} · ${esc(b.region)}</div>${fileFacts(b, id)}`;
+  card.setAttribute('aria-label', 'File detail'); card.style.display = 'block'; hideTip();
+  fileCard = id; fileAt = at; cardFor = null; placeFileCard();
+}
+/* a page's last change, the words before it, since when it is there, what references it (the card; a page's drill-down) */
+function fileFacts(b, id) {
   let last = -1, first = cur;
   for (let j = cur; j >= 0; j--) { const bj = IDX[j].blobs.get(id); if (!bj) break; first = j; const d = bj.delta; if (last < 0 && (d.state === 'new' || d.added + d.removed > 0)) last = j; }
   const L = last >= 0 ? IDX[last].blobs.get(id).delta : null, age = cur - last, said = last >= 0 ? STEPS[last].said : '';
   const refs = STEPS[cur].edges.filter(e => e.kind === 'ref' && e.b === id);
-  card.innerHTML = `<h3>${esc(b.name)}</h3><div class="loc">${esc(b.path)}</div>
-    <div class="loc">${b.size} lines · ${esc(KIND_LABEL[b.kind])} · ${esc(b.region)}</div>
-    <div class="fk">last change</div>
+  return `<div class="fk">last change</div>
     <div>${L ? `step ${last + 1} <span class="loc">· ${age ? `${age} step${age > 1 ? 's' : ''} ago` : 'this step'}</span> · ${L.state === 'new' ? 'created' : `<span class="add">+${L.added}</span> <span class="rem">−${L.removed}</span>`}` : '<span class="loc">none recorded</span>'}</div>
     ${said ? `<div class="sum">“${esc(said)}”</div>` : ''}${first !== last && first > 0 ? `<div class="loc">present since step ${first + 1}</div>` : ''}
     <div class="fk">${b.kind === 'file' ? 'referenced by' : 'references'}</div>
     <div>${b.kind === 'file' ? refs.map(e => `<span class="sym">${esc(IDX[cur].blobs.get(e.a)?.title)} · ${esc((e.via || []).join(' '))}</span>`).join('') || '<span class="loc">nothing at this step</span>' : '<span class="loc">nothing references a text file</span>'}</div>`;
-  card.setAttribute('aria-label', 'File detail'); card.style.display = 'block'; hideTip();
-  fileCard = id; fileAt = at; cardFor = null; placeFileCard();
 }
 function placeFileCard() {
   const card = $('#card'), w = card.offsetWidth, h = card.offsetHeight;
@@ -2352,8 +3639,18 @@ function onMove(ev) {
   if (drill?.cv) { clMove(mouse.x, mouse.y); return; }
   if (drill) {
     const ch = drill.chips.find(c => mouse.x > c.x0 && mouse.x < c.x1 && mouse.y > c.y0 && mouse.y < c.y1);
+    // a diff's marks first: a hunk's hairs / bite, a deleted function or a twin's ghost, a page's line
+    const ft = ch ? null : diffFeatAt(mouse.x, mouse.y), dg = ch || ft ? null : diffGoneAt(mouse.x, mouse.y), pg = ch || ft || dg ? null : diffPageAt(mouse.x, mouse.y);
+    DV.hov = ft;
+    if (ft || dg || pg) {
+      drill.hov = dg?.twin ? dg.q : null; cv.style.cursor = 'pointer';
+      const html = ft ? diffFeatTip(ft) : dg ? diffFuncTip(dg.q) : pg.row ? diffRowTip(pg) : '';
+      if (html) showTip(html, mouse.x, mouse.y); else hideTip();
+      return;
+    }
     const st = ch ? null : (drill.stains || []).slice().reverse().find(s => Math.hypot(s.x - mouse.x, s.y - mouse.y) < s.r);
     const n = (drill.nodes || []).find(n => Math.hypot(n.x - mouse.x, n.y - mouse.y) < n.r);
+    if (n && !ch && diffChanged(n.q)) { drill.hov = n.q; cv.style.cursor = 'pointer'; showTip(diffFuncTip(n.q), mouse.x, mouse.y); return; }      // its mini diff
     let eh = null, bd = 6;
     if (!ch && !st && !n) for (const g of drill.edges || []) { const d = distToPoly(g.pts, mouse.x, mouse.y); if (d < bd) { bd = d; eh = g; } }
     drill.hov = n ? n.q : null; cv.style.cursor = n || ch ? 'pointer' : 'default';
@@ -2402,11 +3699,17 @@ function onClick(ev) {
       if (ob && PAGE(ob.kind)) { drill.sel = null; showFileCard(ch.id, { x: (ch.x0 + ch.x1) / 2, y: ch.y1 }); } else openDrill(ch.id);
       return;
     }
+    const ft = diffFeatAt(x, y);                    // a hunk: its bubble; a changed body, a ghost or the page: the whole diff
+    if (ft) { DV.bloomK === ft.g.k ? diffBloomOff() : diffBloomOpen(ft); return; }
+    const dg = diffGoneAt(x, y);
+    if (dg) { drill.sel = null; diffLensToggle(dg.q); return; }
+    if (diffPageAt(x, y)) { diffLensToggle('file'); return; }
     const n = (drill.nodes || []).find(n => Math.hypot(n.x - x, n.y - y) < n.r);
-    if (n) { drill.sel = drill.sel === n.q ? null : n.q; drill.sel ? showCard(n) : hideCard(); return; }
+    if (n && diffChanged(n.q)) { drill.sel = null; diffLensToggle(n.q); return; }
+    if (n) { diffLensClose(); diffBloomOff(); drill.sel = drill.sel === n.q ? null : n.q; drill.sel ? showCard(n) : hideCard(); return; }
     if (fileCard) { hideCard(); return; }
     const { C, RR } = drillGeo();
-    if (Math.hypot(x - C.x, y - C.y) > RR * 1.05) closeDrill(); else { drill.sel = null; hideCard(); }
+    if (Math.hypot(x - C.x, y - C.y) > RR * 1.05) closeDrill(); else { drill.sel = null; hideCard(); diffLensClose(); diffBloomOff(); }
     return;
   }
   const id = blobAt(x, y);
@@ -2454,6 +3757,7 @@ $('#legendBtn').onclick = () => { const on = $('#legend').classList.toggle('on')
 addEventListener('keydown', e => {
   if (e.target.tagName === 'SELECT') return;
   if (e.target === $('#clq')) { clSearchKey(e); return; }
+  if (diffKey(e)) return;              // in a drill-down with diffs: 1 / 2 looks, T / S / L scope, M morph, Esc closes a lens
   if (drill?.cv && !e.ctrlKey && !e.metaKey && !e.altKey) {      // the clusters view: / finds, Esc / Backspace go up a level
     if (e.key === '/') { e.preventDefault(); $('#clq').focus(); return; }
     if ((e.key === 'Escape' || e.key === 'Backspace') && drill.ca?.open != null) { e.preventDefault(); drill.ca.open = null; drill.ca.sel = null; hideTip(); return; }
@@ -2537,6 +3841,7 @@ function liveStart(data) {
   liveAsk(data.live?.ask || null);
   const n = data.live ? data.live.steps : data.steps.length;
   liveApply(data.steps.slice(0, n), data.steps.slice(n), had);
+  if (BOOTED) diffInit();
 }
 function liveStep(ex, stains, ss, raw, prov, ks) {
   const i = STEPS.length, x = ex.push(raw);
@@ -2642,6 +3947,8 @@ function liveApply(committed, tail, had) {
   LTAIL = tail.map(t => JSON.stringify(t));
   STEPS.length = IDX.length = NCOMMIT;
   for (const k of [...FACE_R.keys()]) if (k >= NCOMMIT) FACE_R.delete(k);
+  for (const [k, r] of DV.ranges) if (r.b >= wasN || !r.ok) DV.ranges.delete(k);     // (diffs: a range over the tail, made again)
+  DV.strips.clear();
   for (const raw of committed) liveStep(LEXP, LSTAIN, LSESS, raw, false, LKS);
   NCOMMIT = STEPS.length;
   const ex = LEXP.fork(), stains = new Map(LSTAIN), ss = sessFork(LSESS), ks = lkFork(LKS);
@@ -2741,7 +4048,7 @@ function frame(now) {
     drawMap(now, t);
     if (drill) drawDrill(now, t);
     else if (fileCard && !fileAt) placeFileCard();
-    clSearchShow();
+    clSearchShow(); diffUi(dt);
     if (FADE > 0.01) { ctx.save(); ctx.globalAlpha = 0.5 * FADE; ctx.fillStyle = T.bg; ctx.fillRect(0, 0, VW, VH); ctx.restore(); }   // a provisional step
     drawTimeline();
   }
@@ -2766,6 +4073,7 @@ function boot(data) {
   if (AREAS_ON && qs.has('area') && AU.has(qs.get('area'))) openA = qs.get('area');
   for (const [id, v] of VIS) { const h = homeOf(id, v.blob); v.x = h.x; v.y = h.y; }
   VIEW = AREAS_ON ? areaCam() : camTarget(); CAM = null; crumbs();
+  diffInit().then(() => { if (qs.has('drill') && !drill) openDrill(qs.get('drill')); });
   if (qs.has('drill')) openDrill(qs.get('drill'));
 }
 (async () => {
