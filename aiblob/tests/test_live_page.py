@@ -227,7 +227,7 @@ def test_caption_table_is_areas_caption_table(tmp_path):
         blobs = []
         for k in range(rnd.randint(1, 9)):
             b = {'id': f'b{k}', 'name': ' '.join(rnd.choice(words) for _ in range(rnd.randint(1, 3))),
-                 'size': rnd.choice([1, 2, 4, 9, 16]), 'area': rnd.choice(['a', 'b', 'tests', 'files'])}
+                 'size': rnd.choice([1, 2, 4, 9, 16]), 'area': rnd.choice(['a', 'b', 'tests', 'files', 'data', 'docs'])}
             if rnd.random() < 0.6:
                 b['label'] = {'emoji': rnd.choice(emojis), 'title': ' '.join(rnd.choice(words) for _ in range(rnd.randint(1, 4)))}
             if rnd.random() < 0.3:

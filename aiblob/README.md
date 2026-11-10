@@ -135,7 +135,15 @@ flies the camera to the area it edits (areas on) or the blob it edits (areas off
 shows its call clusters instead: a big emoji and a caption each, the functions as dots, one ribbon per
 cluster pair, neighbour blobs as pills on the rim, five dials and the growth curve top left; click a cluster to open
 it, / finds a function, Esc / Backspace go back up.
-Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`.
+Analyzer on any Python tree: `.venv/bin/python analyze.py <dir>`. Python, JS/TS, C, Go and shell scripts (`lang_sh.py`:
+`.sh` / `.bash` / sh-shebang files; each script's top-level code is an entry, `source`, `bash x.sh` and `python x.py` / `node x.js`
+are calls, so scripts link the app's languages; SCHEMA.md "Shell") are parsed; other files are file / text blobs, those of a data
+format (json, jsonl, csv, tsv, xml, toml, yaml, ini) in a `data` area, docs (md, and html the app's code does not use) in `docs`,
+images / svg / fonts in `assets`, the rest (Makefile, .gitignore, LICENSE, lockfiles, css, templates ...) in `files`, each
+marked by its `fmt` (SCHEMA.md "v6 additions"). Pages, styles and markdown link files by `ref` edges (`<link href>`, `<img src>`,
+`{% extends %}`, `url_for('static', ...)`, css `url()` / `@import`, markdown links; `<script src>` to its JS module), and
+`--diffs` also stores image thumbnails (64 px PNG from the image's git object, svg as text; Pillow). Grammars:
+`uv pip install --python .venv/bin/python -r requirements.txt`.
 
 web/timeline.json is schema v6 (SCHEMA.md): step 0 holds the whole map, later steps only what changed, and
 the page rebuilds every step from those deltas. The blob map folds blobs under 20 lines into a neighbour

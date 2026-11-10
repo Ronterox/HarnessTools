@@ -1,0 +1,3 @@
+@import "base.css";
+header { background: url(../img/logo.svg) no-repeat; }
+footer { background: url("data:image/png;base64,AAAA"); }

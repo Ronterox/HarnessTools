@@ -400,11 +400,13 @@ def test_flask_session_area_reassignments():
     n = reassignments(states)
     print(f'flask: {n} area reassignments over {len(states)} steps')
     # one regroup: the grouping that came out at step 7 held for half the session, so at step 13 auth's five blobs
-    # leave the first area for one of their own and the error handler joins the first area
-    assert n == 6
+    # leave the first area for one of their own and the error handler joins the first area; and templates/base.html,
+    # written before any template extends it, moves from `docs` (unreferenced html) to `files` at step 9
+    assert n == 7
     groups = {}
     for b in states[-1]:
         groups.setdefault(b['area'], set()).add(b['module'])
+    # the html templates code references stay in `files` with requirements.txt
     assert sorted(map(sorted, groups.values())) == [
         ['.', 'templates'], ['api', 'app', 'db', 'errors', 'models'], ['auth'], ['notes'],
         ['tests.test_app']]

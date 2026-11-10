@@ -1,0 +1,14 @@
+# aiblob's Python dependencies, all of the .venv pinned (built with uv: uv pip install --python .venv/bin/python -r requirements.txt)
+tree-sitter==0.26.0
+tree-sitter-python==0.25.0
+tree-sitter-javascript==0.25.0
+tree-sitter-typescript==0.23.2
+tree-sitter-c==0.24.2
+tree-sitter-go==0.25.0
+tree-sitter-bash==0.25.1
+pytest==9.2.0
+iniconfig==2.3.1
+packaging==26.3
+pluggy==1.7.0
+pygments==2.21.0
+pillow==13.0.0

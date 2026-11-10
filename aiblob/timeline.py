@@ -18,7 +18,7 @@ unless its module changed or a cross-module entry it looked up did. --full redoe
 The file is schema v6: step 0 (and any step marked "full") carries the whole state, every other step only what
 changed, down to the functions and clusters of a re-sent blob and the entries of the areas table (compact() /
 expand() below). Blobs are the analyzer's with small ones folded in and big ones cut (areas.py; --no-smart keeps
-them as analyzed, for debugging and tests), each with its `area`, and a blob still at the cut size with its
+them as analyzed, for debugging and tests), each with its `area`, and a blob of 12+ functions in 3+ call groups with its
 `clusters` (clusters.py). --v2 writes every step in full instead. --no-timings writes 0 for
 parse_ms / analyze_ms, so two runs on the same session are byte-identical. --diffs DIR also writes the texts the
 steps show (function bodies, file texts) for diffs inside blobs, as DIR/index.json.gz + DIR/s/<step>.json.gz
@@ -26,7 +26,7 @@ steps show (function bodies, file texts) for diffs inside blobs, as DIR/index.js
 """
 import argparse, copy, difflib, gc, glob, json, operator, os, sys, time
 
-import diffs, replay
+import diffs, replay, thumbs
 from analyze import analyze, _is_binary
 from areas import Zoner
 
@@ -88,7 +88,8 @@ def build_state(result, prev_funcs, prev_members, files=None, prev_files=None):
     for b in result['blobs']:
         if b['kind'] in ('file', 'text'):
             blobs.append({'id': b['id'], 'name': b['name'], 'emoji': b['emoji'], 'kind': b['kind'], 'module': b['module'],
-                          **({'area': b['area']} if 'area' in b else {}), 'path': b['path'], 'size': b['size'], 'complexity': 0, 'errors': 0, 'data': [],
+                          **({'area': b['area']} if 'area' in b else {}), 'path': b['path'],
+                          **({'fmt': b['fmt']} if 'fmt' in b else {}), 'size': b['size'], 'complexity': 0, 'errors': 0, 'data': [],
                           'delta': dict(_file_delta(b['path'], (files or {}).get(b['path'], ''), prev_files or {}),
                                         removed_funcs=[]), 'funcs': []})
             continue
@@ -167,6 +168,7 @@ class Analyzer:
         self.blobs, self.edges, self.areas = [], [], []
         self.stats = {'calls': 0, 'unresolved': 0, 'parse_ms': 0, 'analyze_ms': 0}
         self.sink, self.fmap, self.fv = None, {}, {}  # diffs.BodySink; file blob path -> text hash; last file line
+        self.tmap = {}                                # image blob path -> its thumbnail's hash (diffs.py `t`)
 
     def fork(self):
         a = copy.copy(self)
@@ -527,6 +529,8 @@ def main():
         rs = replay.steps(files, os.path.abspath(a.root or session_root(files[0]) or '.'), seed_git=a.seed_git,
                          git_reconcile=a.git_reconcile)
         dw = diffs.Static(a.diffs) if a.diffs else None
+        if dw is not None:                            # raster thumbnails: their bytes from the root's git objects
+            dw.sink.images = thumbs.images_for(os.path.abspath(a.root or session_root(files[0]) or '.'))
         tl = timeline(inputs, a.root, timings=not a.no_timings, full=a.full, v2=a.v2, steps=rs, smart=not a.no_smart,
                       diffs=dw)
         if dw is not None:

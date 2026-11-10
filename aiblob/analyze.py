@@ -3,9 +3,10 @@
 analyze(files: {relpath: text}, cache=None) -> {'blobs': [...], 'edges': [...], 'modules': {...}, 'bodies': {...}}
 cache: a dict reused across calls; modules whose (path, text) did not change are not re-parsed.
 
-Languages: a file's extension picks its Lang (PyLang here, lang_js.JSLang for .js/.mjs/.cjs/.ts);
-a snapshot may mix them. Calls and imports only resolve within one language; files no language
-claims are the shared file / text blobs.
+Languages: a file's extension picks its Lang (PyLang here, lang_js.JSLang for .js/.mjs/.cjs/.ts, lang_sh.ShLang
+for .sh/.bash and extensionless files with a sh shebang); a snapshot may mix them. Calls and imports only resolve
+within one language, except a shell script running another language's module (python foo.py): an entry call;
+files no language claims are the shared file / text blobs, data / doc formats marked by `fmt` (FMT).
 
 A blob is an entry point (route handler, error handler, CLI main, test module)
 plus every function only it reaches. Functions reached from several entries
@@ -13,7 +14,7 @@ form a hub blob per module. Unreached functions form an orphan blob per module.
 Edges: 'main' call, 'error' call (made inside except / abort / raise paths),
 'data' (two blobs touch the same data symbol).
 """
-import re, hashlib, collections, builtins, time
+import re, hashlib, collections, builtins, time, posixpath, urllib.parse
 from tree_sitter import Language, Parser, Query, QueryCursor
 import tree_sitter_python as tsp
 
@@ -29,6 +30,10 @@ BRANCH_TYPES = {'if_statement', 'elif_clause', 'for_statement', 'while_statement
 SQL = re.compile(r'\b(?:FROM|INTO|UPDATE|TABLE(?: IF NOT EXISTS)?|JOIN)\s+([A-Za-z_][A-Za-z_0-9]*)', re.I)
 DATA_ROOTS = {'request', 'session', 'g', 'current_app'}
 NOT_SHARED = {'request', 'req'}                  # everyone reads the request; not a shared-state signal
+# environment variables nearly every program reads: their `env:` symbols stay in a blob's `data` but link nothing
+# (XDG_DATA_HOME / XDG_CONFIG_HOME / XDG_CACHE_HOME do: they say where an app keeps its own files)
+GENERIC_ENV = frozenset('''HOME PATH USER LOGNAME PWD OLDPWD SHELL TERM LANG TMPDIR TMP TEMP HOSTNAME EDITOR PAGER
+DISPLAY XDG_RUNTIME_DIR'''.split())
 KEY_METHODS = {'get', 'pop', 'setdefault'}       # session.get("uid") -> ctx:session.uid
 WHOLE_METHODS = KEY_METHODS | {'clear', 'update', 'keys', 'items', 'values', 'copy', 'popitem'}
 # call(..., fn) that makes fn an entry like the matching decorator would
@@ -53,6 +58,37 @@ BINARY_EXT = frozenset('png jpg jpeg gif bmp ico webp tiff pdf zip gz tgz bz2 xz
                        'pyc class woff woff2 ttf otf eot mp3 mp4 wav ogg webm mov avi sqlite sqlite3 db gguf'.split())
 TEST_RECEIVERS = frozenset({'client', 'app', 'resp', 'response', 'res'})
 STATIC_DIRS = frozenset({'static', 'public', 'assets', 'dist'})
+# file / text blobs of a well-known format: extension -> `fmt`; areas.py puts DATA_FMTS in `data`, DOC_FMTS in `docs`
+FMT = {'json': 'json', 'jsonl': 'jsonl', 'ndjson': 'jsonl', 'csv': 'csv', 'tsv': 'tsv', 'xml': 'xml', 'toml': 'toml',
+       'yaml': 'yaml', 'yml': 'yaml', 'ini': 'ini', 'cfg': 'ini', 'md': 'md', 'markdown': 'md', 'html': 'html', 'htm': 'html'}
+FMT.update({'mk': 'make', 'lock': 'lock', 'cmake': 'cmake', 'css': 'css', 'scss': 'css', 'sass': 'css', 'less': 'css',
+            'dockerfile': 'docker', 'svg': 'svg', 'woff': 'font', 'woff2': 'font', 'ttf': 'font', 'otf': 'font', 'eot': 'font',
+            **dict.fromkeys(('png', 'jpg', 'jpeg', 'gif', 'webp', 'ico', 'bmp'), 'image')})
+# whole basenames (lowercased), before the extension: Makefile, lockfiles that look like json / yaml, ...
+NAME_FMT = {'makefile': 'make', 'gnumakefile': 'make', 'dockerfile': 'docker', '.env': 'env', '.editorconfig': 'editorconfig',
+            '.gitattributes': 'git', '.gitmodules': 'git', 'cmakelists.txt': 'cmake', 'procfile': 'procfile',
+            'package-lock.json': 'lock', 'npm-shrinkwrap.json': 'lock', 'pnpm-lock.yaml': 'lock', 'go.sum': 'lock'}
+DATA_FMTS = frozenset({'json', 'jsonl', 'csv', 'tsv', 'xml', 'toml', 'yaml', 'ini'})
+DOC_FMTS = frozenset({'md', 'html'})
+ASSET_FMTS = frozenset({'image', 'svg', 'font'})
+# links between non-code files (no parsing: tolerant regexes over the text), by the extension of the linking file.
+# Every repeat is bounded and possessive (no backtracking), so a match attempt costs at most a few KB of text whatever
+# the file holds (an unclosed `url(` or `[` repeated through a 400 KB file stays linear); a markdown link is found from
+# its `](` with a bounded look back for its `[`; files over LINK_MAX are not read for links.
+LINK_MAX = 2_000_000
+LINK_KIND = {**dict.fromkeys('html htm xhtml jinja jinja2 j2 hbs handlebars njk mustache'.split(), 'html'),
+             **dict.fromkeys('css scss sass less'.split(), 'css'), 'md': 'md', 'markdown': 'md'}
+_Q = r'''(?:"([^"\n]{0,1024}+)"|'([^'\n]{0,1024}+)')'''
+_S = r'\s{0,64}+'
+HTML_ATTR = re.compile(r'''\b(href|src|poster|data-src)''' + _S + '=' + _S +
+                       r'''(?:"([^"\n]{0,2048}+)"|'([^'\n]{0,2048}+)'|([^\s"'<>`]{1,2048}+))''', re.I)
+HTML_SRCSET = re.compile(r'\bsrcset' + _S + '=' + _S + _Q, re.I)
+CSS_URL = re.compile(r'''url\(''' + _S + r'''(?:"([^"\n]{0,512}+)"|'([^'\n]{0,512}+)'|([^()\s'"]{0,512}+))''' + _S + r'\)', re.I)
+CSS_IMPORT = re.compile(r'@import' + _S + _Q, re.I)
+JINJA_REF = re.compile(r'\{%-?' + _S + r'(?:extends|include|import|from)' + _S + _Q)
+URL_FOR_STATIC = re.compile(r'''url_for\(''' + _S + r'''['"]static['"]''' + _S + ',' + _S + 'filename' + _S + '=' + _S + _Q)
+MD_LINK = re.compile(r'\]\(' + _S + r'<?([^)\s>]{1,2048}+)')         # (its `[` looked for in _file_links)
+MD_REF = re.compile(r'^ {0,3}\[[^\]\n]{1,1000}+\]:' + _S + r'<?([^\s>]{1,2048}+)', re.M)
 SUBCOMMAND = re.compile(r'''\badd_parser\(\s*[rRuU]?['"]([\w.-]+)['"]''')
 
 def _text(n, src):
@@ -559,7 +595,7 @@ def analyze(files, cache=None, memo=None):
     for rel, text in files.items():
         hit = old_texts.get(rel)
         if hit is None or hit[0] is not text:     # the same str object as last call: same parse, no re-hash
-            L = lang_for(rel)
+            L = lang_for(rel, text)
             hit = (text, L, load_module(rel, text, cache, L) if L is not None else None)
         if new_texts is not None:
             new_texts[rel] = hit
@@ -845,6 +881,28 @@ def analyze(files, cache=None, memo=None):
     entry_mods = _entries(mods, lang_of, import_graph, _is_test, files)
     entry_mod = entry_mods[0] if entry_mods else None
     entry_set = set(entry_mods)
+    # modules whose <module> code runs: the entry modules, plus the `tops` a language's link() names (shell: every
+    # script, and the modules of other languages a script runs); an entry root unless a test's (then in its tests blob)
+    tops = entry_set | {m for c in ctxs.values() for m in c.get('tops', ()) if m in mods}
+    # links between non-code files (html / templates, css, markdown): literals extracted per text (memo), resolved
+    # against the snapshot each call. A page's <script src> naming a code module makes its <module> code run (a top)
+    code_file = {v['file']: m for m, v in mods.items()}
+    old_links, new_links, flinks, lindex = memo.get('links', {}) if memo is not None else {}, {}, [], []
+    for p in sorted(files):
+        lk = LINK_KIND.get(p.rsplit('.', 1)[-1].lower()) if '.' in p.rsplit('/', 1)[-1] else None
+        if lk is None or p in code_file or _is_binary(p, files[p]):
+            continue
+        hit = old_links.get(p)
+        if hit is None or hit[0] is not files[p]:
+            hit = (files[p], _file_links(lk, files[p]))
+        new_links[p] = hit
+        for lit, how in hit[1]:
+            t = _resolve_link(p, lit, how, files, lindex)
+            if t and t != p and (t not in code_file or how in ('script', 'static-script')):
+                if t in code_file and lang_of[code_file[t]].name != 'js':
+                    continue                        # a page loads only JS (a .py named in <script src> is no module run)
+                flinks.append((p, lit, t))
+    tops |= {code_file[t] for _, _, t in flinks if t in code_file}
 
     roots = []   # (blob_id, name, kind, [quals])
     test_mods = collections.defaultdict(list)
@@ -862,7 +920,7 @@ def analyze(files, cache=None, memo=None):
             roots.append((q, route[0], route[1], [q]))
         elif q in cmd_names:      # one root per subcommand, id = the first place that runs it
             roots.extend((q, name, 'command', cmd_quals[name]) for name in cmd_names[q] if cmd_quals[name][0] == q)
-        elif f.name == '<module>' and f.module in entry_set:
+        elif f.name == '<module>' and f.module in tops:
             roots.append((q, f.module, 'entry', [q]))
         elif f.name in ('main', 'create_app') and f.module in entry_set:
             roots.append((q, f.name, 'entry', [q]))
@@ -918,7 +976,7 @@ def analyze(files, cache=None, memo=None):
         if _is_test(funcs[q].module):
             blob_of[q] = funcs[q].module
             continue
-        if funcs[q].name == '<module>' and funcs[q].module not in entry_set:
+        if funcs[q].name == '<module>' and funcs[q].module not in tops:
             continue
         rs = reach.get(q, set())
         if q in own:          # a root's own function never leaves its blob
@@ -940,7 +998,7 @@ def analyze(files, cache=None, memo=None):
             kind, mod = bid.split(':', 1) if ':' in bid else ('tests', bid)   # test module with no tests yet
             blobs[bid] = {'id': bid, 'name': mod.split('.')[-1], 'kind': kind, 'funcs': []}
         f = funcs[q]
-        if f.name == '<module>' and (f.lines == 0 or f.module not in entry_set):
+        if f.name == '<module>' and (f.lines == 0 or f.module not in tops):
             continue
         blobs[bid]['funcs'].append({
             'qual': q, 'name': f.name if not f.cls else f'{f.cls}.{f.name}', 'file': f.file, 'start': f.start, 'end': f.end,
@@ -959,7 +1017,7 @@ def analyze(files, cache=None, memo=None):
     blobs = collections.OrderedDict((k, v) for k, v in blobs.items() if v['funcs'])
 
     # non-code files: `file` when a code literal (or, one hop on, a literal in such a file) names it, else `text`
-    others = sorted(rel for rel in files if lang_for(rel) is None or rel in demoted)
+    others = sorted(rel for rel in files if lang_for(rel, files[rel]) is None or rel in demoted)
     refs = collections.defaultdict(list)          # (blob id, path) -> literals naming it
     frefs = collections.defaultdict(list)         # qual -> paths its own literals name
     # incremental: a function's literal -> path matches and a file's one-hop literals hold while the set of
@@ -989,8 +1047,18 @@ def analyze(files, cache=None, memo=None):
     for b in blobs.values():
         for fd in b['funcs']:
             fd['refs'] = sorted(frefs.get(fd['qual'], ()))
+    page_refs = collections.defaultdict(list)     # (file blob id, code blob id) -> <script src> literals
+    for p, lit, t in flinks:                        # links between non-code files; a page's scripts
+        if t in code_file:
+            b = blob_of.get(f'{code_file[t]}.<module>')
+            if b in blobs:
+                page_refs[('file:' + p, b)].append(lit)
+        else:
+            refs[('file:' + p, t)].append(lit)
+    scanned = {p for p in new_links}
     for p in sorted({p for _, p in refs}):          # one hop on: files named by the files code references
-        if not _is_binary(p, files[p]):
+        if not _is_binary(p, files[p]) and fmt_of(p) not in DATA_FMTS and p not in scanned:   # (a config does; a data
+            # file does not; pages, styles and markdown name theirs by their links, above)
             hit = old_hop.get(p)
             if hit is None or hit[0] != files[p]:
                 hit = (files[p], [(lit, _match_path(lit, index)) for lit in (m.group(2) for m in FILE_LIT_IN_TEXT.finditer(files[p]))])
@@ -1003,8 +1071,10 @@ def analyze(files, cache=None, memo=None):
     for p in others:
         binary = _is_binary(p, files[p])
         kind = 'file' if p in referenced else 'text'
+        fmt = fmt_of(p)
         blobs['file:' + p] = {'id': 'file:' + p, 'name': p.rsplit('/', 1)[-1], 'kind': kind,
                               'module': p.split('/', 1)[0] if '/' in p else '.', 'path': p,
+                              **({'fmt': fmt} if fmt else {}),
                               'size': 0 if binary else len(files[p].splitlines()), 'complexity': 0, 'errors': 0,
                               'data': [], 'funcs': [], 'emoji': '📄' if kind == 'file' else '📃'}
 
@@ -1031,10 +1101,8 @@ def analyze(files, cache=None, memo=None):
     data_index = collections.defaultdict(set)
     for b in blobs.values():
         for d in b['data']:
-            kind, _, sym = d.partition(':')
-            if kind == 'ctx' and sym.split('.')[0] in NOT_SHARED:
-                continue   # everyone reads the request; not a shared-state signal
-            data_index[d].add(b['id'])
+            if shared(d):
+                data_index[d].add(b['id'])
     data_edges = collections.defaultdict(set)
     def link(xs, ys, via):
         for x in xs:
@@ -1052,9 +1120,10 @@ def analyze(files, cache=None, memo=None):
     out_edges = [{'a': a, 'b': b, 'kind': k, 'n': n} for (a, b, k), n in edges.items()]
     out_edges += [{'a': a, 'b': b, 'kind': 'data', 'n': len(ds), 'via': sorted(ds)} for (a, b), ds in data_edges.items()]
     out_edges += [{'a': a, 'b': 'file:' + p, 'kind': 'ref', 'n': len(ls), 'via': sorted(set(ls))} for (a, p), ls in refs.items()]
+    out_edges += [{'a': a, 'b': b, 'kind': 'ref', 'n': len(ls), 'via': sorted(set(ls))} for (a, b), ls in page_refs.items()]
     out_edges.sort(key=lambda e: (order[e['kind']], e['a'], e['b']))
     if memo is not None:      # only now: a call that raised above leaves the memo as it was
-        memo.update(env=env, res=new_res, fdata=new_fd, snip=new_snip, others=others, match=new_match, hop=new_hop,
+        memo.update(env=env, res=new_res, fdata=new_fd, snip=new_snip, others=others, match=new_match, hop=new_hop, links=new_links,
                     texts=new_texts, graph=(dict(lang_of), {m: (v, import_graph[m]) for m, v in mods.items()}))
     t_end = time.perf_counter()
     stats = {'calls': n_calls, 'unresolved': n_unresolved, 'parse_ms': round((t_parsed - t_start) * 1000, 1),
@@ -1155,6 +1224,121 @@ def _globals_used(f, mods):
         if obj not in local and obj in imp:
             add(imp[obj], attr)
     return out
+
+def shared(d):
+    """A data symbol that links the blobs touching it: not the request (NOT_SHARED), not a generic environment
+    variable (GENERIC_ENV, LC_*): everyone touches those, so they are no shared-state signal."""
+    kind, _, sym = d.partition(':')
+    if kind == 'ctx':
+        return sym.split('.')[0] not in NOT_SHARED
+    if kind == 'env':
+        return sym not in GENERIC_ENV and not sym.startswith('LC_')
+    return True
+
+def _link_lit(s):
+    """A link as written -> the path it names (query, fragment and %-escapes gone), or None: a URL with a scheme
+    (http:, data:, mailto:), //host, an #anchor, a template expression."""
+    s = (s or '').strip()
+    if not s or s[0] == '#' or s.startswith('//') or re.match(r'[A-Za-z][\w+.-]*:', s) or \
+            any(t in s for t in ('{{', '{%', '${', '<', '\\')):
+        return None
+    s = urllib.parse.unquote(s.split('#', 1)[0].split('?', 1)[0])
+    return s or None
+
+def _tag_before(text, i):
+    """The name of the tag an attribute at text[i] sits in (lowercased; '' when no `<` within 512 characters)."""
+    j = text.rfind('<', max(0, i - 512), i)
+    name = text[j + 1:i].split(None, 1) if j >= 0 else []
+    return name[0].lower() if name else ''
+
+def _file_links(kind, text):
+    """[(path literal, how)] a page / style / markdown text links to; how: 'path' (relative to the file, `/` from the
+    root), 'template' (Jinja extends / include / import: from the templates directory), 'static' (url_for('static',
+    filename=...); 'static-script' when in a <script src>), 'script' (<script src>: may name a code module)."""
+    out = []
+    if len(text) > LINK_MAX:
+        return out
+    def add(groups, how):
+        lit = _link_lit(next((g for g in groups if g is not None), None))
+        if lit:
+            out.append((lit, how))
+    if kind in ('html', 'md'):
+        for m in HTML_ATTR.finditer(text):
+            add(m.groups()[1:], 'script' if _tag_before(text, m.start()) == 'script' and m.group(1).lower() == 'src' else 'path')
+        for m in HTML_SRCSET.finditer(text):
+            for part in (m.group(1) if m.group(1) is not None else m.group(2)).split(','):
+                add(part.split()[:1] or [None], 'path')
+        for m in JINJA_REF.finditer(text):
+            add(m.groups(), 'template')
+        for m in URL_FOR_STATIC.finditer(text):       # in a <script src>: may name a code module, as a plain src
+            add(m.groups(), 'static-script' if _tag_before(text, m.start()) == 'script' else 'static')
+    if kind == 'md':
+        for m in MD_LINK.finditer(text):           # `[text](x)` / `![text](x)`: a `[` within 1000 characters, no
+            i = m.start()                           # `]` or newline between
+            j = text.rfind('[', max(0, i - 1000), i)
+            if j >= 0 and text.find(']', j, i) < 0 and text.find('\n', j, i) < 0:
+                add(m.groups(), 'path')
+        for m in MD_REF.finditer(text):
+            add(m.groups(), 'path')
+    if kind in ('html', 'css'):                     # url(...) in a stylesheet, a <style> block or a style="" attribute
+        for m in CSS_URL.finditer(text):
+            add(m.groups(), 'path')
+    if kind == 'css':
+        for m in CSS_IMPORT.finditer(text):
+            add(m.groups(), 'path')
+    return out
+
+def _resolve_link(rel, lit, how, files, lindex):
+    """The snapshot file a link of file rel names, or None. 'path': relative to rel's directory, `/...` from rel's
+    nearest ancestor that has it (the root last: an app in a subdirectory serves its own static/); 'template': from
+    the nearest `templates` directory above rel, then rel's own; 'static': `static/` beside that templates directory.
+    Then, for 'template' / 'static', the one file below a templates/ or static/ directory with that tail
+    (analyze._path_index; lindex holds it, built once per call)."""
+    parts = rel.split('/')
+    d = '/'.join(parts[:-1])
+    tpl = next(('/'.join(parts[:i + 1]) for i in range(len(parts) - 2, -1, -1) if parts[i] == 'templates'), None)
+    if how == 'template':
+        cands = ([posixpath.join(tpl, lit)] if tpl else []) + [posixpath.join(d, lit)]
+    elif how in ('static', 'static-script'):
+        cands = [posixpath.join(posixpath.dirname(tpl) if tpl else d, 'static', lit)]
+    elif lit.startswith('/'):
+        cands, anc = [], d
+        while True:
+            cands.append(posixpath.join(anc, lit.lstrip('/')))
+            if not anc:
+                break
+            anc = posixpath.dirname(anc)
+    else:
+        cands = [posixpath.join(d, lit)]
+    for c in cands:
+        c = posixpath.normpath(c)
+        if c in files and not c.startswith('../'):
+            return c
+    if how in ('template', 'static', 'static-script'):
+        if not lindex:
+            lindex.append(_path_index(files))
+        tail = ('templates/' if how == 'template' else 'static/') + lit.lstrip('/')
+        hits = [p for p in lindex[0][1].get(lit.lstrip('/'), ()) if ('/' + p).endswith('/' + tail)]
+        return hits[0] if len(hits) == 1 else None
+    return None
+
+def fmt_of(rel):
+    """The `fmt` of a non-code file: by its basename (NAME_FMT, LICENSE / COPYING with any extension, .xignore, .env.*,
+    Dockerfile.*, requirements*.txt / constraints*.txt), else by its extension (FMT), case-insensitive; else None."""
+    low = rel.rsplit('/', 1)[-1].lower()
+    if low in NAME_FMT:
+        return NAME_FMT[low]
+    if low.split('.', 1)[0] in ('license', 'licence', 'copying'):
+        return 'license'
+    if low.startswith('.') and low.endswith('ignore') and len(low) > 7:
+        return 'ignore'
+    if low.startswith('.env.'):
+        return 'env'
+    if low.startswith('dockerfile.'):
+        return 'docker'
+    if re.fullmatch(r'(?:requirements|constraints)[\w.-]*\.txt', low):
+        return 'pipreq'
+    return FMT.get(low.rsplit('.', 1)[-1]) if '.' in low.strip('.') else None
 
 def _is_binary(rel, text):
     return rel.rsplit('.', 1)[-1].lower() in BINARY_EXT or '\x00' in text
@@ -1368,9 +1552,19 @@ try:
     LANGS.append(lang_go.GoLang(Func))
 except ImportError:      # no tree-sitter-go: .go files and go.mod stay file / text blobs
     pass
+try:
+    import lang_sh
+    LANGS.append(lang_sh.ShLang(Func, lambda rel: lang_for(rel), _path_index, _match_path))
+except ImportError:      # no tree-sitter-bash: shell scripts stay file / text blobs
+    pass
 
-def lang_for(rel):
-    return next((L for L in LANGS if L.handles(rel)), None)
+def lang_for(rel, text=None):
+    """The Lang of a file by its extension; with its text, also one that claims an extensionless file by its
+    content (lang_sh: a sh / bash shebang)."""
+    L = next((L for L in LANGS if L.handles(rel)), None)
+    if L is None and text is not None:
+        L = next((L for L in LANGS if hasattr(L, 'claims') and L.claims(rel, text)), None)
+    return L
 
 if __name__ == '__main__':
     import sys, os, json

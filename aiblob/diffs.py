@@ -4,15 +4,17 @@ The timeline already names every function body by `funcs[].hash` (sha1(body)[:10
 timeline.Analyzer.sink, stores each body (and each file / text blob's text, and each seeded base) the first time a
 step shows it, keyed by the same 10-hex hash (sha1 of the UTF-8 text), and leaves one file line per step:
 
-    {"f": {path: hash | "bin:N" | null}, "seed": {path: hash | "bin:N"}, "sq": {qual: hash}, "sqa": [qual]}
-                                                                                           (keys only when not empty)
+    {"f": {path: hash | "bin:N" | null}, "seed": {path: hash | "bin:N"}, "sq": {qual: hash}, "sqa": [qual],
+     "t": {path: hash | null}}                                                             (keys only when not empty)
 
 `f`: the file / text blobs whose text changed since the previous analysed step (null: gone; "bin:N": a binary file of
 N bytes, no text). `seed`: a seeded step's base (replay.Step.before: the text the edit applied to, from git, an Edit's
 originalFile or a Read). `sq`: the bodies of the seeded file's functions (those it has after the step) in that base,
 by qual, from the analyzer's own parse of the base (analyze.load_module); where that parse fails, sliced by a line
 diff of base and the file after the step to each function's start..end, and those quals listed in `sqa`
-(approximate). Only the seen set stays in memory.
+(approximate). `t`: the image blobs (`fmt` image / svg) whose thumbnail changed since the previous analysed step
+(null: gone, or no thumbnail now); the text stored under the hash is the thumbnail as a `data:` URI (thumbs.py; raster
+images need BodySink.images, a thumbs.GitImages, to find their bytes). Only the seen set stays in memory.
 
 Where the texts go:
 - static, `timeline.py --diffs DIR` (Static): DIR/index.json.gz {"v": 1, "steps": N, "fv": [file line per step],
@@ -29,7 +31,8 @@ a and b)."""
 import glob, gzip, hashlib, json, os, re, threading
 from difflib import SequenceMatcher
 
-from analyze import _is_binary, lang_for, load_module
+import thumbs
+from analyze import _is_binary, fmt_of, lang_for, load_module
 
 HASH = re.compile(r'[0-9a-f]{10}\Z')
 MAX_GET = 256               # hashes per /live/bodies request
@@ -80,7 +83,7 @@ class BodySink:
     every write that names a hash, so a hash a reader sees is always in the pack."""
 
     def __init__(self, pack=None):
-        self.seen, self.new, self.fh = set(), [], None
+        self.seen, self.new, self.fh, self.images = set(), [], None, None
         if pack is not None:
             self.seen = _pack_hashes(pack)
             self.fh = open(pack, 'ab', buffering=0)
@@ -114,11 +117,18 @@ class BodySink:
         line = {}
         if result is not None:
             fmap, old, prev = {}, an.fmap, an.prev_files
+            tmap, told = {}, getattr(an, 'tmap', {})
             for b in result['blobs']:
                 if b['kind'] in ('file', 'text'):
                     p = b['path']
                     text = snap.get(p, '')
                     fmap[p] = old[p] if p in old and prev.get(p) is text else self.text(p, text)
+                    if b.get('fmt') in ('image', 'svg'):
+                        if p in told and prev.get(p) is text:
+                            tmap[p] = told[p]
+                        else:
+                            uri = thumbs.thumb(p, text, self.images)
+                            tmap[p] = self.put(uri) if uri else None
                     continue
                 for f in b['funcs']:
                     if f['hash'] not in self.seen:
@@ -128,6 +138,12 @@ class BodySink:
             an.fmap = fmap
             if f:
                 line['f'] = f
+            tmap = {p: h for p, h in tmap.items() if h}
+            t = {p: h for p, h in tmap.items() if told.get(p) != h}
+            t.update((p, None) for p in told if p not in tmap)
+            an.tmap = tmap
+            if t:
+                line['t'] = t
         seed, sq, approx = {}, {}, []
         for rel, base in (getattr(st, 'before', None) or {}).items():
             seed[rel] = self.text(rel, base)
@@ -147,7 +163,7 @@ class BodySink:
     def _base_bodies(self, rel, base, after, funcs):
         """({qual: hash of its body in base}, [approximate quals]) for the functions (f, body) of rel after the step:
         base parsed as the analyzer parses it, bodies taken by qual (exact); where the parse fails, _sliced()."""
-        L = lang_for(rel)
+        L = lang_for(rel, after if isinstance(after, str) else base)
         if L is not None:
             info = load_module(rel, base, None, L)
             if 'error' not in info:
@@ -224,7 +240,7 @@ def step_hashes(st, fv):
         for f in b.get('funcs', ()):
             if 'hash' in f:
                 yield f['hash']
-    for k in ('f', 'seed', 'sq'):
+    for k in ('f', 'seed', 'sq', 't'):
         for h in (fv.get(k) or {}).values():
             if h and not h.startswith('bin:'):
                 yield h
@@ -366,6 +382,18 @@ class Reader:
                 else:
                     m[p] = h
         return m
+
+    def thumbs(self, i):
+        """{path: data URI} of the image blobs with a thumbnail after step i (file lines' `t`, texts by hash)."""
+        m = {}
+        for fv in self.fvs[:i + 1]:
+            for p, h in (fv.get('t') or {}).items():
+                if h is None:
+                    m.pop(p, None)
+                else:
+                    m[p] = h
+        got = self.get(list(dict.fromkeys(m.values())))
+        return {p: got.get(h) for p, h in m.items()}
 
     def _seed(self, a, b, kind, key, first):
         """The earliest seed of path / qual `key` at steps a..first (first: the step of a..b it first shows at; a seed

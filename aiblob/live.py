@@ -68,11 +68,11 @@ import argparse, collections, copy, functools, gc, glob, hashlib, json, os, pick
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
-import diffs, replay, timeline
+import diffs, replay, thumbs, timeline
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CODE = ('replay.py', 'analyze.py', 'areas.py', 'clusters.py', 'timeline.py', 'live.py', 'lang_c.py', 'lang_go.py',
-        'lang_js.py', 'diffs.py')
+        'lang_js.py', 'lang_sh.py', 'diffs.py', 'thumbs.py')
 VERSION = 2
 
 
@@ -367,6 +367,7 @@ class Writer:
         a = self.args
         listed = replay.transcripts(a['inputs'] if len(a['inputs']) > 1 else a['inputs'][0])
         self.root = os.path.abspath(a['root'] or timeline.session_root(listed[0]) or '.')
+        self.sink.images = thumbs.images_for(self.root)
         self.many = self.tailer.count() > 1 or a['git_reconcile']
         rest = None
         if a['seed_git']:
@@ -559,6 +560,7 @@ class Writer:
         self._loaded = None
         self.tailer, self.engine, self.analyzer, self.compactor = tailer, st['engine'], st['analyzer'], st['compactor']
         self.root, self.many, self.counts, self.rebuilds = st['root'], st['many'], st['counts'], st['rebuilds']
+        self.sink.images = thumbs.images_for(self.root)
         self.n, self.tail, self.prov_lines, self.gen, self.dirty = st['steps'], [], None, 0, False
         self.analyzer.sink, self.tails = self.sink, []
         self.prov_version, self.prov_base = -1, -1

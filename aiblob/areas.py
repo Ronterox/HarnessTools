@@ -28,7 +28,8 @@ with the most call sites between them per line of the smaller first, while the j
 blobs, down to min(CODE_AREAS, ceil(code blobs / AREA_CAP)) areas plus one per further top directory; past
 MAX_AREAS, joins cross top directories, and when the cap blocks every join the cap gives way, so the top view never
 holds more than MAX_AREAS code areas. Tests (tests blobs, modules under a test directory) are area `tests`,
-non-code files `files`. Stability (Zoner): a module keeps its area id from step to step. The grouping is
+non-code files of a data format (`fmt` in analyze.DATA_FMTS: json, csv, toml ...) `data`, markdown and html nothing
+references `docs`, the other non-code files (referenced html: templates) `files`. Stability (Zoner): a module keeps its area id from step to step. The grouping is
 recomputed only when the set of modules or the call sites between them changed, and each fresh group is matched
 to the area it overlaps most (by lines + 1 per module, greedy). New modules move in at once, to their group's
 area (or a new one); existing modules move only when the fresh grouping is adopted wholesale (matched groups
@@ -42,7 +43,7 @@ smallest) instead of opening one, and an assignment still over MAX_AREAS adopts 
 Captions are word frequency over the member blobs' titles (label title, else name; an unlabelled piece is
 skipped), count x sqrt(lines), generic words skipped, a second word when it scores at least half as much;
 faces are the top 3 member emojis by lines. caption_table() recomputes them, e.g. after label.py sets labels.
-Last, a blob still at the cut size gets `clusters`, the call communities of its functions (clusters.py; off with
+Last, a blob of 12+ functions in 3+ call groups gets `clusters`, the call communities of its functions (clusters.py; off with
 Zoner(smart=False), like merges and cuts).
 """
 import heapq
@@ -51,7 +52,7 @@ import re
 from collections import Counter, defaultdict
 
 import clusters
-from analyze import NOT_SHARED
+from analyze import ASSET_FMTS, DATA_FMTS, DOC_FMTS, shared
 
 SPLIT_LINES, SPLIT_FUNCS = 500, 50
 PIECE_SHARE, PIECE_MIN, ROOT_MIN = 0.10, 20, 3
@@ -197,10 +198,8 @@ def data_edges(blobs, only=None):
     index = defaultdict(set)
     for b in blobs:
         for d in b['data']:
-            kind, _, sym = d.partition(':')
-            if kind == 'ctx' and sym.split('.')[0] in NOT_SHARED:
-                continue
-            index[d].add(b['id'])
+            if shared(d):
+                index[d].add(b['id'])
     pairs = defaultdict(set)
 
     def link(xs, ys, via):
@@ -256,6 +255,10 @@ def recount(old_blobs, old_edges, new_blobs):
             a, b = home[e['a']], home[e['b']]
             if rest and a != b:
                 calls[(a, b, e['kind'])] += rest
+        elif e['kind'] == 'ref' and not e['b'].startswith('file:'):     # a page's <script src>: to its module's blob
+            r = refs.setdefault((home.get(e['a'], e['a']), home.get(e['b'], e['b'])), [0, set()])
+            r[0] += e['n']
+            r[1].update(e.get('via', ()))
         elif e['kind'] == 'ref':
             src = by_id.get(e['a'])
             path = e['b'][len('file:'):]
@@ -306,7 +309,40 @@ def caption(members):
     return ' · '.join('UI' if w == 'ui' else w.capitalize() for w in words)
 
 
-FIXED = {'tests': 'Tests', 'files': 'Files'}
+FIXED = {'tests': 'Tests', 'files': 'Files', 'data': 'Data', 'docs': 'Docs', 'assets': 'Assets'}
+
+
+def file_area(b, used_html=frozenset()):
+    """The area of a file / text blob: `data` by a data `fmt`; `assets` for images and fonts; `docs` for markdown, and
+    for html the app does not use (used_html, app_html(): the html code references, a template, and what those pages link in turn,
+    e.g. the base template they extend, are part of the app: `files`); else `files`."""
+    fmt = b.get('fmt')
+    if fmt in DATA_FMTS:
+        return 'data'
+    if fmt in ASSET_FMTS:
+        return 'assets'
+    return 'docs' if fmt in DOC_FMTS and not (fmt == 'html' and b['id'] in used_html) else 'files'
+
+
+def app_html(blobs, edges):
+    """The html file blobs code uses: those a code blob's `ref` edge names, and the html those link, transitively.
+    An html page only other files link (a README's link to a demo page, pages linking each other) is not."""
+    html = {b['id'] for b in blobs if b.get('fmt') == 'html'}
+    links = defaultdict(list)
+    stack = []
+    for e in edges:
+        if e['kind'] == 'ref' and e['b'] in html:
+            if e['a'].startswith('file:'):
+                links[e['a']].append(e['b'])
+            else:
+                stack.append(e['b'])
+    seen = set(stack)
+    while stack:
+        for t in links.get(stack.pop(), ()):
+            if t not in seen:
+                seen.add(t)
+                stack.append(t)
+    return seen
 
 
 def caption_table(blobs, ids=None):
@@ -412,7 +448,7 @@ class Zoner:
         mod_of_file = {v['file']: m for m, v in result.get('modules', {}).items()}
         new = self.reshape(blobs, mod_of_file) if self.smart else blobs
         edges = recount(blobs, result['edges'], new) if new is not blobs else result['edges']
-        new = self.areas(new, mod_of_file)
+        new = self.areas(new, mod_of_file, app_html(new, edges))
         if self.smart:
             new, self.cl_state = clusters.apply(new, self.cl_state)
         return dict(result, blobs=new, edges=edges, areas=caption_table(new))
@@ -478,7 +514,7 @@ class Zoner:
         sym_units = defaultdict(set)
         syms = {}
         for u in code:
-            syms[u['id']] = {d for d in u['data'] if not (d.startswith('ctx:') and d[4:].split('.')[0] in NOT_SHARED)}
+            syms[u['id']] = {d for d in u['data'] if shared(d)}
             for d in syms[u['id']]:
                 sym_units[d].add(u['id'])
         merged = defaultdict(list)
@@ -531,7 +567,7 @@ class Zoner:
         return out
 
     # areas
-    def areas(self, blobs, mod_of_file):
+    def areas(self, blobs, mod_of_file, used_html=frozenset()):
         L, C, mod_of = Counter(), Counter(), {}
         test_area = lambda b: b['kind'] == 'tests' or top_of(stem(b['module'])) in TEST_TOPS
         stems = set()
@@ -566,7 +602,7 @@ class Zoner:
         self.step += 1
         out = []
         for b in blobs:
-            aid = ('files' if not b['funcs'] else 'tests' if test_area(b) else self.assign[stem(b['module'])])
+            aid = (file_area(b, used_html) if not b['funcs'] else 'tests' if test_area(b) else self.assign[stem(b['module'])])
             out.append(dict(b, area=aid))
         return out
 
