@@ -1,0 +1,18 @@
+[
+ {
+  "id": "08475e23",
+  "uuid": "08475e23-bc41-4d3f-9b14-2f3303dd7556",
+  "start": "2026-11-04T18:50:05.864Z",
+  "end": "2026-11-06T04:02:02.446Z",
+  "steps": 315,
+  "prompt": "I'd like to sandbox a new idea, grill me with questions to build a plan. Understand that our aigource harness is pretty "
+ },
+ {
+  "id": "119e9803",
+  "uuid": "119e9803-e822-4427-8d13-f3769f4ee61d",
+  "start": "2026-11-07T16:04:20.879Z",
+  "end": "2026-11-09T22:46:11.796Z",
+  "steps": 659,
+  "prompt": "Handoff continuation, you can do this"
+ }
+]
