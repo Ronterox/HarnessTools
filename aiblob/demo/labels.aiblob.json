@@ -5684,5 +5684,29 @@
   "summary": "Runs Flask tests and compares output to golden files.",
   "risk": "low: test data only",
   "reused_from": "0f4387c095,2cf5f1a1c2,33aec1339b,50e373a2ca,59d3a776f6,63e256271d,a95e39e750,c765ef805a,ccd6d9e413"
+ },
+ "64576681dd": {
+  "emoji": "📝",
+  "title": "Demo execution script",
+  "summary": "Runs demo app and captures performance data.",
+  "risk": "low: Only reads files and logs output."
+ },
+ "db196d7311": {
+  "emoji": "🤖",
+  "title": "AI server launcher",
+  "summary": "Starts the local AI model server",
+  "risk": "low: only starts a local server"
+ },
+ "9700f52fec": {
+  "emoji": "🤖",
+  "title": "AI model server",
+  "summary": "Starts the local AI model for editing.",
+  "risk": "high: Model availability breaks AI features"
+ },
+ "1e6b6e4f4c": {
+  "emoji": "🤖",
+  "title": "AI model server",
+  "summary": "Starts the local AI model for editing.",
+  "risk": "high: Model availability breaks AI features"
  }
 }

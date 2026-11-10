@@ -8604,5 +8604,603 @@
   "summary": "Handles incoming client sockets and data streams.",
   "risk": "high: data loss or connection failure",
   "reused_from": "0044c76530,0d6272ccc1,1f3ab0479a,446b636cfc,4b29b84d54,4e32c28b86,5a69f665db,60eb17f780,6d740a832e,9607f9dc7a,e0832d9316,ef82267a8a,f93a8b143a,f9c9aa01fd"
+ },
+ "5b4d2cba41,f5e1aee8dc": {
+  "emoji": "📥",
+  "title": "Dependency fetcher",
+  "summary": "Downloads and verifies vendor packages",
+  "risk": "high: checksum mismatch breaks build"
+ },
+ "83eb9ca008,f5e1aee8dc": {
+  "emoji": "📦",
+  "title": "Dependency fetcher",
+  "summary": "Downloads and verifies vendor packages",
+  "risk": "high: checksum mismatch breaks build"
+ },
+ "94d0163cd1,a0e851973c": {
+  "emoji": "🧪",
+  "title": "Shell script runner",
+  "summary": "Executes shell scripts and saves output",
+  "risk": "low: output redirection only"
+ },
+ "0ccfb5f430,377bcb9d98": {
+  "emoji": "📦",
+  "title": "Dependency fetcher",
+  "summary": "Downloads and installs required libraries",
+  "risk": "low: only affects local files"
+ },
+ "74174d246b,bb32af67c7": {
+  "emoji": "🧪",
+  "title": "Script execution test",
+  "summary": "Runs shell scripts and checks output files.",
+  "risk": "low: test failure only"
+ },
+ "0483259e98,bb32af67c7": {
+  "emoji": "🧪",
+  "title": "Script execution test",
+  "summary": "Runs shell scripts and checks output files.",
+  "risk": "low: test failure only",
+  "reused_from": "74174d246b,bb32af67c7"
+ },
+ "0aa09de9b8,8b18d71da6,a1463e88d9": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Executes test scripts and logs results.",
+  "risk": "low: Only tests local scripts"
+ },
+ "0aa09de9b8,2cf881fc6d,8b18d71da6": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Executes test scripts and logs results.",
+  "risk": "low: Only tests local scripts",
+  "reused_from": "0aa09de9b8,8b18d71da6,a1463e88d9"
+ },
+ "120e2c14d2,8b18d71da6,da4eadd398": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Executes test scripts and checks results.",
+  "risk": "low: Only tests local scripts"
+ },
+ "2b537dc5bc,8b18d71da6,da4eadd398": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Executes test scripts and checks results.",
+  "risk": "low: Only tests local scripts",
+  "reused_from": "120e2c14d2,8b18d71da6,da4eadd398"
+ },
+ "27442e0d76,8b18d71da6,da4eadd398": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Executes test scripts and checks results.",
+  "risk": "low: Only affects test data files"
+ },
+ "a8efa1f0d6,bb32af67c7": {
+  "emoji": "🧪",
+  "title": "Script execution test",
+  "summary": "Runs shell scripts and checks output files.",
+  "risk": "low: test failure only",
+  "reused_from": "74174d246b,bb32af67c7"
+ },
+ "95ffb432e6,bb32af67c7": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures their output.",
+  "risk": "low: Only runs tests, no user data"
+ },
+ "8b18d71da6,d87c97f7d2,da4eadd398": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Runs test scripts and logs output",
+  "risk": "low: test data only"
+ },
+ "0ccfb5f430,df164a5ad0": {
+  "emoji": "📦",
+  "title": "Dependency fetcher",
+  "summary": "Downloads and installs required libraries",
+  "risk": "low: only affects local files"
+ },
+ "3cf1ae1b38,bb32af67c7": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures their output.",
+  "risk": "low: Only runs tests, no user data",
+  "reused_from": "95ffb432e6,bb32af67c7"
+ },
+ "bb32af67c7,f00031acbf": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and reports failures.",
+  "risk": "low: Only runs tests, no user data"
+ },
+ "0e5b282df4,bb32af67c7": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and reports failures.",
+  "risk": "low: Only runs tests, no user data",
+  "reused_from": "bb32af67c7,f00031acbf"
+ },
+ "bb32af67c7,c81eb43ea7": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and reports failures.",
+  "risk": "low: Only runs tests, no user data",
+  "reused_from": "bb32af67c7,f00031acbf"
+ },
+ "bb32af67c7,d682d94d0f,e435e9cae3": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures output logs",
+  "risk": "low: test output only"
+ },
+ "4924a5c991": {
+  "emoji": "🔨",
+  "title": "Build script runner",
+  "summary": "Generates structure HTML from data files.",
+  "risk": "low: only file output"
+ },
+ "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data"
+ },
+ "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9a96deef6a,9f86011240,a455948949,a7bbd228c2,b0083da627,c0e928b881,cf0df0c8d1,dd17a7377f": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,1d46b60905,200ca94978,20571e4ad9,2699fffeb8,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a7bbd228c2,b0083da627,b58d947d5a,cf0df0c8d1,dd17a7377f,e99977d1a5": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,2714b001cd,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a7bbd228c2,b0083da627,b58d947d5a,cf0df0c8d1,dd17a7377f,e99977d1a5": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a7bbd228c2,ab9de0ea1e,b0083da627,b58d947d5a,cf0df0c8d1,dd17a7377f,e99977d1a5": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "bb32af67c7,e0f0311aae,e435e9cae3": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures output logs",
+  "risk": "low: test output only",
+  "reused_from": "bb32af67c7,d682d94d0f,e435e9cae3"
+ },
+ "29f0243163,bb32af67c7,e435e9cae3": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures output logs",
+  "risk": "low: test output only",
+  "reused_from": "bb32af67c7,d682d94d0f,e435e9cae3"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,8e8b8688df,97972457c4,9f86011240,a7bbd228c2,b0083da627,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e99977d1a5": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "57a6a86563,bb32af67c7,d9fb130941,e435e9cae3": {
+  "emoji": "🏃",
+  "title": "Test execution engine",
+  "summary": "Runs tests and reports pass or fail status.",
+  "risk": "low: Only runs tests, no data loss"
+ },
+ "0c49de4bdd,57a6a86563,bb32af67c7,e435e9cae3": {
+  "emoji": "🏃",
+  "title": "Test execution engine",
+  "summary": "Runs tests and reports pass or fail status.",
+  "risk": "low: Only runs tests, no data loss",
+  "reused_from": "57a6a86563,bb32af67c7,d9fb130941,e435e9cae3"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,20571e4ad9,2699fffeb8,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,8e8b8688df,97972457c4,9f86011240,a7bbd228c2,b0083da627,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates build artifacts from source files.",
+  "risk": "low: Only generates local build data",
+  "reused_from": "0663f33e1f,0b21cdb382,1d46b60905,20571e4ad9,2699fffeb8,36f9b942d2,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,97972457c4,9f86011240,a455948949,a7bbd228c2,b0083da627,cdf9504ab3,cf0df0c8d1,dd17a7377f"
+ },
+ "0c49de4bdd,b4c24bd686,bb32af67c7,c167e774b0,e435e9cae3": {
+  "emoji": "🏃",
+  "title": "Test execution engine",
+  "summary": "Runs tests and reports pass or fail status.",
+  "risk": "low: Only runs tests, no data loss"
+ },
+ "0c49de4bdd,0ce1bdad4c,a5dae64fca,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🏃",
+  "title": "Test execution engine",
+  "summary": "Runs tests and captures output logs.",
+  "risk": "low: test execution only"
+ },
+ "34f39fc78b,7887ec002d,7962c71f57,dd3e79380b": {
+  "emoji": "📊",
+  "title": "Metric comparison checker",
+  "summary": "Verifies test data matches expected values",
+  "risk": "low: Only affects test results"
+ },
+ "1e37fa5ae2,8b18d71da6,da4eadd398": {
+  "emoji": "🧪",
+  "title": "Test script runner",
+  "summary": "Runs test scripts and logs output",
+  "risk": "low: test data only",
+  "reused_from": "8b18d71da6,d87c97f7d2,da4eadd398"
+ },
+ "0c49de4bdd,0ce1bdad4c,29ed8ef8a9,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and logs results to JSON.",
+  "risk": "low: test output formatting"
+ },
+ "0c49de4bdd,0ce1bdad4c,9c4baa0940,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🏁",
+  "title": "Test execution engine",
+  "summary": "Runs tests and logs results to JSON.",
+  "risk": "low: test output formatting",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,29ed8ef8a9,b4c24bd686,bb32af67c7,e435e9cae3"
+ },
+ "34f39fc78b,7887ec002d,7962c71f57,d4525fc906": {
+  "emoji": "📊",
+  "title": "Metric comparison checker",
+  "summary": "Verifies test data matches expected values",
+  "risk": "low: Only affects test results",
+  "reused_from": "34f39fc78b,7887ec002d,7962c71f57,dd3e79380b"
+ },
+ "34f39fc78b,49177b6b9a,7887ec002d,7962c71f57": {
+  "emoji": "📊",
+  "title": "Metric comparison test",
+  "summary": "Checks if two metrics match within tolerance",
+  "risk": "low: only compares test data"
+ },
+ "0ccfb5f430,905bf65ddf": {
+  "emoji": "📦",
+  "title": "Dependency fetcher",
+  "summary": "Downloads and installs required libraries",
+  "risk": "low: only affects local files",
+  "reused_from": "0ccfb5f430,df164a5ad0"
+ },
+ "0c49de4bdd,0ce1bdad4c,2bf13ebfe0,5a85c13a34,96b5f04a6c,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test failures only"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,acb41d3f5c,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test failures only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,2bf13ebfe0,5a85c13a34,96b5f04a6c,b4c24bd686,bb32af67c7,e435e9cae3"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,6eb84f7953,96b5f04a6c,b4c24bd686,bb32af67c7,e435e9cae3": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test failures only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,2bf13ebfe0,5a85c13a34,96b5f04a6c,b4c24bd686,bb32af67c7,e435e9cae3"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a083421571,b4c24bd686,bb32af67c7,e435e9cae3,fb21e5be69": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test failures only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,2bf13ebfe0,5a85c13a34,96b5f04a6c,b4c24bd686,bb32af67c7,e435e9cae3"
+ },
+ "047aa48b70,0663f33e1f,0b21cdb382,20571e4ad9,20b6980440,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b073034b5d,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures"
+ },
+ "0663f33e1f,0b21cdb382,0f9bf11bb5,20571e4ad9,20b6980440,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,631db15af2,73bb95bd05,78b1b5d1dd,879e95dbd0,8a24ada413,8d04c88941,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c190112f93,c53190fdf4,cf0df0c8d1,dd17a7377f,e61efce660,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures",
+  "reused_from": "047aa48b70,0663f33e1f,0b21cdb382,20571e4ad9,20b6980440,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,541be83ee0,543a82b7d0,5e70f43d7d,5f47e32e99,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b073034b5d,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e99977d1a5,ed34d65608"
+ },
+ "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a79481fcbc,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures"
+ },
+ "058b877180,12f5748c46,244d6fcf7e,523d070059,6aa2802bec,738f42df26,98eb137a27": {
+  "emoji": "📝",
+  "title": "Command script runner",
+  "summary": "Executes commands from build data files",
+  "risk": "low: Only runs test scripts"
+ },
+ "20b6980440,2d73437e49,a74584ae54,b2701db762": {
+  "emoji": "📜",
+  "title": "Command line parser",
+  "summary": "Splits and processes command scripts into lines.",
+  "risk": "low: Only parses text structure"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e441823486": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,3f9f98ebe0,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e5cf61323f,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures",
+  "reused_from": "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a79481fcbc,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,848565d3d2,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,3f9f98ebe0,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9ef4f53a59,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures",
+  "reused_from": "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a79481fcbc,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,da3695b0d4": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,5c092d22ce,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,f0d0714d76": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "0c49de4bdd,0ce1bdad4c,10bdd2a6a7,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,cd7a1e3562": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,f5a035fad9": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "4ec248ae3f": {
+  "emoji": "🏗️",
+  "title": "Draft context generator",
+  "summary": "Creates context files for the draft build.",
+  "risk": "low: Only generates static context files."
+ },
+ "0c49de4bdd,0ce1bdad4c,4c71bf18b3,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs tests and validates output files.",
+  "risk": "low: test output only",
+  "reused_from": "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,e27598b5df"
+ },
+ "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts"
+ },
+ "b74958b01f,cd1a567b7d,cf862c1d57,f87c774883": {
+  "emoji": "🧪",
+  "title": "Context consistency checker",
+  "summary": "Verifies context data matches expected values",
+  "risk": "low: Only compares test data"
+ },
+ "0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b,e0c5c8cf77": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,c8e3d88a72,cd148cf7f7,d19965c67b,e0c5c8cf77": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,8475537367,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,c8e3d88a72,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,7c6675cddb,8475537367,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0c49de4bdd,0ce1bdad4c,4fcd64c337,5a85c13a34,7c6675cddb,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,7c6675cddb,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,bfa31c5049,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "14e3eac71f,69ce938ce6,ac77771453": {
+  "emoji": "🔄",
+  "title": "Context reload test runner",
+  "summary": "Runs context reload and checks for errors.",
+  "risk": "low: Only tests display output"
+ },
+ "5b531bd26e,69ce938ce6,ac77771453": {
+  "emoji": "🔄",
+  "title": "Context reload verification",
+  "summary": "Validates context reload subprocess output",
+  "risk": "low: display only"
+ },
+ "01bfd6b4bc,043ab1be6c,113d648fa1,14d36ca2b5,19c82341b9,1b662264a3,374660f1f7,69ce938ce6,714c30367e,770c3d9a86,77aacf9edb,78f13fd571,7f26e306ad,874f74345b,8a326f47ce,9c44c26f95,ac77771453,c0f94f8346,cfbd46870d,d22e5aeb48,e12776d2d3,e436224889,e79202c0d9,f1ef285937,fa36696607,fbcf2a1912": {
+  "emoji": "🔄",
+  "title": "Context reload validation",
+  "summary": "Validates context state restoration logic",
+  "risk": "low: UI display only"
+ },
+ "69ce938ce6,ac77771453,e73c7b3b7d": {
+  "emoji": "🔄",
+  "title": "Context reload verification",
+  "summary": "Checks context reloading behavior",
+  "risk": "low: Display only"
+ },
+ "435e269f61,69ce938ce6,ac77771453": {
+  "emoji": "🔄",
+  "title": "Context reload verification",
+  "summary": "Checks context reloading behavior",
+  "risk": "low: Display only",
+  "reused_from": "69ce938ce6,ac77771453,e73c7b3b7d"
+ },
+ "01bfd6b4bc,043ab1be6c,0edac103bc,113d648fa1,14d36ca2b5,16a8b54009,19c82341b9,1b662264a3,279d540208,371be809a1,374660f1f7,4998cb8b57,502f718fdc,52dde735de,5490f0a9fa,69ce938ce6,714c30367e,72ed9d024d,770c3d9a86,78f13fd571,79ae1fdc96,7f26e306ad,8160aabf3e,85a91c2464,874f74345b,8a326f47ce,8ce3bcafe7,8eb9748211,9c44c26f95,9f496deb64,a3cb3d1976,a4c5946e90,ac77771453,ac8980b30b,ba2b287e3f,c0f94f8346,c52ff5361a,cd22697867,cfbd46870d,d0172080b4,d22e5aeb48,e12776d2d3,e436224889,e610b6743b,e79202c0d9,f1ef285937,fbcf2a1912": {
+  "emoji": "🔄",
+  "title": "Context reload test suite",
+  "summary": "Validates context reloading and state restoration.",
+  "risk": "low: UI display only"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,5af82921ba,7c6675cddb,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0548bd850d,1d23017bd3,38e2bb20eb,4fd1911b22,7ccbc692be,96b34e7895,b1547707cc,b3f4123259,e313978702,ec1e26722f,ec66b161c6,ecb34e17fc,ed4b4991b2,fada58a47c,feb4b83e66": {
+  "emoji": "🧪",
+  "title": "Test server runner",
+  "summary": "Spawns and manages test server processes.",
+  "risk": "low: display only"
+ },
+ "058b877180,0663f33e1f,0b21cdb382,12f5748c46,132108ce25,1cf06a90a0,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,3f9f98ebe0,403b387752,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,cf0df0c8d1,dd17a7377f,de15d8ccb1,e1b9d274b1,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures",
+  "reused_from": "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a79481fcbc,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608"
+ },
+ "0c49de4bdd,0ce1bdad4c,2ab7b0e7e0,5a85c13a34,7c6675cddb,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "277b7d8099,34f39fc78b,7887ec002d,7962c71f57": {
+  "emoji": "📊",
+  "title": "Metric comparison test",
+  "summary": "Checks if two metrics match within tolerance",
+  "risk": "low: only compares test data",
+  "reused_from": "34f39fc78b,49177b6b9a,7887ec002d,7962c71f57"
+ },
+ "0548bd850d,0ccb13c6b0,1d23017bd3,38e2bb20eb,4fd1911b22,7ccbc692be,96b34e7895,b1440b4126,b1547707cc,b3f4123259,e313978702,ec1e26722f,ec66b161c6,ed4b4991b2,fada58a47c,feb4b83e66": {
+  "emoji": "🧪",
+  "title": "Test server runner",
+  "summary": "Spawns and manages test server processes.",
+  "risk": "low: display only",
+  "reused_from": "0548bd850d,1d23017bd3,38e2bb20eb,4fd1911b22,7ccbc692be,96b34e7895,b1547707cc,b3f4123259,e313978702,ec1e26722f,ec66b161c6,ecb34e17fc,ed4b4991b2,fada58a47c,feb4b83e66"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,637a3756d0,7c6675cddb,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "0dd462e2f6,3492b8d89d,3cfced9926,3ee01e3649,5f4f2d775c,6352149507,adefdaa61b,b49e5be58b": {
+  "emoji": "🖥️",
+  "title": "Host environment test",
+  "summary": "Tests display and window management for the host.",
+  "risk": "low: Only affects test display settings.",
+  "reused_from": "0dd462e2f6,3492b8d89d,3cfced9926,3ee01e3649,5f4f2d775c,6352149507,adefdaa61b"
+ },
+ "0548bd850d,0ccb13c6b0,1d23017bd3,38e2bb20eb,3e5955997a,4fd1911b22,697d5860a5,7ccbc692be,96b34e7895,a92ae8ba43,b1547707cc,b3f4123259,c200712356,ccd3054e5c,ec1e26722f,ec66b161c6,fada58a47c": {
+  "emoji": "🧪",
+  "title": "Server test runner",
+  "summary": "Runs server tests with isolated git repos",
+  "risk": "low: display only"
+ },
+ "0548bd850d,0ccb13c6b0,1d23017bd3,38e2bb20eb,3e5955997a,4fd1911b22,697d5860a5,7ccbc692be,96b34e7895,a92ae8ba43,aca8af2cc8,b1547707cc,b3f4123259,ccd3054e5c,ec1e26722f,ec66b161c6,fada58a47c": {
+  "emoji": "🧪",
+  "title": "Server test runner",
+  "summary": "Runs server tests with isolated git repos",
+  "risk": "low: display only"
+ },
+ "058b877180,0663f33e1f,0b21cdb382,12f5748c46,1cf06a90a0,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,3f9f98ebe0,403b387752,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,bae4524335,cf0df0c8d1,dd17a7377f,de15d8ccb1,e1b9d274b1,e99977d1a5,ed34d65608": {
+  "emoji": "🏗️",
+  "title": "Build data generator",
+  "summary": "Generates test data for project structure",
+  "risk": "low: only affects test fixtures",
+  "reused_from": "058b877180,0663f33e1f,0b21cdb382,12f5748c46,20571e4ad9,20b6980440,244d6fcf7e,2699fffeb8,2d73437e49,33d2d4be3c,3cd8d7bd0a,4ee21d4751,4f4b3cd231,523d070059,541be83ee0,543a82b7d0,5f47e32e99,6aa2802bec,738f42df26,73bb95bd05,78b1b5d1dd,879e95dbd0,8d04c88941,98eb137a27,9f86011240,a74584ae54,a79481fcbc,a7bbd228c2,b0083da627,b2701db762,b58d947d5a,c53190fdf4,cf0df0c8d1,dd17a7377f,e1b9d274b1,e99977d1a5,ed34d65608"
+ },
+ "0c49de4bdd,0ce1bdad4c,5a85c13a34,7c6675cddb,96b5f04a6c,9d5fc507bb,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b": {
+  "emoji": "🧪",
+  "title": "Test execution engine",
+  "summary": "Runs test scripts and validates their output.",
+  "risk": "low: Only runs test scripts",
+  "reused_from": "05cb36211a,0c49de4bdd,0ce1bdad4c,141b6a4a07,5a85c13a34,96b5f04a6c,a1a24da038,b4c24bd686,bb32af67c7,cd148cf7f7,d19965c67b"
+ },
+ "03695e9b1a,0548bd850d,0ccb13c6b0,1d23017bd3,38e2bb20eb,3e5955997a,4fd1911b22,697d5860a5,7ccbc692be,96b34e7895,a92ae8ba43,b1547707cc,b3f4123259,ccd3054e5c,ec1e26722f,ec66b161c6,fada58a47c": {
+  "emoji": "🧪",
+  "title": "Server test runner",
+  "summary": "Runs server tests with isolated git repos",
+  "risk": "low: display only",
+  "reused_from": "0548bd850d,0ccb13c6b0,1d23017bd3,38e2bb20eb,3e5955997a,4fd1911b22,697d5860a5,7ccbc692be,96b34e7895,a92ae8ba43,aca8af2cc8,b1547707cc,b3f4123259,ccd3054e5c,ec1e26722f,ec66b161c6,fada58a47c"
+ },
+ "020841c923,3ab8df90a1,47daf7744f,67a0bb0280,c59a8afe7a": {
+  "emoji": "🧪",
+  "title": "Comment parity test",
+  "summary": "Verifies comment consistency in code.",
+  "risk": "low: Only checks display text",
+  "reused_from": "020841c923,3ab8df90a1,47daf7744f,67a0bb0280"
  }
 }
