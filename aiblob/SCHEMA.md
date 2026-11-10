@@ -371,7 +371,10 @@ Still `"schema": 6`: nothing about the encoding changed, and a v6 reader reads t
   sidecar already has every piece they need: hashed texts written once, a per-step line, the static layout, the live
   store and its `/live/bodies` endpoint, live == batch. timeline.json is byte-identical with or without it. Known
   limits: replay's 'replace' decoding maps every invalid byte to U+FFFD, so two different committed images can decode
-  to the same text (differing only where the bytes are invalid UTF-8); such an image gets no thumbnail. In live mode a
+  to the same text (differing only where the bytes are invalid UTF-8); such an image gets no thumbnail. A repository
+  whose `.gitattributes` normalises line endings for binaries (`* text`, `*.png text`) holds its images with CRLFs
+  turned to LFs, i.e. corrupt: Pillow rejects them, so they get no thumbnail (the badge only); `*.png binary` or
+  `* text=auto` (git's own binary detection) keeps them whole. In live mode a
   thumbnail is found from the commits that exist when its step is analysed; replay puts an image in a snapshot only
   from git, so that commit exists then (a later commit whose image decodes to the very same text could make batch and
   live disagree on that ambiguity).

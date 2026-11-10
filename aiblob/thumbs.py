@@ -13,6 +13,9 @@ thumb(rel, text, images) -> a `data:` URI (str) or None, for a file whose `fmt` 
   decompression bomb (a few KB of PNG for 9000 x 9000 pixels) costs nothing.
   Known limit: replay's 'replace' decoding maps every invalid byte to U+FFFD, so two different committed images can
   decode to the same text (e.g. differing only in one invalid byte); such an image gets no thumbnail.
+  Known limit: a repository whose .gitattributes normalises line endings for binaries (`* text`, or `*.png text`)
+  stores images with their CRLFs turned to LFs, i.e. corrupt: Pillow rejects them and they get no thumbnail (the badge
+  only). Mark images binary (`*.png binary`, or git's own detection with `* text=auto`) for thumbnails.
 A thumbnail is made once per image content (memoised by the bytes' sha1).
 """
 import base64, hashlib, io, os, subprocess, threading

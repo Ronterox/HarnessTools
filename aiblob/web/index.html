@@ -420,7 +420,7 @@ function normalizeStep(st, i) {
    it) x sqrt(their lines), generic words skipped; the 3 faces with most lines, ties by code point as Python sorts */
 const GENERIC = new Set(`engine manager handler data function functions utility helper new code system controller
 startup cleanup creation test tests runner renderer the and for of to with from into hub orphan module main post
-get put patch int str`.split(/\s+/)), FIXED_CAP = { tests: 'Tests', files: 'Files', data: 'Data', docs: 'Docs' };
+get put patch int str`.split(/\s+/)), FIXED_CAP = { tests: 'Tests', files: 'Files', data: 'Data', docs: 'Docs', assets: 'Assets' };
 function cmpCP(p, q) {
   const a = [...p], b = [...q];
   for (let k = 0; k < Math.min(a.length, b.length); k++) { const d = a[k].codePointAt(0) - b[k].codePointAt(0); if (d) return d; }
@@ -555,6 +555,9 @@ function stainTip(m, where) {
 let U = new Map(), K = 6, MODS = [];
 const REGION_GAP = 84;      // world px between blobs of different regions: room for both regions' labels and tint
 const radius = size => Math.max(19, K * Math.sqrt(size));
+/* an image / svg page is drawn as if it had IMG_SIZE lines at least (a mid-sized blob), so its thumbnail is legible:
+   a binary file has size 0, an svg's lines say nothing about how it looks */
+const IMG_SIZE = 80, sizeOf = b => b.fmt === 'image' || b.fmt === 'svg' ? Math.max(b.size, IMG_SIZE) : b.size;
 /* the region a blob lives in: a route's handler module (from its id), not the majority module of its funcs */
 function regionOf(b) {
   if (b.cut) return regionOf({ ...b, id: b.cut, cut: null });     // a cut piece lives with the blob it was cut from
@@ -617,14 +620,14 @@ function layout() {
     for (const b of st.blobs) {
       let u = U.get(b.id);
       if (!u) { u = { id: b.id, max: 1, first: i }; U.set(b.id, u); }
-      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, b.size);    // last step wins: a text file that code
+      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, sizeOf(b)); u.raw = Math.max(u.raw || 1, b.size);    // last step wins: a text file that code
       u.stem = (b.module || '').replace(/_h$/, ''); if (b.area) u.area = b.area;   // later references lives with the files
     }
     for (const e of st.edges) if (e.kind !== 'data') { const k = [e.a, e.b].sort().join('\n'); links.set(k, Math.max(links.get(k) || 0, e.n || 1)); }
   });
   for (const st of STEPS) for (const b of st.blobs) b.region = U.get(b.id).module;
   const us = [...U.values()].sort((a, b) => a.first - b.first || (a.id < b.id ? -1 : 1));
-  const total = us.reduce((s, u) => s + u.max, 0), big = Math.max(1, ...us.map(u => u.max));
+  const total = us.reduce((s, u) => s + u.raw, 0), big = Math.max(1, ...us.map(u => u.raw));   // (raw: not IMG_SIZE)
   K = Math.min(Math.sqrt(0.2 * 1000 * 620 / (Math.PI * Math.max(1, total))), 108 / Math.sqrt(big));
   for (const u of us) u.R = radius(u.max);
   const L = [...links].map(([k, n]) => { const [a, b] = k.split('\n'); return { a: U.get(a), b: U.get(b), n }; });
@@ -691,7 +694,7 @@ function layoutAdd(from) {
       let u = U.get(b.id);
       if (!u) { u = { id: b.id, max: 1, first: i }; U.set(b.id, u); fresh.push(u); }
       else if (u.module !== b.region) regionMoved.add(b.id);
-      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, b.size);
+      u.module = b.region; u.kind = b.kind; u.max = Math.max(u.max, sizeOf(b)); u.raw = Math.max(u.raw || 1, b.size);
       u.stem = (b.module || '').replace(/_h$/, ''); if (b.area) u.area = b.area;
       u.R = radius(u.max);
     }
@@ -760,7 +763,7 @@ function layoutAreas() {
     }
   });
   const list = [...AU.values()].sort((p, q) => p.first - q.first || cmpStr(p.id, q.id));
-  list.forEach((a, k) => { a.hue = a.id === 'tests' ? 80 : a.id === 'files' ? 210 : AHUES[k % AHUES.length]; });
+  list.forEach((a, k) => { a.hue = FIXED_HUE[a.id] ?? AHUES[k % AHUES.length]; });
   // 1. members inside each area, clustered by module (a header with its .c), pulled together by their calls
   for (const a of list) areaLocal(a);
   // 2. areas on the app canvas, pulled together by the calls between their blobs
@@ -813,7 +816,7 @@ function areasAdd(from) {
   for (let i = from; i < STEPS.length; i++) for (const b of STEPS[i].blobs) {
     if (!b.area) continue;
     let a = AU.get(b.area);
-    if (!a) { AU.set(b.area, a = { id: b.area, first: i, ids: new Set(), local: new Map() }); born.push(a); a.hue = a.id === 'tests' ? 80 : a.id === 'files' ? 210 : AHUES[(AU.size - 1) % AHUES.length]; }
+    if (!a) { AU.set(b.area, a = { id: b.area, first: i, ids: new Set(), local: new Map() }); born.push(a); a.hue = FIXED_HUE[a.id] ?? AHUES[(AU.size - 1) % AHUES.length]; }
     if (a.ids.has(b.id)) continue;
     a.ids.add(b.id);
     if (!born.includes(a)) { if (!grown.has(a)) grown.set(a, []); grown.get(a).push(b.id); }
@@ -849,7 +852,7 @@ function faceR(aid, i = cur) {
     m = new Map();
     for (const b of STEPS[i].blobs) {
       const a = AU.get(b.area), l = a?.local.get(b.id); if (!l) continue;
-      m.set(b.area, Math.max(m.get(b.area) || 48, Math.hypot(l.x, l.y) + radius(b.size) + 20 + (b.merged ? 12 : 0)));
+      m.set(b.area, Math.max(m.get(b.area) || 48, Math.hypot(l.x, l.y) + radius(sizeOf(b)) + 20 + (b.merged ? 12 : 0)));
     }
     FACE_R.set(i, m);
   }
@@ -931,7 +934,7 @@ function drawAreaLayer(now, t, show, labels) {
         if (b.area !== id) continue;
         const ms = marks.get(b.id); if (!ms) continue;
         const l = a.local.get(b.id); if (!l) continue;
-        const bx = x + l.x * VIEW.s, by = y + l.y * VIEW.s, br = radius(b.size) * VIEW.s;
+        const bx = x + l.x * VIEW.s, by = y + l.y * VIEW.s, br = radius(sizeOf(b)) * VIEW.s;
         for (const m of ms) { const p = stainSpot(b.id, m, br, m.size); drawStain(ctx, bx + p.dx, by + p.dy, p.r, m, p.seed, now); }
       }
       ctx.restore();
@@ -1078,7 +1081,7 @@ function fit() { if (!U.size) return; VIEW0 = frameOf([...U.values()], 2.2); VIE
 /* without areas the camera fits the blobs present at this step; with Follow on it frames the blob the step edits */
 function camTarget() {
   const f = FOLLOW && followTo && IDX[cur]?.blobs.get(followTo);
-  if (f) { const u = U.get(followTo); return frameOf([{ x: u.x, y: u.y, R: Math.max(radius(f.size) * 3, 150) }], Math.max(1.2, VIEW0.s * 3)); }
+  if (f) { const u = U.get(followTo); return frameOf([{ x: u.x, y: u.y, R: Math.max(radius(sizeOf(f)) * 3, 150) }], Math.max(1.2, VIEW0.s * 3)); }
   const here = [...U.values()].filter(u => IDX[cur]?.blobs.has(u.id));
   return here.length ? frameOf(here, Math.max(VIEW0.s, Math.min(2.2, VIEW0.s * 1.6))) : VIEW0;
 }
@@ -1115,10 +1118,21 @@ function pagePath(c, x, y, R) {
 }
 const shapePath = (c, kind, x, y, R, seed, t, wob) => PAGE(kind) ? pagePath(c, x, y, R) : blobPath(c, x, y, R, seed, t, wob);
 /* the folded corner and a few ruled lines, drawn over a filled page */
-function pageDetail(c, x, y, R, col) {
+function pageDetail(c, x, y, R, col, b) {
   const w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42;
   c.save(); c.fillStyle = col.fold; c.strokeStyle = col.stroke; c.lineWidth = 1; c.lineJoin = 'round';
   c.beginPath(); c.moveTo(x + w - f, y - h); c.lineTo(x + w - f, y - h + f); c.lineTo(x + w, y - h + f); c.closePath(); c.fill(); c.stroke();
+  if (b?.fmt && FMT_BADGE[b.fmt]) {         // a known format: its badge (an image: its thumbnail, the badge small on top)
+    c.restore();
+    const im = thumbFor(b);
+    if (im) { drawPageThumb(c, im, x, y, R); drawFmtBadge(c, b.fmt, x + w * 0.42, y + h * 0.66, R * 0.62); }
+    else drawFmtBadge(c, b.fmt, x, y + h * 0.12, R * 1.05);
+    const emo = b.label?.emoji, es = clamp(R * 0.42, 10, 20);
+    if (emo && R >= 16) { const ex = x - w + es * 0.15, ey = y - h + es * 0.15;
+      c.save(); c.beginPath(); c.arc(ex, ey, es * 0.62, 0, TAU); c.fillStyle = T.bg; c.fill(); c.strokeStyle = col.stroke; c.lineWidth = 1; c.stroke();
+      c.font = `${es * 0.82}px ${EMOJI_FONT}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(emo, ex, ey + es * 0.05); c.restore(); }
+    return;
+  }
   if (R > 13) {
     c.strokeStyle = col.rule; c.lineWidth = Math.max(1, R * 0.05); c.lineCap = 'round';
     const n = clamp(Math.floor(h * 1.6 / Math.max(5, R * 0.24)), 2, 6), gap = (h * 2 - f - R * 0.3) / n;
@@ -1127,6 +1141,149 @@ function pageDetail(c, x, y, R, col) {
   }
   c.restore();
 }
+/* <fmtbadge> a non-code file of a known format (`fmt`, SCHEMA.md "v6 additions") wears its format's badge on the page
+   body instead of the ruled lines; an image / svg with a thumbnail (diffs sidecar `t`) shows it inside the page, the
+   badge small on top. The label emoji stays the blob's own: a small sticker in the page's top-left corner */
+const FMT_BADGE = {   // fill (light, dark), the glyph drawn on it (vector shapes or a mono glyph)
+  json:  { l: '#B7791F', d: '#D69E2E', g: 'text', t: '{}' },
+  jsonl: { l: '#C05621', d: '#DD6B20', g: 'lines' },
+  csv:   { l: '#2F855A', d: '#38A169', g: 'grid' },
+  tsv:   { l: '#2C7A7B', d: '#319795', g: 'tabgrid' },
+  xml:   { l: '#9C4221', d: '#C05621', g: 'text', t: '<x>' },
+  toml:  { l: '#4A5568', d: '#718096', g: 'gear', t: 'T' },
+  yaml:  { l: '#553C9A', d: '#805AD5', g: 'gear', t: 'Y' },
+  ini:   { l: '#2D3748', d: '#5A677D', g: 'gear', t: 'I' },
+  md:    { l: '#2B6CB0', d: '#4299E1', g: 'text', t: 'M↓' },
+  html:  { l: '#C53030', d: '#E53E3E', g: 'text', t: '</>' },
+  css:   { l: '#6B46C1', d: '#9F7AEA', g: 'text', t: '#{}' },
+  image: { l: '#2C7A7B', d: '#38B2AC', g: 'image' },
+  svg:   { l: '#B83280', d: '#ED64A6', g: 'pen' },
+  font:  { l: '#744210', d: '#B7791F', g: 'text', t: 'Aa', serif: true },
+  ignore:{ l: '#718096', d: '#A0AEC0', g: 'ban' },
+  make:  { l: '#975A16', d: '#D69E2E', g: 'hammer' },
+  docker:{ l: '#2B6CB0', d: '#63B3ED', g: 'boxes' },
+  env:   { l: '#276749', d: '#48BB78', g: 'text', t: '$=' },
+  editorconfig: { l: '#4A5568', d: '#A0AEC0', g: 'indent' },
+  git:   { l: '#C05621', d: '#F6AD55', g: 'branch' },
+  license: { l: '#2D3748', d: '#A0AEC0', g: 'text', t: '©' },
+  pipreq:{ l: '#2C5282', d: '#4299E1', g: 'text', t: 'pip' },
+  lock:  { l: '#4A5568', d: '#A0AEC0', g: 'lock' },
+  cmake: { l: '#2F855A', d: '#68D391', g: 'triangle' },
+  procfile: { l: '#553C9A', d: '#B794F4', g: 'text', t: 'P:' },
+};
+const FMT_AREA = { json: 'data', jsonl: 'data', csv: 'data', tsv: 'data', xml: 'data', toml: 'data', yaml: 'data', ini: 'data',
+                   md: 'docs', html: 'docs', image: 'assets', svg: 'assets', font: 'assets' };     // (html: docs only when unreferenced)
+const FIXED_HUE = { tests: 80, files: 210, data: 168, docs: 262, assets: 320 };    // the areas that are no module group
+/* the badge of `fmt` centred at (x, y), s px wide (on a page of radius R: s = R * 1.05, below the fold) */
+function drawFmtBadge(c, fmt, x, y, s, alpha = 1) {
+  const B = FMT_BADGE[fmt]; if (!B || s < 3) return;
+  const fill = T.light ? B.l : B.d, w = s, h = s * 0.78, r = Math.max(2, s * 0.16);
+  c.save(); c.globalAlpha *= alpha;
+  if (s < 12) { c.fillStyle = fill; c.beginPath(); c.roundRect(x - w / 2, y - Math.max(2, s * 0.14), w, Math.max(3, s * 0.28), 2); c.fill(); c.restore(); return; }
+  c.fillStyle = fill; c.beginPath(); c.roundRect(x - w / 2, y - h / 2, w, h, r); c.fill();
+  c.fillStyle = c.strokeStyle = '#FFFFFF'; c.lineCap = c.lineJoin = 'round'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  const lw = Math.max(1.2, s * 0.075), u = h * 0.5;
+  const text = (t, size, dx = 0, dy = 0, font = MONO) => { c.font = `700 ${size}px ${font}`; c.fillText(t, x + dx, y + dy + size * 0.04); };
+  const fit = (t, k, font = MONO) => { c.font = `700 ${h * k}px ${font}`; const m = c.measureText(t).width; return Math.min(h * k, h * k * (w * 0.82) / m); };
+  c.lineWidth = lw;
+  switch (B.g) {
+    case 'text': { const font = B.serif ? 'Georgia,serif' : MONO; text(B.t, fit(B.t, 0.72, font), 0, 0, font); break; }
+    case 'lines': {    // jsonl: three record lines, then a brace pair
+      for (let i = -1; i <= 1; i++) { c.beginPath(); c.moveTo(x - w * 0.36, y + i * u * 0.48); c.lineTo(x - w * 0.08, y + i * u * 0.48); c.stroke(); }
+      text('{}', fit('{}', 0.62) * 0.92, w * 0.2); break; }
+    case 'grid': case 'tabgrid': {
+      const gx = x - w * 0.32, gy = y - u * 0.62, gw = w * 0.64, gh = u * 1.24, cols = B.g === 'grid' ? 3 : 2;
+      c.lineWidth = Math.max(1, lw * 0.8); c.beginPath(); c.roundRect(gx, gy, gw, gh, Math.max(1, s * 0.05)); c.stroke();
+      c.beginPath(); for (let i = 1; i < 3; i++) { c.moveTo(gx, gy + gh * i / 3); c.lineTo(gx + gw, gy + gh * i / 3); }
+      for (let i = 1; i < cols; i++) { c.moveTo(gx + gw * i / cols, gy); c.lineTo(gx + gw * i / cols, gy + gh); } c.stroke();
+      c.globalAlpha *= 0.55; c.fillRect(gx, gy, gw, gh / 3); c.globalAlpha /= 0.55;      // the header row
+      if (B.g === 'tabgrid') { c.beginPath(); const ay = gy + gh * 0.66, ax = gx + gw * 0.18; c.moveTo(ax, ay); c.lineTo(ax + gw * 0.22, ay);
+        c.moveTo(ax + gw * 0.14, ay - gh * 0.09); c.lineTo(ax + gw * 0.22, ay); c.lineTo(ax + gw * 0.14, ay + gh * 0.09); c.stroke(); }
+      break; }
+    case 'gear': {
+      const R0 = u * 0.62, R1 = u * 0.84, n = 8, gx = x - w * 0.17;
+      c.beginPath(); for (let i = 0; i < n * 2; i++) { const a0 = i * Math.PI / n, rr = i % 2 ? R0 : R1;
+        c.arc(gx, y, rr, a0 - Math.PI / n * 0.5, a0 + Math.PI / n * 0.5); } c.closePath(); c.fill();
+      c.fillStyle = fill; c.beginPath(); c.arc(gx, y, R0 * 0.42, 0, TAU); c.fill();
+      c.fillStyle = '#FFFFFF'; text(B.t, h * 0.5, w * 0.27, h * 0.04); break; }
+    case 'image': {    // a framed landscape: two hills and a sun
+      const fx = x - w * 0.32, fy = y - u * 0.66, fw = w * 0.64, fh = u * 1.32;
+      c.lineWidth = Math.max(1, lw * 0.8); c.beginPath(); c.roundRect(fx, fy, fw, fh, Math.max(1, s * 0.05)); c.stroke();
+      c.beginPath(); c.moveTo(fx + fw * 0.06, fy + fh * 0.9); c.lineTo(fx + fw * 0.38, fy + fh * 0.42); c.lineTo(fx + fw * 0.62, fy + fh * 0.74);
+      c.lineTo(fx + fw * 0.76, fy + fh * 0.56); c.lineTo(fx + fw * 0.94, fy + fh * 0.9); c.closePath(); c.fill();
+      c.beginPath(); c.arc(fx + fw * 0.74, fy + fh * 0.26, fh * 0.12, 0, TAU); c.fill(); break; }
+    case 'pen': {      // svg: a bezier with its two handles
+      const ax = x - w * 0.3, bx = x + w * 0.3, yy = y + u * 0.35;
+      c.beginPath(); c.moveTo(ax, yy); c.bezierCurveTo(x - w * 0.15, y - u * 0.9, x + w * 0.15, y - u * 0.9, bx, yy); c.stroke();
+      c.lineWidth = Math.max(1, lw * 0.6); c.beginPath(); c.moveTo(ax, yy); c.lineTo(x - w * 0.15, y - u * 0.55); c.moveTo(bx, yy); c.lineTo(x + w * 0.15, y - u * 0.55); c.stroke();
+      for (const [px, py] of [[ax, yy], [bx, yy]]) { c.beginPath(); c.rect(px - lw, py - lw, lw * 2, lw * 2); c.fill(); }
+      for (const [px, py] of [[x - w * 0.15, y - u * 0.55], [x + w * 0.15, y - u * 0.55]]) { c.beginPath(); c.arc(px, py, lw * 0.9, 0, TAU); c.fill(); }
+      break; }
+    case 'ban': {      // ignore: a slashed circle
+      const rr = u * 0.72; c.beginPath(); c.arc(x, y, rr, 0, TAU); c.stroke();
+      c.beginPath(); c.moveTo(x - rr * 0.7, y + rr * 0.7); c.lineTo(x + rr * 0.7, y - rr * 0.7); c.stroke(); break; }
+    case 'hammer': {   // make: a hammer
+      c.save(); c.translate(x, y); c.rotate(-Math.PI / 4);
+      c.fillRect(-u * 0.55, -u * 0.62, u * 1.1, u * 0.42); c.fillRect(-u * 0.11, -u * 0.25, u * 0.22, u * 1.05); c.restore(); break; }
+    case 'boxes': {    // docker: stacked containers
+      const b = u * 0.42, g = Math.max(1, b * 0.18), y0 = y + u * 0.2;
+      for (let i = -1; i <= 1; i++) c.fillRect(x + i * (b + g) - b / 2, y0 - b / 2, b, b);
+      for (let i = 0; i <= 1; i++) c.fillRect(x + (i - 0.5) * (b + g) - b / 2, y0 - b * 1.5 - g, b, b); break; }
+    case 'indent': {   // editorconfig: lines at three indents
+      for (let i = 0; i < 3; i++) { const yy = y + (i - 1) * u * 0.5, x0 = x - w * 0.3 + (i === 1 ? w * 0.14 : 0);
+        c.beginPath(); c.moveTo(x0, yy); c.lineTo(x + w * 0.3, yy); c.stroke(); } break; }
+    case 'branch': {   // git: a branch leaving a line and joining it
+      const x0 = x - w * 0.18, x1 = x + w * 0.2, top = y - u * 0.62, bot = y + u * 0.62;
+      c.beginPath(); c.moveTo(x0, top); c.lineTo(x0, bot); c.moveTo(x0, y + u * 0.2); c.quadraticCurveTo(x1, y + u * 0.15, x1, top + u * 0.2); c.stroke();
+      for (const [px, py] of [[x0, top], [x0, bot], [x1, top + u * 0.1]]) { c.beginPath(); c.arc(px, py, lw * 1.2, 0, TAU); c.fill(); }
+      break; }
+    case 'lock': {     // a padlock
+      const bw = u * 1.1, bh = u * 0.8, by = y - u * 0.05;
+      c.beginPath(); c.arc(x, by, u * 0.36, Math.PI, 0); c.lineTo(x + u * 0.36, by + 1); c.moveTo(x - u * 0.36, by + 1); c.lineTo(x - u * 0.36, by); c.stroke();
+      c.beginPath(); c.roundRect(x - bw / 2, by, bw, bh, Math.max(1, s * 0.04)); c.fill();
+      c.fillStyle = fill; c.beginPath(); c.arc(x, by + bh * 0.45, Math.max(1, u * 0.1), 0, TAU); c.fill(); break; }
+    case 'triangle': { // cmake: a split triangle
+      c.beginPath(); c.moveTo(x, y - u * 0.75); c.lineTo(x + u * 0.8, y + u * 0.62); c.lineTo(x - u * 0.8, y + u * 0.62); c.closePath(); c.stroke();
+      c.beginPath(); c.moveTo(x, y - u * 0.75); c.lineTo(x, y + u * 0.62); c.stroke(); break; }
+  }
+  c.restore();
+}
+/* an image's thumbnail inside a page of radius R at (x, y): fitted to the page below the fold, clipped to its outline */
+function drawPageThumb(c, im, x, y, R) {
+  const w = R * 0.74, h = R * 0.92, f = Math.min(w, h) * 0.42, bw = w * 2 - R * 0.16, bh = h * 2 - f - R * 0.16;
+  const k = Math.min(bw / im.naturalWidth, bh / im.naturalHeight), dw = im.naturalWidth * k, dh = im.naturalHeight * k;
+  c.save(); pagePath(c, x, y, R); c.clip(); c.imageSmoothingQuality = 'high';
+  c.drawImage(im, x - dw / 2, y - h + f + R * 0.08 + (bh - dh) / 2, dw, dh); c.restore();
+}
+/* </fmtbadge> */
+/* <thumbs> image / svg blobs: their thumbnail (diffs sidecar file lines' `t` {path: hash}; the text under the hash is a
+   data: URI, fetched like any text, drawn only through an Image on the canvas, so an svg's scripts never run) */
+const TH = { src: null, n: -1, hist: new Map(), img: new Map() };   // path -> [[step, hash | null]]; hash -> {im, err}
+const TH_RETRY = 4000;     // ms before a failed thumbnail (fetch, missing text, bad image) is asked for again
+function thumbFor(b) {
+  if (!DV.on || (b.fmt !== 'image' && b.fmt !== 'svg')) return null;
+  const src = DV.fv || STEPS;
+  if (TH.src !== src || TH.n !== src.length) {
+    TH.src = src; TH.n = src.length; TH.hist.clear();
+    diffFvs().forEach((fv, i) => { const t = fv && fv.t; if (t) for (const p of Object.keys(t)) { if (!TH.hist.has(p)) TH.hist.set(p, []); TH.hist.get(p).push([i, t[p]]); } });
+  }
+  let h = null; for (const [i, x] of TH.hist.get(b.path) || []) { if (i > cur) break; h = x; }
+  if (!h) return null;
+  let e = TH.img.get(h);
+  if (e?.err && performance.now() - e.err > TH_RETRY) e = null;     // (a failed one: asked again after a while)
+  if (!e) {                                                          // one entry per hash, from the first ask on
+    TH.img.set(h, e = { im: null, err: 0 });
+    const fail = () => { e.err = performance.now(); };
+    diffGet([h]).then(texts => {
+      const uri = texts.get(h);
+      if (typeof uri === 'string' && /^data:image\/(png|jpeg|gif|webp|x-icon|bmp|svg\+xml);base64,/.test(uri)) {
+        const im = new Image(); im.onload = () => { e.im = im; }; im.onerror = fail; im.src = uri;
+      } else fail();                                                 // (no such text in the store, or not an image)
+    }, fail);
+  }
+  return e.im;
+}
+/* </thumbs> */
 function shortName(n) {
   n = String(n).replace(/<(?:\w+:)?(?:\w+_)?(\w+)>/g, ':$1');
   return n.length > 22 ? n.slice(0, 21).trimEnd() + '…' : n;
@@ -1203,10 +1360,10 @@ function pulseStep(i, now, gap, from) {           // from: the step shown before
   for (const s of st.stains.values()) if (s.gone && s.step === i) put(FPULSES, 'g:' + s.q, 'del', Math.min(dur, PULSE_DEL));
   hit.sort((p, q) => q[2] - p[2]);
   for (const [id, kind, , b] of hit.slice(0, PULSE_MAX)) {
-    if (kind === 'new') { const v = VIS.get(id); put(PULSES, id, kind, dur, { grow: !(v && v.r >= 0.9 * radius(b.size)) }); continue; }
+    if (kind === 'new') { const v = VIS.get(id); put(PULSES, id, kind, dur, { grow: !(v && v.r >= 0.9 * radius(sizeOf(b))) }); continue; }
     if (kind !== 'del') { put(PULSES, id, kind, dur); continue; }
     const v = VIS.get(id), h = v || homeOf(id, b);      // where it was drawn: it shrinks away from there
-    put(PULSES, id, kind, Math.min(dur, PULSE_DEL), { x: h.x, y: h.y, r: v ? v.r : radius(b.size), kind: b.kind, area: b.area });
+    put(PULSES, id, kind, Math.min(dur, PULSE_DEL), { x: h.x, y: h.y, r: v ? v.r : radius(sizeOf(b)), kind: b.kind, area: b.area });
   }
   const on = [...PULSES.values()].filter(p => !p.out).sort((p, q) => p.t0 - q.t0);
   for (const p of on.slice(0, Math.max(0, on.length - PULSE_MAX))) { p.out = true; p.end = Math.min(p.end, now + 450); }
@@ -1268,7 +1425,7 @@ function updateVis(dt) {
     if (!v) { if (!b) continue; const h = homeOf(u.id, b); v = { r: 0, a: 0, blob: b, x: h.x, y: h.y }; VIS.set(u.id, v); }
     if (b) v.blob = b;
     const h = homeOf(u.id, v.blob);
-    v.r += ((b ? radius(b.size) : 0) - v.r) * k; v.a += ((b ? 1 : 0) - v.a) * k;
+    v.r += ((b ? radius(sizeOf(b)) : 0) - v.r) * k; v.a += ((b ? 1 : 0) - v.a) * k;
     v.x += (h.x - v.x) * k; v.y += (h.y - v.y) * k;
     if (!b && v.a < 0.01) VIS.delete(u.id);
   }
@@ -1393,7 +1550,7 @@ function drawMap(now, t) {
     if (pu) drawPulse(ctx, pu, x, y, R, shape, alpha, true);
     ctx.save(); ctx.globalAlpha = alpha;
     shape(R); ctx.fillStyle = col.fill; ctx.fill();
-    if (page) pageDetail(ctx, x, y, R, col);
+    if (page) pageDetail(ctx, x, y, R, col, b);
     if (ms.length) {
       ctx.save(); shape(R); ctx.clip();
       for (const m of ms) { const p = stainSpot(id, m, R, m.size); drawStain(ctx, x + p.dx, y + p.dy, p.r, m, p.seed, now); stainGeo.push({ id, m, x: x + p.dx, y: y + p.dy, r: p.r }); }
@@ -3607,7 +3764,7 @@ function blobAt(x, y) {
 }
 function fileTip(b) {
   const d = b.delta, refs = STEPS[cur].edges.filter(e => e.kind === 'ref' && e.b === b.id);
-  return `<b>${esc(b.name)}</b><div class="k">${esc(KIND_LABEL[b.kind])} · ${esc(b.path)}</div><div>${b.size} lines</div>
+  return `<b>${esc(b.name)}</b><div class="k">${esc(KIND_LABEL[b.kind])}${b.fmt ? ' · ' + esc(b.fmt) : ''} · ${esc(b.path)}</div><div>${b.size} lines</div>
     <div>${d.added || d.removed ? `<span class="add">+${d.added}</span> <span class="rem">−${d.removed}</span> this step` : '<span class="k">no lines edited this step</span>'}${d.state === 'new' ? ' · <b>new</b>' : ''}</div>
     <div class="k">${b.kind === 'text' ? 'nothing references it' : refs.length ? 'referenced by ' + refs.map(e => esc(IDX[cur].blobs.get(e.a)?.title)).join(', ') : 'no references at this step'}</div>
     <div class="k" style="margin-top:4px">click for details</div>`;

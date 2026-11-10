@@ -630,21 +630,38 @@ def picture(b, url, page, src, step, bid):
 
 @chrome
 def test_unchanged_drill_downs_are_the_picture_head_draws(b, site, tmp_path):
+    """Pixel for pixel HEAD's picture, but for the boxes of the file / text pages of a known format in the dimmed map
+    behind the drill-down: they wear their format's badge (SCHEMA.md "v6 additions"), masked in both pictures."""
     if not (site['dir'] / 'head.html').exists():
         pytest.skip('no git HEAD to compare with')
+    import base64, io
+    from PIL import Image, ImageChops
     url, shots = site['url'], os.environ.get('AIBLOB_SHOTS') or str(tmp_path)
+    img = lambda x: Image.open(io.BytesIO(base64.b64decode(x[1].split(',')[1]))).convert('RGB')
+
+    def same(head, new):
+        """head == new outside the boxes of the badged pages (read on the new page, which is the one loaded)"""
+        boxes = b.eval('''[...VIS.entries()].filter(([id, v]) => PAGE(v.blob.kind) && FMT_BADGE[v.blob.fmt]).map(([id, v]) => {
+          const r = v.r * VIEW.s + 3; return [sx(v.x) - r, sy(v.y) - r, sx(v.x) + r, sy(v.y) + r].map(x => Math.round(x * DPR)); })''')
+        h, n = img(head), img(new)
+        for im in (h, n):
+            for box in boxes:
+                im.paste((0, 0, 0), tuple(box))
+        return h.tobytes() == n.tobytes(), boxes
     for step, bid, src in ((2, UTILB, 'tl.json'), (1, UTILB, 'tl.json'), (0, UTILB, 'bare.json'), (1, APPB, 'bare.json'), (2, APPB, 'bare.json')):
         head = picture(b, url, 'head.html', 'bare.json', step, bid)
         new = picture(b, url, 'index.html', src, step, bid)
-        if head[0] != new[0]:
-            import base64
+        ok, boxes = same(head, new)
+        if not ok:
             for n, x in (('head', head), ('new', new)):
                 open(os.path.join(shots, f'pixel-{n}-{step}.png'), 'wb').write(base64.b64decode(x[1].split(',')[1]))
-        assert head[0] == new[0], (step, bid, src)
+        assert ok, (step, bid, src)
+        assert len(boxes) == 1        # notes.md: the one page of a known format (the masks hide nothing else)
         if src == 'bare.json':
             assert 'diffs unavailable' in b.eval('$("#dnote").textContent') and b.eval('$("#dlook").hidden') is True
-    # (and a changed one is not: the test can see a difference)
-    assert picture(b, url, 'head.html', 'bare.json', 1, APPB)[0] != picture(b, url, 'index.html', 'tl.json', 1, APPB)[0]
+    # (and a changed one is not: the test can see a difference outside the masks)
+    head = picture(b, url, 'head.html', 'bare.json', 1, APPB)
+    assert not same(head, picture(b, url, 'index.html', 'tl.json', 1, APPB))[0]
     assert b.errors() == []
 
 

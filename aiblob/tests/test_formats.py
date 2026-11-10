@@ -299,7 +299,7 @@ ADVERSARIAL = {      # ~400 KB each: unclosed or repeated constructs that made t
     'md ref': ('md', '[' * 400000 + ']:'), 'html href="': ('html', 'href="' * 70000), 'srcset': ('html', 'srcset="' * 50000),
     'jinja': ('html', '{% extends "' * 35000), 'url_for': ('html', "url_for('static', filename='" * 14000),
     '@import': ('css', '@import "' * 45000), 'spaces': ('html', 'href' + ' ' * 400000),
-    'no <': ('html', 'src=a ' * 70000), 'long attr': ('html', ('href="' + 'a' * 3000) * 130)}
+    'long attr': ('html', ('href="' + 'a' * 3000) * 130)}
 
 
 @pytest.mark.parametrize('name', sorted(ADVERSARIAL))
@@ -314,6 +314,18 @@ def test_link_extraction_stays_linear(name):
     t0 = time.perf_counter()
     run(big)
     assert time.perf_counter() - t0 < 1.5, name           # extraction and resolution of what it found
+
+
+def test_attributes_far_from_their_tag_look_back_a_bounded_way():
+    """~2 MB of attributes after one tag: each looks back at most 512 characters for its `<` (from the file start it
+    would copy up to 2 MB per attribute)."""
+    import time
+    from analyze import LINK_MAX, _file_links
+    text = '<p ' + 'src=a ' * 330000
+    assert len(text) < LINK_MAX
+    t0 = time.perf_counter()
+    assert len(_file_links('html', text)) == 330000
+    assert time.perf_counter() - t0 < 2.5
 
 
 def test_files_over_the_link_limit_are_not_read():
