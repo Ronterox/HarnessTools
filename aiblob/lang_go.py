@@ -16,8 +16,9 @@ a name that should be program code and is not there, which analyze() counts as u
 Roots: `func main` of package main is the entry (merged with the file's package-level code; the file's
 `init`s join it, another package main's main is an entry of its own); `init` elsewhere is a `hook`; routes
 from net/http / chi / gorilla / gin / echo / fiber registrations (id the handler's qual, inline func literals
-carved out as `<GET /p>`), `X.Use(mw)` hooks, cobra / urfave-cli commands; `_test.go` files are a tests blob
-each. Data symbols are found per file (static, see SCHEMA.md), never from another file's declarations.
+carved out as `<GET /p>`), `X.Use(mw)` hooks, cobra / urfave-cli commands; `_test.go` files and files under
+`tests/` / `test/` are a tests blob each. Data symbols are found per file (static, see SCHEMA.md), never from
+another file's declarations.
 """
 import re, hashlib, posixpath, fnmatch, collections
 from tree_sitter import Language, Parser
@@ -120,6 +121,11 @@ def modname(rel):
     stem = rel[:-3] if rel.endswith('.go') else rel
     parts = stem.split('/')
     return '.'.join(p.replace('.', '_') for p in parts)
+
+
+def is_test_file(rel):
+    """A `_test.go` file, or any file under a `tests/` or `test/` directory (as Python's, JS's and C's tests)."""
+    return rel.endswith('_test.go') or bool({'tests', 'test'} & set(rel.split('/')[:-1]))
 
 
 def import_name(path):
@@ -279,7 +285,7 @@ class GoLang:
         return modname(rel)
 
     def is_test(self, mod, rel):
-        return rel.endswith('_test.go')
+        return is_test_file(rel)
 
     def parse_module(self, rel, text):
         if posixpath.basename(rel) == 'go.mod':
@@ -374,7 +380,7 @@ class _Linker:
                 continue
             pid = (g['dir'], g['pkg'])
             self.pkg_of[m] = pid
-            test = self.test[m] = info['file'].endswith('_test.go')
+            test = self.test[m] = is_test_file(info['file'])
             P = self.pkgs.get(pid)
             if P is None:
                 P = self.pkgs[pid] = {'funcs': {}, 'tfuncs': {}, 'methods': {}, 'types': {}, 'vars': {}, 'consts': set()}

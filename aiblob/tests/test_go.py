@@ -432,3 +432,13 @@ func auth(next any) any { return next }
     assert sorted(c['to'] for c in reg['calls'] if c.get('deferred')) == [
         'app.routes.auth', 'app.routes.auth', 'app.routes.auth', 'app.routes.auth',
         'app.routes.list', 'app.routes.reset', 'app.routes.show']
+
+
+def test_files_under_a_tests_directory_are_tests_not_entries():
+    main = 'package main\n\nfunc main() {\n\thelper()\n}\n\nfunc helper() {}\n'
+    r, blobs, _ = run({'go.mod': 'module example.com/app\n', 'main.go': main,
+                       'tests/fixture/main.go': main, 'test/e2e/run.go': 'package e2e\n\nfunc Run() {}\n'})
+    assert r['entry'] == 'main'
+    assert sorted(k for k, b in blobs.items() if b['kind'] == 'entry') == ['main.<module>']
+    assert blobs['tests.fixture.main']['kind'] == blobs['test.e2e.run']['kind'] == 'tests'
+    assert quals(blobs['tests.fixture.main']) == ['tests.fixture.main.helper', 'tests.fixture.main.main']

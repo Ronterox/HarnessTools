@@ -225,7 +225,7 @@ def test_python_scripts_a_shell_runs_become_entries_but_tests_stay_tests():
     files = {'run.sh': 'python3 app/cli.py\npython3 tests/test_x.py\n',
              'app/cli.py': 'from app import lib\n\ndef main():\n    lib.work()\n\nif __name__ == "__main__":\n    main()\n',
              'app/lib.py': 'def work():\n    return 1\n',
-             # three more modules: app/cli.py alone does not cover half the app, so Python has no entry of its own
+             # three more modules: app/cli.py does not cover half the app (no biggest-closure entry); its guard makes it one
              'app/a.py': 'def a():\n    pass\n', 'app/b.py': 'def b():\n    pass\n', 'app/c.py': 'def c():\n    pass\n',
              'tests/test_x.py': 'def test_a():\n    assert True\n\nif __name__ == "__main__":\n    test_a()\n'}
     _, blobs, edges = run(files)
@@ -233,8 +233,8 @@ def test_python_scripts_a_shell_runs_become_entries_but_tests_stay_tests():
     assert quals(blobs['tests.test_x']) == ['tests.test_x.<module>', 'tests.test_x.test_a']   # a tests blob still
     assert {(e['a'], e['b']) for e in edges if e['kind'] == 'main'} == {('run_sh.<module>', 'app.cli.<module>'),
                                                                        ('run_sh.<module>', 'tests.test_x')}
-    _, alone, _ = run({k: v for k, v in files.items() if k != 'run.sh'})
-    assert 'app.cli.<module>' not in alone and quals(alone['orphan:app.cli']) == ['app.cli.main']
+    _, alone, _ = run({k: v for k, v in files.items() if k != 'run.sh'})   # its own `__main__` guard: an entry anyway
+    assert quals(alone['app.cli.<module>']) == ['app.cli.<module>', 'app.cli.main', 'app.lib.work']
 
 
 def test_refs_and_heredocs():

@@ -263,3 +263,32 @@ app.listen(1);
 '''})
     assert (r['stats']['calls'], r['stats']['unresolved']) == (1, 1)
     assert edges_of(edges, 'main') == [] and not any(c['to'].endswith('dynamic_route') for b in blobs.values() for f in b['funcs'] for c in f['calls'])
+
+
+def test_only_strings_that_read_like_sql_name_tables():
+    r, blobs, edges = run({'server.js': '''const express = require('express');
+const db = require('./db');
+const app = express();
+const SCHEMA = `CREATE TABLE IF NOT EXISTS notes (id INTEGER)`;
+const HELP = 'Select the rows from the table, update them from scratch';
+
+app.get('/a', (req, res) => {
+  'use strict';
+  'SELECT * FROM ghosts';
+  res.send('Delete from the list; read from scratch' + HELP);
+});
+
+app.get('/b', (req, res) => {
+  res.json(db.prepare('SELECT n.id FROM notes n ' +
+                      'JOIN users u ON u.id = n.uid').all(req.query.u));
+});
+
+app.listen(3000);
+''', 'db.js': 'module.exports = { prepare(q) { return { all() { return q.from("the cache"); } }; } };\n'})
+    assert blobs['server.<GET /a>']['data'] == []
+    assert blobs['server.<GET /b>']['data'] == ['ctx:req.query', 'table:notes', 'table:users']   # a `+` chain: one string
+    assert [(e['a'], e['b'], e['via']) for e in edges_of(edges, 'data')] == [   # the schema's table, nothing else
+        ('server.<GET /b>', 'server.<module>', ['table:notes'])]
+    _, joined, _ = run({'q.js': "function q(db, t) {\n  return db.all('SELECT * FROM ' + t + ' JOIN users u ON u.id = 1');\n}\n"
+                                "module.exports = { q };\n"})
+    assert joined['orphan:q']['data'] == ['table:users']       # a value between the pieces is no table, nor glues them

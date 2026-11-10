@@ -27,8 +27,32 @@ ROUTE_DECOS = {'route', 'get', 'post', 'put', 'delete', 'patch', 'errorhandler',
 ERROR_CALLEES = {'abort', 'raise', 'error', 'exception', 'warning', 'critical', 'fail', 'flash'}
 BRANCH_TYPES = {'if_statement', 'elif_clause', 'for_statement', 'while_statement', 'try_statement',
                 'except_clause', 'conditional_expression', 'boolean_operator', 'with_statement', 'match_statement'}
-SQL = re.compile(r'\b(?:FROM|INTO|UPDATE|TABLE(?: IF NOT EXISTS)?|JOIN)\s+([A-Za-z_][A-Za-z_0-9]*)', re.I)
+# a string is SQL only when it reads like a statement (sql_tables): a verb first (after blanks, -- / /* */ comments and
+# BEGIN [TRANSACTION];), all upper or all lower case ("Select the rows" is prose), then that verb's own shape. Every
+# repeat here is linear: a comment's body cannot end early or overlap the next one
+SQL_STMT = re.compile(r'''\s*(?:(?:--[^\n]*+(?:\n|$)|/\*(?:[^*]|\*(?!/))*+\*/
+                          |begin(?:\s+(?:deferred|immediate|exclusive))?(?:\s+transaction)?\s*;)\s*)*(?P<stmt>
+    select\b
+  | with(?:\s+recursive)?\s+\w+(?:\s*\([^()]*\))?\s+as\s*\(
+  | (?:insert|replace)(?:\s+or\s+\w+)?\s+into\s
+  | update(?:\s+or\s+\w+)?\s+[\w"`\[\].]+\s+set\s
+  | delete\s+from\s
+  | (?:create|drop|alter)\s+(?:(?:temp|temporary|unique|virtual|or\s+replace)\s+)*(?:table|index|view|trigger)\s
+  | truncate\s+(?:table\s+)?[\w"`\[]
+  | explain(?:\s+query\s+plan)?(?:\s+analyze)?\s+(?:select|insert|update|delete|replace|with)\b
+  | pragma\s+\w)''', re.I | re.S | re.X)
+_SQL_ID = r'''(?:"\w+"|`\w+`|\[\w+\]|[A-Za-z_][A-Za-z_0-9]*)'''     # plain or quoted; `schema.` before it is skipped
+SQL_TABLE = re.compile(r'''\b(?:FROM|JOIN|INTO|UPDATE(?:\s+OR\s+\w+)?|TRUNCATE(?:\s+TABLE)?|TABLE(?:\s+IF(?:\s+NOT)?\s+EXISTS)?)
+    \s+(?:%s\.)?(%s)''' % (_SQL_ID, _SQL_ID), re.I | re.X)
+# never a table name: SQL keywords that can follow FROM / INTO / ..., and English words, so a comment inside a
+# statement ("-- copy from the old one") names nothing
+SQL_NOT_TABLE = frozenset('''select from where set values on as using natural inner outer left right cross full join
+lateral only if not exists or and ignore replace abort fail rollback default the a an this that these those its it
+their them our your my his her each every all any some one no none which what whose where there here then now'''.split())
 DATA_ROOTS = {'request', 'session', 'g', 'current_app'}
+CTX_FROM = frozenset({'flask', 'quart'})          # DATA_ROOTS are the app's context only when imported from these
+SCOPES = frozenset({'function_definition', 'lambda', 'class_definition', 'list_comprehension', 'set_comprehension',
+                    'dictionary_comprehension', 'generator_expression'})     # nodes that open a Python scope
 NOT_SHARED = {'request', 'req'}                  # everyone reads the request; not a shared-state signal
 # environment variables nearly every program reads: their `env:` symbols stay in a blob's `data` but link nothing
 # (XDG_DATA_HOME / XDG_CONFIG_HOME / XDG_CACHE_HOME do: they say where an app keeps its own files)
@@ -94,6 +118,25 @@ SUBCOMMAND = re.compile(r'''\badd_parser\(\s*[rRuU]?['"]([\w.-]+)['"]''')
 def _text(n, src):
     return src[n.start_byte:n.end_byte].decode('utf-8', 'replace')
 
+def _str_body(n, src):
+    """A string / concatenated string node -> its text without prefixes and quotes (pieces joined)."""
+    if n.type == 'concatenated_string':
+        return ''.join(_str_body(c, src) for c in n.named_children if c.type == 'string')
+    t = _text(n, src)
+    m = re.match(r"""[A-Za-z]*(\"\"\"|\'\'\'|"|')""", t)
+    body = t[m.end():] if m else t
+    return body[:-len(m.group(1))] if m and body.endswith(m.group(1)) else body
+
+def sql_tables(s):
+    """{'table:users', ...}: the tables a SQL statement names; nothing when s does not read like one (SQL_STMT).
+    A table follows FROM / JOIN / INTO / UPDATE / TRUNCATE / TABLE, plain or quoted, the last part of `schema.table`,
+    and is no keyword or English word."""
+    m = SQL_STMT.match(s)
+    verb = re.match(r'[A-Za-z]+', m['stmt']).group() if m else ''
+    if not (verb.isupper() or verb.islower()):
+        return set()
+    return {'table:' + t for t in (x.strip('"`[]').lower() for x in SQL_TABLE.findall(s)) if t not in SQL_NOT_TABLE}
+
 def _modname(rel):
     m = rel[:-3].replace('/', '.')
     return m[:-9] if m.endswith('.__init__') else m
@@ -134,6 +177,7 @@ class Func:
         self.declared_global = set()
         self.attr_refs = set()   # (identifier, attr) for module.GLOBAL access
         self.route = None        # set by a Lang for a synthetic handler (JS inline route / middleware / test case)
+        self.scope_byte = -1     # while parsing: start byte of the def whose scope this is (-1: the module)
 
 def parse_module(rel, text):
     src = text.encode('utf-8')
@@ -141,7 +185,8 @@ def parse_module(rel, text):
     mod = _modname(rel)
     info = {'name': mod, 'file': rel, 'imports': {}, 'funcs': [], 'globals': set(), 'classes': set(),
             'blueprints': set(), 'framework': set(), 'lines': text.count('\n') + 1,
-            'entry_like': mod.split('.')[-1] in ENTRY_NAMES, 'deps': [], 'global_tables': {}, 'class_attrs': {}}
+            'entry_like': mod.split('.')[-1] in ENTRY_NAMES, 'deps': [], 'global_tables': {}, 'class_attrs': {},
+            'main_guard': mod.split('.')[-1] == '__main__'}
     pkg = mod.split('.') if rel.endswith('__init__.py') else mod.split('.')[:-1]
     cmds = frozenset(SUBCOMMAND.findall(text))
     def add(f):
@@ -167,11 +212,11 @@ def parse_module(rel, text):
                 if rhs is not None and APP_OBJECT.match(_text(rhs, src)):
                     info['entry_like'] = True
                 if rhs is not None and rhs.type in ('string', 'concatenated_string'):
-                    tables = {'table:' + t.lower() for t in SQL.findall(_text(rhs, src))}
+                    tables = sql_tables(_str_body(rhs, src))
                     if tables:
                         info['global_tables'][_text(lhs, src)] = tables
         elif n.type == 'if_statement' and re.search(r'__name__\s*==\s*[\'"]__main__', _text(n.child_by_field_name('condition'), src)):
-            info['entry_like'] = True
+            info['entry_like'] = info['main_guard'] = True
         elif n.type in ('class_definition', 'function_definition', 'decorated_definition'):
             fn = n.named_children[-1] if n.type == 'decorated_definition' else n
             if fn.type == 'class_definition':      # plain or decorated (@dataclass)
@@ -212,8 +257,69 @@ def parse_module(rel, text):
     for g in top.vfuncs.values():
         g.file = rel
         info['funcs'].append(g)
+    # request / session / g / current_app are the app's context only as Flask's (or Quart's) import, and not where
+    # the function's own scope or the module binds the name too (a variable `g` is not flask.g; nested scopes'
+    # bindings are left out where the symbol is read, _bound_inside)
+    top.own = _scope_names(root, src)
+    owners = {id(vf): f for f in [top] + info['funcs'] for vf in f.vfuncs.values()}   # a carved branch: its def's scope
+    rebound = top.own | {x for f in info['funcs'] if hasattr(f, 'own') for x in f.own & f.declared_global}
+    for g in info['funcs'] + [top]:
+        imp = {**info['imports'], **g.imports}
+        local = (owners[id(g)].own if id(g) in owners else g.own) | rebound
+        g.data = {d for d in g.data if not d.startswith('ctx:') or _ctx_import(d[4:].split('.')[0], imp, local)}
+    for g in info['funcs'] + [top]:
+        g.__dict__.pop('own', None)
     info['top'] = top
     return info
+
+class _Names:
+    __slots__ = ('locals',)
+
+    def __init__(self):
+        self.locals = set()
+
+def _scope_names(s, src):
+    """The names scope s (a def, lambda, comprehension, class body or the module) binds: parameters, assignment / for /
+    with / except targets (`global` ones too: they rebind the module's), nested def and class names; not deeper
+    scopes', not imports (those are read as imports)."""
+    ns = _Names()
+    params = s.child_by_field_name('parameters') if s.type in ('function_definition', 'lambda') else None
+    if params is not None:
+        _bind_params(params, src, ns)
+    stack = [c for c in s.children if c.type not in ('parameters', 'lambda_parameters')]
+    while stack:
+        c = stack.pop()
+        t = c.type
+        if t in ('function_definition', 'class_definition'):
+            ns.locals.add(_text(c.child_by_field_name('name'), src))
+            continue
+        if t in SCOPES:
+            continue
+        if t in ('assignment', 'augmented_assignment', 'for_statement', 'for_in_clause'):
+            _bind(c.child_by_field_name('left'), src, ns)
+        elif t == 'as_pattern_target':
+            _bind(c.named_children[0] if c.named_children else None, src, ns)
+        stack.extend(c.children)
+    return ns.locals
+
+def _bound_inside(n, name, src, stop):
+    """Is `name` at n bound by a scope nested in its function (the def starting at byte stop; -1: the module): a
+    def / lambda / comprehension between them, or a class body when n is right in it (not in its methods)."""
+    p, in_fn = n.parent, False
+    while p is not None and not (p.type == 'function_definition' and p.start_byte == stop):
+        if p.type in SCOPES and not (p.type == 'class_definition' and in_fn) and name in _scope_names(p, src):
+            return True
+        in_fn = in_fn or p.type in SCOPES and p.type != 'class_definition'
+        p = p.parent
+    return False
+
+def _ctx_import(name, imp, local):
+    """Is `name` a DATA_ROOTS context object here: imported from a CTX_FROM framework (by name or *), no local."""
+    if name in local:
+        return False
+    t = imp.get(name)
+    return t is not None and t.split('.')[0] in CTX_FROM and t.rsplit('.', 1)[-1] == name or \
+        t is None and imp.get('*') in CTX_FROM
 
 def _import_bindings(n, src, pkg):
     """An import / from-import statement -> ([(bound name, target)], [modules it depends on])."""
@@ -292,7 +398,7 @@ def _branch_func(f, names, node, src):
         # one Python scope: the branch sees (and binds into) the function's names and imports
         vf.locals, vf.declared_global, vf.imports, vf.origins = f.locals, f.declared_global, f.imports, f.origins
         vf.nested, vf.pkg, vf.self_types, vf.parsers, vf.cmd_targets = f.nested, f.pkg, f.self_types, f.parsers, f.cmd_targets
-        vf.node = node
+        vf.node, vf.scope_byte = node, f.scope_byte
         f.vfuncs[key] = vf
     else:
         vf.body += '\n' + _text(node, src)
@@ -335,7 +441,9 @@ def _func(mod, outer, fn, src, cls=None, pkg=(), cmds=frozenset()):
     params = fn.child_by_field_name('parameters')
     if params is not None:
         _bind_params(params, src, f)
+    f.scope_byte = fn.start_byte
     _walk(fn.child_by_field_name('body'), src, f, False)
+    f.own = _scope_names(fn, src)
     if f.carved:     # the function's own lines are what is left once its dispatch branches are carved out
         f.body = _cut(src, outer.start_byte, outer.end_byte, f.carved)
         f.lines -= sum(n for _, _, n in f.carved)
@@ -388,14 +496,11 @@ def _walk(n, src, f, in_err):
             key = _text(pos[0], src) if len(pos) > 1 else ''
             key = key if pos[0].type == 'integer' or key.rsplit('.', 1)[-1][:1].isupper() else ''
             f.registers.append((REGISTER_CALLS[last], key, _text(pos[-1], src)))
-        if last in ('execute', 'executemany', 'executescript'):
-            for q in SQL.findall(_text(n, src)):
-                f.data.add('table:' + q.lower())
-    elif t == 'string':
-        txt = _text(n, src)
-        for q in SQL.findall(txt):
-            f.data.add('table:' + q.lower())
-        m = PATH_LIT.fullmatch(txt)
+    elif t in ('string', 'concatenated_string'):
+        p = n.parent           # a piece of a concatenation counts with the whole; a bare string statement (a
+        if p is None or p.type not in ('concatenated_string', 'expression_statement'):     # docstring) never does
+            f.data |= sql_tables(_str_body(n, src))
+        m = PATH_LIT.fullmatch(_text(n, src)) if t == 'string' else None
         if m and ('.' in m.group(2) or '/' in m.group(2)):
             f.strings.append(m.group(2))
     elif t == 'dictionary' and f.cmds:                                  # {"a": cmd_a, ...} dispatch table
@@ -413,7 +518,8 @@ def _walk(n, src, f, in_err):
         if obj is not None and obj.type == 'identifier':
             b = _text(obj, src)
             if b in DATA_ROOTS:
-                f.data.add('ctx:' + _ctx_symbol(n, b, src))
+                if not _bound_inside(n, b, src, f.scope_byte):
+                    f.data.add('ctx:' + _ctx_symbol(n, b, src))
             elif t == 'attribute':
                 f.attr_refs.add((b, _text(n.child_by_field_name('attribute'), src)))
     elif t == 'return_statement' and n.named_children:
@@ -431,19 +537,24 @@ def _walk(n, src, f, in_err):
         left = n.child_by_field_name('left')
         _bind(left, src, f)
         right = n.child_by_field_name('right')
-        if t == 'assignment' and left is not None and left.type == 'identifier' and right is not None:
-            if right.type == 'call':
-                f.origins.setdefault(_text(left, src), _text(right.child_by_field_name('function'), src))
-                cmd = _parser_cmd(right, src)
-                if cmd:
-                    f.parsers[_text(left, src)] = cmd
-            elif right.type == 'lambda':
-                f.nested.add(_text(left, src))
-        elif t == 'assignment' and left is not None and left.type == 'attribute' and right is not None and right.type == 'call':
-            obj = left.child_by_field_name('object')
-            if obj is not None and _text(obj, src) == 'self':                # self.x = Cls(...)
-                f.self_types.setdefault(_text(left.child_by_field_name('attribute'), src),
-                                        _text(right.child_by_field_name('function'), src))
+        pairs = [(left, right)] if t == 'assignment' and left is not None and right is not None else []
+        if pairs and left.type in ('pattern_list', 'tuple_pattern') and right.type in ('expression_list', 'tuple') \
+                and len(left.named_children) == len(right.named_children):
+            pairs = list(zip(left.named_children, right.named_children))     # a, self.b = f(), Cls(): pair by pair
+        for l, r in pairs:
+            if l.type == 'identifier':
+                if r.type == 'call':
+                    f.origins.setdefault(_text(l, src), _text(r.child_by_field_name('function'), src))
+                    cmd = _parser_cmd(r, src)
+                    if cmd:
+                        f.parsers[_text(l, src)] = cmd
+                elif r.type == 'lambda':
+                    f.nested.add(_text(l, src))
+            elif l.type == 'attribute' and r.type == 'call':
+                obj = l.child_by_field_name('object')
+                if obj is not None and _text(obj, src) == 'self':            # self.x = Cls(...)
+                    f.self_types.setdefault(_text(l.child_by_field_name('attribute'), src),
+                                            _text(r.child_by_field_name('function'), src))
         if t in ('for_statement', 'for_in_clause'):                         # for x in obj -> obj.__iter__
             base = _callable_base(right, src)
             if base:
@@ -1190,7 +1301,8 @@ def _import_graph(mods, lang_of, universe=None):
     return graph
 
 def _entries(mods, lang_of, graph, is_test, files):
-    """One entry module per language at most (Lang.entry), in order of the languages' first module."""
+    """Per language, in order of its first module: its one main entry (Lang.entry), then the other modules that
+    run as programs (Lang.mains, sorted: Python's `__main__` guards)."""
     imported = {t for m, s in graph.items() if not is_test(m) for t in s}
     def closure(m, seen=None):
         seen = seen or set()
@@ -1198,9 +1310,13 @@ def _entries(mods, lang_of, graph, is_test, files):
             if t not in seen:
                 seen.add(t); closure(t, seen)
         return seen
-    langs = dict.fromkeys(lang_of[m] for m in mods)
-    return [e for L in langs for e in [L.entry([m for m in mods if lang_of[m] is L], mods, imported, closure, is_test, files)]
-            if e is not None]
+    out = []
+    for L in dict.fromkeys(lang_of[m] for m in mods):
+        ms = [m for m in mods if lang_of[m] is L]
+        e = L.entry(ms, mods, imported, closure, is_test, files)
+        out += [e] if e is not None else []
+        out += [m for m in (L.mains(ms, mods, is_test) if hasattr(L, 'mains') else ()) if m != e]
+    return out
 
 def _globals_used(f, mods):
     """Module globals a function reads or writes: own globals by name, imported ones by name or module.NAME."""
@@ -1517,13 +1633,20 @@ class PyLang:
         return {}
 
     def entry(self, ms, mods, imported, closure, is_test, files):
-        """A half-built app has no entry yet: the candidate must look like one (__main__ guard, app object,
-        create_app/main, entry-style name) and, with itself, cover at least half of the app's modules."""
-        cands = [m for m in ms if m not in imported and not is_test(m) and mods[m]['entry_like']]
+        """The app a runner starts (`flask run`, gunicorn, a console script), besides the mains: a module nobody
+        imports that looks like one (app object, create_app / main, entry-style name), the biggest import closure.
+        A half-built app has no entry yet: with itself, it must cover at least half of the app's modules."""
+        cands = [m for m in ms if m not in imported and not is_test(m) and mods[m]['entry_like']
+                 and not mods[m].get('main_guard')]
         e = max(cands, key=lambda m: (len(closure(m)), m in ('app', 'main', '__main__')), default=None)
         if e is not None and len(closure(e) | {e}) < sum(not is_test(m) for m in ms) / 2:
             e = None
         return e
+
+    def mains(self, ms, mods, is_test):
+        """Every non-test module with a top-level `if __name__ == '__main__':` (and every `__main__.py`): a program
+        of its own, so an entry whatever the others are; its id `<module>.<module>` depends on it alone."""
+        return sorted(m for m in ms if mods[m].get('main_guard') and not is_test(m))
 
     def route_of(self, f, extra, ctx):
         return _route_of(f, extra)
@@ -1539,7 +1662,7 @@ PY = PyLang()
 LANGS = [PY]
 try:
     import lang_js
-    LANGS.append(lang_js.JSLang(Func))
+    LANGS.append(lang_js.JSLang(Func, sql_tables))
 except ImportError:      # no tree-sitter-javascript: Python only, .js files stay file / text blobs
     pass
 try:

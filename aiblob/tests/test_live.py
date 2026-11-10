@@ -209,6 +209,13 @@ def test_c_mini_live_equals_batch(tmp_path):
     exported_equals_batch(store, proj, root)
 
 
+def test_py_mains_live_equals_batch(tmp_path):
+    root = '/work/py'          # a `__main__` guard goes, then main() changes: each guard module stays an entry of its own
+    src = _fixture_session(tmp_path, 'py-mains', root, [('tool.py', '__main__', '__other__'), ('cli.py', 'def main', 'def  main')])
+    w, store, proj = follow(tmp_path, src, root, restarts=2, check_every=2, seed=3)
+    exported_equals_batch(store, proj, root)
+
+
 @pytest.mark.skipif(not os.path.isdir(FLASK), reason='recorded demo session not on this machine')
 def test_flask_session_live_equals_timeline_py(tmp_path):
     w, store, proj = follow(tmp_path, FLASK, APP, restarts=3, check_every=10)

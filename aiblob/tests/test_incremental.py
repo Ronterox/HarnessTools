@@ -131,3 +131,31 @@ def test_expand_reads_deltas_only_from_a_v3_dict():
     assert v4['steps'][1]['removed_blobs'] == ['b']
     assert dump(timeline.expand(v4)) == dump(full) == dump(timeline.expand(v4['steps']))
 
+
+
+def test_main_guards_coming_and_going_keep_every_entry_id():
+    # each `__main__` guard is an entry of its own, id `<module>.<module>`: another module gaining or losing one
+    # renames nothing, and incremental == full throughout
+    core = 'def load():\n    return parse()\n\ndef parse():\n    return 1\n'
+    cli = 'import core\n\ndef main():\n    return core.load()\n'
+    guard = '\nif __name__ == "__main__":\n    main()\n'
+    tool = 'import core\n\ndef run():\n    return core.parse()\n'
+    steps = sequence([
+        ('core.py', core),
+        ('cli.py', cli + guard),
+        ('tool.py', tool),
+        ('tool.py', tool + guard.replace('main()', 'run()')),
+        ('cli.py', cli),
+        ('cli.py', cli + guard),
+        ('app.py', 'from flask import Flask\nimport cli, core\napp = Flask(__name__)\n\n@app.route("/")\ndef i():\n    return core.load()\n'),
+        ('tool.py', tool),
+    ])
+    inc, _ = check(steps)
+    entries = [sorted(b['id'] for b in s['blobs'] if b['kind'] == 'entry') for s in inc]
+    # step 4: cli.py without its guard is still the app a runner starts (a main(), nobody imports it), but main()
+    # no longer runs from its module code: two roots, as before guards counted
+    assert entries == [[], ['cli.<module>'], ['cli.<module>'], ['cli.<module>', 'tool.<module>'],
+                       ['cli.<module>', 'cli.main', 'tool.<module>'], ['cli.<module>', 'tool.<module>'],
+                       ['app.<module>', 'cli.<module>', 'tool.<module>'], ['app.<module>', 'cli.<module>']]
+    drawn = lambda s: {m['id'] for b in s['blobs'] for m in [b] + b.get('merged', [])}   # (small blobs fold)
+    assert 'hub:core' in drawn(inc[3]) and 'orphan:core' not in drawn(inc[3])

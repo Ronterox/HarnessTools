@@ -41,7 +41,6 @@ COLLECTION = re.compile(r'(Map|Set|WeakMap|WeakSet|Array|Object)$')
 COLLECTION_CALL = re.compile(r'(?:Object\.(?:create|assign|fromEntries)|Array\.from|structuredClone)\(')
 SESSION_WHOLE = {'destroy', 'regenerate', 'save', 'reload', 'touch'}
 STORAGE_KEY = {'getItem', 'setItem', 'removeItem'}
-SQL = re.compile(r'\b(?:FROM|INTO|UPDATE|TABLE(?: IF NOT EXISTS)?|JOIN)\s+([A-Za-z_][A-Za-z_0-9]*)', re.I)
 PATH_LIT = re.compile(r'''(['"`])([\w.@+~-]+(?:/[\w.@+~-]+)*/?)\1''')
 VIEW_EXTS = ('ejs', 'pug', 'jade', 'hbs', 'handlebars', 'html', 'njk', 'mustache', 'twig')
 GLOBALS = frozenset('''console JSON Math Object Array String Number Boolean Date Promise Error TypeError RangeError SyntaxError
@@ -66,6 +65,15 @@ def _strval(n, src):
     if n is None or n.type not in ('string', 'template_string') or any(c.type == 'template_substitution' for c in n.children):
         return None
     return _text(n, src)[1:-1]
+
+def _plus(n, src):
+    """Is n a `a + b` expression?"""
+    op = n.child_by_field_name('operator') if n is not None and n.type == 'binary_expression' else None
+    return op is not None and _text(op, src) == '+'
+
+def _leaves(n, src):
+    """The operands of a `a + b + c` chain, left to right."""
+    return _leaves(n.child_by_field_name('left'), src) + _leaves(n.child_by_field_name('right'), src) if _plus(n, src) else [n]
 
 def _route_path(n, src):
     """A route path argument -> readable path or None: '/u/:id(\\d+)' -> /u/:id, /^\\/u\\/(\\d+)$/ -> /u/(\\d+)."""
@@ -146,8 +154,8 @@ class JSLang:
     name, ctor, module_types = 'js', 'constructor', True
     builtins = stdlib = GLOBALS
 
-    def __init__(self, Func):
-        self.Func = Func
+    def __init__(self, Func, sql_tables):
+        self.Func, self.sql_tables = Func, sql_tables     # analyze.sql_tables: one SQL rule for every language
 
     def handles(self, rel):
         return rel.endswith(EXTS)
@@ -506,11 +514,11 @@ class _Module:
                                              COLLECTION_CALL.match(vt))):
             info['globals'].add(nm)
             if val is not None and val.type in ('string', 'template_string'):
-                tables = {'table:' + t.lower() for t in SQL.findall(vt)}
+                tables = self.lang.sql_tables(vt[1:-1])
                 if tables:
                     info['global_tables'][nm] = tables
         elif val is not None and val.type in ('string', 'template_string'):
-            tables = {'table:' + t.lower() for t in SQL.findall(vt)}
+            tables = self.lang.sql_tables(vt[1:-1])
             if tables:                            # const SCHEMA = `CREATE TABLE …`: whoever runs it touches the tables
                 info['globals'].add(nm)
                 info['global_tables'][nm] = tables
@@ -858,8 +866,7 @@ class _Module:
                     f.calls.append((_norm(_text(a, src)), err, 'deferred'))
         elif t in ('string', 'template_string'):
             txt = _text(n, src)
-            for q in SQL.findall(txt):
-                f.data.add('table:' + q.lower())
+            f.data |= self.sql(n)
             m = PATH_LIT.fullmatch(txt)
             if m and ('.' in m.group(2) or '/' in m.group(2)):
                 f.strings.append(m.group(2))
@@ -1005,8 +1012,20 @@ class _Module:
             if o.type == 'identifier' and _text(o, src) in ('localStorage', 'sessionStorage') and last in STORAGE_KEY and args:
                 k = _strval(args[0], src)
                 f.data.add(f'ctx:{_text(o, src)}' + (f'.{k}' if k else ''))
-        for q in SQL.findall(_text(n, src)) if last in ('query', 'exec', 'execute', 'prepare', 'run', 'all', 'get') else ():
-            f.data.add('table:' + q.lower())
+
+    def sql(self, n):
+        """The tables a string names when it reads like SQL (analyze.sql_tables). A `'a' + x + 'b'` chain is one string,
+        read at its leftmost piece, each other operand a `?`; a bare string statement ('use strict') names none."""
+        src, top = self.src, n
+        if n.parent is not None and n.parent.type == 'expression_statement':
+            return set()
+        while _plus(top.parent, src):
+            top = top.parent
+        leaves = _leaves(top, src)
+        if leaves[0] != n:
+            return set()
+        return self.lang.sql_tables(''.join(_text(x, src)[1:-1] if x.type in ('string', 'template_string') else ' ? '
+                                            for x in leaves))      # a value in between: a placeholder, no identifier
 
     def dynamic_route(self, fn, n):
         """app[method]('/p', handler): a registration whose verb is a variable."""

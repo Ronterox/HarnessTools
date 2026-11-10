@@ -40,7 +40,10 @@ web/index.html canvas: blobs, edges, spots, scrubber, drill-down
 
 ### Entry points (the "one entry the imports flow to")
 Module import graph; an entry module is one nobody imports whose transitive
-imports cover the most of the repo (`app.py`/`main.py`/`__main__`). Inside it,
+imports cover the most of the repo (`app.py`/`main.py`/`__main__`). Since 2026-11-10 every
+module with a `__main__` guard is an entry of its own too (one per program, id `<module>.<module>`,
+stable whatever the other modules do), and the biggest-closure pick only looks at modules
+without a guard (Flask's app run by `flask run`); SCHEMA.md "Python entries". Inside it,
 each route handler (`@app.route`, `@bp.route`, `@router.get`…), CLI command,
 or top-level call becomes a blob root. A function reachable from one root
 belongs to that blob; from several roots it joins a hub blob named after its
@@ -48,9 +51,10 @@ module (`db`, `models`). Unreached code is a grey "orphan" blob so dead code
 the AI left behind is visible.
 
 ### Data, not ints
-Data symbols = classes, module globals, SQL table names in string literals,
-request/session/db attribute roots (`request.form`, `session["user"]`,
-`db.users`). Two blobs share a dotted edge when they touch the same symbol.
+Data symbols = classes, module globals, SQL table names in string literals
+that read like a statement (verb first, its shape, no docstrings, no English
+words as tables; 2026-11-10), request/session/db attribute roots
+(`request.form`, `session["user"]`, `db.users`; Flask's only where imported). Two blobs share a dotted edge when they touch the same symbol.
 Local scalars are ignored.
 
 ### Error paths
