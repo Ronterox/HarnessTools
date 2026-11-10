@@ -127,7 +127,7 @@ def unchanged(blobs):
             for b in blobs]
 
 META = ('idx', 'ts', 'tool', 'file', 'said', 'turn', 'added', 'removed', 'session', 'agent', 'applied', 'seeded',
-        'author', 'empty')
+        'author', 'empty', 'kept', 'reset')
 EDGE_ORDER = {'main': 0, 'error': 1, 'data': 2, 'ref': 3}
 
 def edge_key(e):
@@ -233,6 +233,8 @@ class Analyzer:
                 **({'seeded': True} if getattr(st, 'seeded', False) else {}),
                 **({'author': st.author} if getattr(st, 'session', '') else {}),   # merged / reconciled timelines
                 **({'empty': True} if getattr(st, 'empty', False) else {}),
+                **({'kept': st.kept} if getattr(st, 'kept', None) else {}),
+                **({'reset': st.reset} if getattr(st, 'reset', None) else {}),
                 'blobs': step_blobs, 'edges': self.edges, 'areas': self.areas, 'stats': self.stats}
 
 def _zero(d):

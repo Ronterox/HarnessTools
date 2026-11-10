@@ -372,7 +372,7 @@ class Writer:
         rest = None
         if a['seed_git']:
             got = replay.steps(files, self.root, seed_git=True, git_reconcile=a['git_reconcile'])
-            rest = replay.untouched(self.root, got[-1].ts if got else iso(now), {st.file for st in got})
+            rest = replay.untouched(self.root, got[0].ts if got else iso(now), {st.file for st in got})
             write_atomic(self.path('rest.json'), dumps(rest))
         self.engine = replay.Engine(self.root, a['seed_git'], a['git_reconcile'], self.many, keep=False, rest=rest)
         self._head(self.root, self.many)

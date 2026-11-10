@@ -39,16 +39,25 @@ Missing bases, kept consistent:
   (`originalFile`) when the snapshot's differs.
 - seed_git: when a file's first touch is an Edit or a non-created bashEditDiff, its base is the file in the
   last commit of root's repository before that step's timestamp (`git log --before`). Without it (or with no
-  such commit / file) the base is missing as above. Also, the files tracked in the last commit before the last
-  step that no step touches are in every snapshot, from that commit (so names they define resolve).
+  such commit / file) the base is missing as above. Also, the files tracked in the last commit before the first
+  step that no step touches are in every snapshot up to the first git step, from that commit (so names they define
+  resolve): the session's start, never a later commit.
 - `seeded: true` marks a step whose base came from outside the replayed edits: git, `originalFile` or a Read.
 - git_reconcile: every commit touching root authored from the first step on, up to HEAD (so the last snapshot is
-  HEAD's tree, plus files git never tracked), is a step of its own at its author time (before the transcript steps of that second):
-  tool `git`, author / session / agent `git`, file '', said the commit subject, its own turn. It sets every file
-  under root the commit tracks to the commit's text and deletes the files its parent (or the previous git
-  step's commit) tracked that it does not; files git never tracked stay. added / removed are the real diff
-  between the snapshot and the commit; a commit that matches the snapshot is kept as a marker with `empty`.
-  Edits after it apply on the committed text, so drift from changes the transcripts never recorded ends there.
+  HEAD's tree plus the edits no commit holds and files git never tracked), is a step of its own at its author
+  time (before the transcript steps of that second): tool `git`, author / session / agent `git`, file '', said
+  the commit subject, its own turn. A git step never undoes an edit: per file under root of the commit or its
+  first parent, the commit's change (parent's text -> commit's text) is merged onto the snapshot, in this order.
+  A file no op touched yet takes the commit's text; a file the commit did not change, or whose snapshot has the
+  commit's text, stays; a file whose snapshot is the parent's text takes the commit's (or is deleted: a revert
+  too); a delete against a change keeps the snapshot (`kept`); else merge3(parent, snapshot, commit). When that
+  conflicts, merge3(base, snapshot, commit) with base the first text that merges cleanly, nearest the commit's
+  first, among the parent's (when git gave it to the file, its seed base or a git step's commit text, or the file
+  had it) and the file's last texts (ties: the parent's, then the newest; a snapshot that had the commit's text
+  and moved on thus stays). Reaching the parent's text (the edits conflict with the commit's change) or no clean
+  merge keeps the snapshot's text and names the file in the step's `kept`; a reset on another base that drops
+  snapshot lines names it in `reset`. Files git never tracked stay. added / removed are the real diff between the
+  snapshot before and after; a commit that changes nothing is kept as a marker with `empty`.
 """
 import collections, copy, functools, glob, heapq, json, os, re, subprocess, sys
 from dataclasses import dataclass, field, asdict
@@ -70,8 +79,10 @@ class Step:
     applied: bool = True   # False: the edit did not fit the snapshot, which stayed as it was
     seeded: bool = False   # the file's base came from git (seed_git)
     author: str = 'ai'     # 'git': a commit's checkpoint (git_reconcile)
-    empty: bool = False    # a git step whose commit matched the snapshot
+    empty: bool = False    # a git step that changed nothing in the snapshot
     before: dict = field(default=None, repr=False)  # seeded: {relpath: the text the edit applied to} (diffs.py)
+    kept: list = None      # a git step: files whose commit conflicted with the snapshot, which kept its text
+    reset: list = None     # a git step: files whose drift reset (a merge on a base not the parent's) dropped snapshot lines
 
 HEREDOC_BODY = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?\n\s*\2[ \t]*(?=\n|$)", re.S)
 HEREDOC = re.compile(r"cat\s*>\s*['\"]?([^\s'\"<>]+)['\"]?\s*<<-?\s*['\"]?(\w+)['\"]?\n(.*?)\n\2\s*$", re.S | re.M)
@@ -636,9 +647,9 @@ class Merger:
 
     def __init__(self, root=None, seed_git=False, many=False, keep=True, rest=None):
         self.root, self.seed_git, self.many, self.keep, self.rest = root, seed_git, many, keep, rest
-        self.tracked = None   # files the last git step's commit tracked
         self.snap, self.out, self.turns, self.n = {}, [], {}, 0
         self.hist = {}        # relpath -> the texts it had, oldest first
+        self.synced = {}      # relpath -> the text git last gave it (its seed base, a git step's commit text)
         self.seen = {}        # relpath -> (its text as a whole-file Read or a blind report last showed it, the snapshot's then)
         self.git_seen = False
         self.spent = None     # a fork's own record of the text boxes it spent (it never writes into shared boxes)
@@ -658,6 +669,7 @@ class Merger:
             self._restore()
         m = copy.copy(self)
         m.snap, m.turns, m.seen, m.out = dict(self.snap), dict(self.turns), dict(self.seen), []
+        m.synced = dict(self.synced)
         m.hist = {k: list(v) for k, v in self.hist.items()}
         m.spent = dict(self.spent or {})
         m.memo = m.trace = m._pending = None
@@ -715,27 +727,60 @@ class Merger:
     def _apply(self, op):
         root, snap, hist, seen = self.root, self.snap, self.hist, self.seen
         if op['op'] == 'git':
-            tree = git_tree(root, op['sha'])
-            if self.tracked is None:      # the first commit: what its parent tracked
-                self.tracked = set(_git(root, 'ls-tree', '-r', '-z', '--name-only', op['sha'] + '^', text=True).stdout.split('\0'))
+            # The commit's change (its first parent's text -> its text) is merged onto the snapshot, never the
+            # commit's text set over it: edits the commit does not hold (made before it but left out, or by another
+            # session) stay. A file no op touched yet takes the commit's text.
+            tree, par = git_tree(root, op['sha']), git_tree(root, op['sha'] + '^')
+            synced = self.synced
             a = r = 0
-            touched = False
-            for rel in sorted(set(tree) | (self.tracked & set(snap))):
-                before, after = snap.get(rel), tree.get(rel)
+            touched, kept, reset = False, [], []
+            for rel in sorted(set(tree) | set(par)):
+                before, p, c = snap.get(rel), par.get(rel), tree.get(rel)
+                if rel not in snap and rel not in hist:
+                    after = c
+                elif p == c:
+                    continue                # the commit did not change it
+                elif before == c:
+                    synced[rel] = c
+                    continue
+                elif before == p:
+                    after = c               # (a revert to a text the file had too)
+                elif before is None or c is None:
+                    kept.append(rel)        # a delete against a change: the snapshot stays
+                    continue
+                elif (after := merge3(p or '', before, c)) is None:
+                    # A conflict: the snapshot may have drifted from the parent's text (a change the transcripts
+                    # never recorded, which the commit holds). The merge base is then the first text that merges
+                    # cleanly, nearest the commit's first, among those the snapshot descends from: the parent's,
+                    # when git gave it to the file (its seed base or a git step's text) or the file had it, and the
+                    # file's last texts in the replay (ties: the parent's, then the newest). Edits made after it
+                    # stay (a snapshot that had the commit's text and moved on merges on it as it is). Reaching the
+                    # parent's text, the snapshot's edits conflict with the commit's change.
+                    texts = ([p] if rel in synced and synced[rel] == p or p in hist.get(rel, ()) else []) + [
+                        t for t in dict.fromkeys(reversed(hist.get(rel, []))) if t != p]
+                    for base in sorted(texts, key=lambda t: sum(_diff_counts(t, c))):
+                        if base == p or (after := merge3(base, before, c)) is not None:
+                            break
+                    if after is None:
+                        kept.append(rel)    # the snapshot stays
+                        continue
+                    if _diff_counts(before, after)[1]:
+                        reset.append(rel)   # the drift reset dropped lines of the snapshot
+                synced[rel] = c
                 if before == after:
                     continue
                 touched = True
                 da, dr = _diff_counts(before or '', after or '')
                 a, r = a + da, r + dr
                 if after is None:
-                    snap.pop(rel)
+                    snap.pop(rel, None)
                 else:
                     snap[rel] = after
                     self._keep(rel, after)
-            self.tracked = set(tree)
             turn = self.turns.setdefault(('git', op['sha']), len(self.turns))
             return self._step(Step(self.n, op['ts'], 'git', '', op['said']['said'], turn, a, r, True, dict(snap),
-                                   'git', 'git', True, False, 'git', not touched))
+                                   'git', 'git', True, False, 'git', not touched, kept=kept or None,
+                                   reset=reset or None))
         p = op['path']
         if not self.under(p):
             return None
@@ -754,6 +799,8 @@ class Merger:
         if before is None and self.seed_git and root and op['op'] != 'write' and not op.get('created'):
             before = base0 = git_base(root, rel, op['ts'])
             seeded = before is not None
+            if seeded:
+                self.synced[rel] = before
         applied = True
         if op['op'] == 'write' and (op['ok'] or op['tool'] == 'Bash'):    # a failing command's heredoc still ran
             after = op['text']
@@ -1089,7 +1136,7 @@ class Engine:
         out = self.drain('~')               # after every ISO timestamp
         m = self.merger
         if m.seed_git and m.rest is None and self.root and m.out:
-            rest = untouched(self.root, m.out[-1].ts, {st.file for st in m.out})
+            rest = untouched(self.root, m.out[0].ts, {st.file for st in m.out})
             for st in m.out:
                 if st.author == 'git':
                     break                   # from the first commit on, the commits' trees hold those files

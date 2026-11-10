@@ -419,7 +419,10 @@ unless an edit failed or was seeded, so its bytes stay as before):
   Before giving up, a failing bashEditDiff is also tried on the file's earlier texts (Claude Code diffs against
   the text it last saw), and a hunk whose changed lines no longer match but whose context lines do replaces what
   lies between them; both are not marked seeded. With `--seed-git`, the files tracked in the last commit before
-  the last step that no step touches are in every snapshot, from that commit, so the names they define resolve.
+  the first step that no step touches are in every snapshot up to the first git step, from that commit, so the
+  names they define resolve. That is the session's start: a file a later commit brings appears at that commit's
+  git step (`--git-reconcile`), never earlier (2026-11-10; before, the commit before the last step seeded them,
+  so step 0 showed files from later days).
 `timeline.py --sessions-out F` writes the sessions with steps: `[{"id", "uuid", "start", "end", "steps", "prompt"}]`
 (`id` as the steps' `session`, start / end over the session and its subagents, `prompt` the first line of the first
 typed prompt, 120 chars).
@@ -427,13 +430,43 @@ When the timeline has steps from more than one session, the same list is also th
 timeline (v3 and --v2), right after `"session"`; with one session the key is absent (byte-identical to before).
 - `author`: on every step of a merged or reconciled timeline (every step that has a `session`), `"git"` on git steps
   and `"ai"` on the others; a single-transcript timeline without git steps has no `author` (all `"ai"`). With
-  `--git-reconcile`, each commit touching root authored from the first step on, up to HEAD (so the last snapshot is
-  HEAD's tree plus files git never tracked), is a step at its author time: `tool` `"git"`, `session` and `agent` `"git"`, `file` `""`, `said` the commit
-  subject, a `turn` of its own, and the usual blobs / edges / stats. It sets every file under root the commit
-  tracks to the commit's text and deletes the files the previous commit tracked that it does not (files git never
-  tracked stay); `added` / `removed` are the real line diff between the snapshot and the commit tree. A commit
-  that matches the snapshot is kept as a marker with `"empty": true` (`added` / `removed` 0). Edits after it apply
-  on the committed text, so drift from changes the transcripts never recorded ends at the next commit.
+  `--git-reconcile`, each commit touching root authored from the first step on, up to HEAD, is a step at its
+  author time: `tool` `"git"`, `session` and `agent` `"git"`, `file` `""`, `said` the commit subject, a `turn` of
+  its own, and the usual blobs / edges / stats. A git step never undoes an edit (2026-11-10; before, it set every
+  tracked file to the commit's text, so a commit made while other edits were not committed yet, or made by
+  another session, rolled those edits back until a later commit or edit brought them again). Per file under root
+  in the commit or its first parent, the commit's change (parent's text -> commit's text) is merged onto the
+  snapshot, in this order:
+  - a file no step has touched yet: the commit's text (deleted when the commit has none);
+  - the commit did not change the file, or the snapshot already has the commit's text: the snapshot stays;
+  - the snapshot is the parent's text: the commit's text (or the file is deleted). This also takes a revert
+    (`git revert`, a commit that removes what the one before added) back to a text the file had before;
+  - a commit deleting a file the snapshot changed, or changing one the snapshot deleted: the snapshot stays
+    and the file is listed in `kept` (below);
+  - else `merge3(parent, snapshot, commit)` (`git merge-file`): edits the commit does not hold stay, the
+    commit's change comes in;
+  - when that conflicts, either the edits conflict with the commit's change, or the snapshot drifted from git (a change the
+    transcripts never recorded, e.g. a command whose change has no bashEditDiff, which the commit holds). The
+    texts the snapshot descends from are tried as the merge base, nearest the commit's first (fewest changed
+    lines; ties: the parent's, then the newest): the parent's text, when it is the text git last gave the file
+    (its `--seed-git` base or a git step's commit text) or one of the file's last texts, and the file's last 16
+    texts in the replay. The first that merges cleanly, `merge3(that text, snapshot, commit)`, is the result:
+    edits made after that text stay and the drift is reset (the snapshot's own text always merges: when it comes
+    first the file takes the commit's, the snapshot being nearer the commit than the parent is; when the commit's
+    text is one the snapshot had, it comes first and the snapshot, which moved on from it, stays). On a single
+    working tree a commit whose text differs from an edit's mostly means the snapshot is wrong (someone changed
+    the file after the edit), so drift wins over a conflict unless the parent's text is at least as near the
+    commit's as the snapshot's. A reset that drops lines of the snapshot (an edit's line the commit has
+    otherwise, or lines the drift had wrong) lists the file in the step's `"reset": [path, ...]` (absent when
+    empty), so a reader can tell a reset that may have overridden an edit from a plain merge;
+  - reaching the parent's text first (the edits conflict with the commit's change), or no base merging cleanly:
+    the snapshot's text stays and the file is listed in the step's `"kept": [path, ...]` (absent when empty).
+  Files git never tracked stay. So the last snapshot is HEAD's tree plus the edits no commit holds (and files git
+  never tracked). Cost: a change the transcripts never recorded in a part of a file no later commit changes (a
+  revert by a failing command, which records no bashEditDiff) is no longer reset by the next commit; it stays
+  until a commit changes that part of the file. `added` / `removed` are the real line diff between the snapshot before and after; a commit that
+  changes nothing is kept as a marker with `"empty": true` (`added` / `removed` 0). The rule only reads the
+  commit, its parent and the replay's own state, so a live writer applies it exactly as a batch build.
 - Ordering and credit: a directory's sessions are read in the order of their first ISO timestamp (records whose
   `timestamp` is not an ISO string, e.g. integer ms, are skipped here and in `--sessions-out` start / end), so a call
   copied into a resumed session counts for the original. On a tie (a resumed file that copies the original's very

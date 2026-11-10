@@ -164,7 +164,8 @@ def _png(color, size=(120, 60)):
 def _image_repo(tmp_path):
     """A repo whose a.png is red at the base commit, green at a commit during the session and blue at one after its
     last edit; the disk then holds a yellow one. With --git-reconcile the steps are Edit, git (green), Edit, git (blue);
-    an untouched file is seeded from the last commit before the last step (replay.py), so a.png is blue at step 0."""
+    an untouched file is seeded from the last commit before the first step (the session's start, replay.py), so a.png
+    is red at step 0."""
     repo = tmp_path / 'repo'
     repo.mkdir()
     env = lambda at: {'GIT_AUTHOR_DATE': at, 'GIT_COMMITTER_DATE': at, 'GIT_AUTHOR_NAME': 't', 'GIT_AUTHOR_EMAIL': 't@t',
@@ -204,8 +205,8 @@ def test_thumbnails_come_from_git_objects_not_the_disk(tmp_path):
     (tmp_path / 't.json').write_text(json.dumps(tl), encoding='utf-8')
     r = diffs.load_static(str(tmp_path / 't.json'), out)
     assert [s['tool'] for s in r.steps] == ['Edit', 'git', 'Edit', 'git']
-    green, blue = (thumbs._make(_png(c), 'image/png') for c in ('green', 'blue'))
-    assert [r.thumbs(i).get('a.png') for i in range(4)] == [blue, green, green, blue]
+    red, green, blue = (thumbs._make(_png(c), 'image/png') for c in ('red', 'green', 'blue'))
+    assert [r.thumbs(i).get('a.png') for i in range(4)] == [red, green, green, blue]
     assert ['t' in fv for fv in r.fvs] == [True, True, False, True]   # a thumbnail changes only with the image's bytes
     from PIL import Image
     import base64
