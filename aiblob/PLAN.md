@@ -526,10 +526,28 @@ Plan: .omc/plans/aiblob-diffs.md (layout B, sink keyed by the existing hashes). 
   appears and serves the steps again as their file lines are written. liveserve reads the whole diffs/steps.ndjson
   when steps come (22 KB on aigource).
 
-## Clusters inside big blobs outcome (2026-11-09): schema v6
+## Clusters inside blobs outcome (2026-11-09, rule changed 2026-11-10): schema v6
 Plan: .omc/plans/aiblob-clusters.md; the user picked draft variant A "Clusters" as it was, with the big emojis.
-- clusters.py, run by areas.Zoner after the areas (off with --no-smart): a code blob at the cut size (500+ lines or 50+
-  functions, not tests) gets `clusters` [{id, cap, emoji, funcs}]. The fresh grouping is the draft's Louvain and
+- clusters.py, run by areas.Zoner after the areas (off with --no-smart): a code blob (not tests) gets `clusters`
+  [{id, cap, emoji, funcs}]. First rule: blobs at the cut size (500+ lines or 50+ functions). The user's rule since
+  2026-11-10, "any size, 3+ groups": 12+ functions (clusters.MIN_FUNCS: under that the plain drill-down names every
+  function readably) and 3+ fresh groups besides the loose ends (MIN_GROUPS); fewer and the plain drill-down stays.
+  The cap's floor went from 6 to 3 (it only bound under 30 functions: 15 functions were forced into up to 6). The
+  verdict holds like the groupings: HOLD steps before a blob switches view, counted over the blob's age (every code
+  blob's steps are counted, clustered or not), so it applies at once only on the step a blob first appears and a blob
+  crossing the line back and forth does not flicker, nor shows clusters for a step after a long plain life (review
+  follow-up; the first version counted from the step the blob first reached the floor). A held view is never a
+  single cluster: under 2 besides the loose ends the blob draws plain that step. Measured with HEAD's and the new
+  clusters.apply over the same expanded steps (clustering runs last, so this equals a rebuild; a scratch rebuild
+  agreed exactly before the age hold): aigource 8 -> 31 blobs clustered at the last step, 5,143 -> 20,627
+  blob-steps, 28 -> 69 distinct blobs, 12 -> 14 view switches of a blob present on both steps; file ~8.93 -> ~9.08
+  MB; Scene rendering engine (hub:src.render, 39 functions, 308 lines) 7 clusters. aiblob map
+  (web/timeline-aiblob.json): 5 -> 18 at the last step, 3,881 -> 9,963 blob-steps, 11 -> 34 distinct, 9 -> 10
+  switches; orphan:analyze>analyze.analyze (11 functions) is plain now instead of one cluster. The dials keep the
+  cut size as their limits. Tests: the 12 / 11 function boundary, loose ends no group, a blob turned plain comes
+  back with new ids, a long-lived blob waits the hold, live == batch at the default floors (the verifier's 14
+  mutants: 12 killed, 'due counts tests' was equivalent and its clause is gone, 'shrinking blob loses state' no
+  longer applies; its equivalent, an untracked blob under the floor, is killed). The fresh grouping is the draft's Louvain and
   post-steps ported bit for bit (rng(), visit order, tie order): on the draft's three viz_run snapshots (86 / 146 / 324
   functions) the same 8 / 11 / 14 clusters, captions and emoji. Stability is areas.py's rule (HOLD, REGROUP, the cap;
   the loose ends always id 0); the state is replaced each step, never written to, so a forked Zoner shares nothing.

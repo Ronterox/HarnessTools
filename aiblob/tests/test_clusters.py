@@ -34,6 +34,13 @@ def groups(n=3, k=6, lines=30, extra=None):
     return fs
 
 
+def cliques(n, k, lines=8, mod='src', tag='c'):
+    """n groups of k functions each calling every other of its group, one call from each group to the next: n
+    communities nothing splits."""
+    return [fn(mod, f'{tag}{g}_{i}', lines, [f'{tag}{g}_{j}' for j in range(k) if j != i] + ([f'{tag}{(g + 1) % n}_0'] if i == 0 else []))
+            for g in range(n) for i in range(k)]
+
+
 def table(b):
     return {c['id']: set(c['funcs']) for c in b['clusters']}
 
@@ -74,26 +81,35 @@ def test_louvain_finds_planted_communities_and_the_post_steps_hold():
     assert [loose for loose, _ in got] == [False] * (len(got) - 1) + [True]
 
 
-def test_clusters_only_for_code_blobs_at_the_cut_size():
-    big = groups()                                                    # 18 x 30 = 540 lines
-    small = [fn('src', 'tiny', 5)]
-    many = [fn('lib', f'f{i}', 2) for i in range(areas.SPLIT_FUNCS)]  # 50 functions, 100 lines
-    got, _ = clusters.apply([blob(big), blob(small, 'src.small'), blob(many, 'lib.many'), blob(big, 'tests.t', 'tests'),
-                             {'id': 'file:a.txt', 'kind': 'text', 'size': 900, 'funcs': []}], {})
-    assert ['clusters' in b for b in got] == [True, False, True, False, False]
-    for b in got[::2][:2]:
+def test_clusters_for_any_size_with_three_groups_never_for_tiny_or_split_blobs():
+    big = groups()                                                    # 18 x 30 = 540 lines, 3 groups
+    mid = groups(4, 4, lines=8)                                       # 16 functions, 128 lines, 4 groups
+    two = cliques(2, 8)                                               # 16 functions, 2 groups: a split, not a map
+    tiny = groups(3, 3, lines=60)                                     # 9 functions (540 lines), 3 groups: under the floor
+    got, _ = clusters.apply([blob(big), blob(mid, 'src.mid'), blob(two, 'src.two'), blob(tiny, 'src.tiny'),
+                             blob(big, 'tests.t', 'tests'), {'id': 'file:a.txt', 'kind': 'text', 'size': 900, 'funcs': []}], {})
+    assert ['clusters' in b for b in got] == [True, True, False, False, False, False]
+    for b in got[:2]:
         assert sorted(q for c in b['clusters'] for q in c['funcs']) == sorted(f['qual'] for f in b['funcs'])
         assert [c['id'] for c in b['clusters']] == sorted({c['id'] for c in b['clusters']})
         assert all(set(c) == {'id', 'cap', 'emoji', 'funcs'} for c in b['clusters'])
+        assert sum(c['id'] != clusters.LOOSE for c in b['clusters']) >= clusters.MIN_GROUPS
+
+
+def test_cluster_bounds_for_small_blobs():
+    # round(1.1 x sqrt(n)) clusters at most, loose ends included, between MIN_GROUPS and 14: 15 functions get 4, not 6
+    assert [clusters.cap_of(n) for n in (1, 12, 15, 29, 30, 39, 86, 162, 400)] == [3, 4, 4, 6, 6, 7, 10, 14, 14]
+    (b,), _ = clusters.apply([blob(groups(5, 3, lines=20))], {})      # 15 functions in 5 groups: merged down to 4
+    assert len(b['clusters']) == 4 and all(len(c['funcs']) >= 3 for c in b['clusters'])
 
 
 def test_captions_from_names_and_the_loose_ends():
-    fs = [fn('src', f'draw_{w}', 80, [f'draw_{v}' for v in ('a', 'b', 'c') if v != w]) for w in ('a', 'b', 'c')]
-    fs += [fn('src', f'tl_{w}', 80, [f'tl_{v}' for v in ('a', 'b', 'c') if v != w]) for w in ('a', 'b', 'c')]
-    fs += [fn('src', 'solo', 80)]
+    ws = ('a', 'b', 'c', 'd')
+    fs = [fn('src', f'{g}_{w}', 20, [f'{g}_{v}' for v in ws if v != w]) for g in ('draw', 'tl', 'model') for w in ws]
+    fs += [fn('src', 'solo', 20)]
     got, _ = clusters.apply([blob(fs)], {})
     caps = {c['cap']: c['emoji'] for c in got[0]['clusters']}
-    assert caps == {'draw': '🖌️', 'timeline': '⏱️', 'loose ends': '🧷'}
+    assert caps == {'draw': '🖌️', 'timeline': '⏱️', 'model': '🧠', 'loose ends': '🧷'}
     assert next(c for c in got[0]['clusters'] if c['cap'] == 'loose ends')['id'] == clusters.LOOSE
     assert clusters.words('drawSceneHUD_now2') == ['draw', 'scene', 'hud', 'now2']
 
@@ -161,6 +177,61 @@ def test_a_new_grouping_is_adopted_only_after_it_held(monkeypatch):
     # flipped and flipped back before it held: nothing moves
     steps = [[blob(base)]] * n + [[blob(flip)]] * 20 + [[blob(base)]] * (areas.HOLD + 5)
     assert all(table(b[0]) == tabs[0] for b in run(steps)[0])
+
+
+def test_a_blob_crossing_the_three_group_line_keeps_its_view_until_the_other_verdict_holds():
+    three, two = cliques(3, 6), cliques(2, 9, tag='h')               # 18 functions both: 3 groups, then 2 (other ones)
+    n = 100
+    steps = [[blob(three)]] * n + [[blob(two)], [blob(three)]] * 30 + [[blob(two)]] * (areas.HOLD + 5)
+    shown = ['clusters' in b[0] for b in run(steps)[0]]
+    assert all(shown[:n + 60])                                      # flipping every step: the view never flickers
+    assert shown.index(False) == n + 60 + areas.HOLD                # 2 groups held HOLD steps: plain from then on
+    assert not any(shown[n + 60 + areas.HOLD:])
+    # and back: 3 groups again turns the clusters on only once that has held; ids are new
+    out, state = run(steps)
+    back = [[blob(three)]] * (areas.HOLD + 5)
+    got, _ = run(back, state)
+    on = ['clusters' in b[0] for b in got]
+    assert on.index(True) == areas.HOLD and all(on[areas.HOLD:])
+    first = {c['id'] for c in out[0][0]['clusters']}
+    assert not first & {c['id'] for c in got[-1][0]['clusters']}
+    # a blob shrinking under the floor holds the same way
+    small = [[blob(three)]] * n + [[blob(three[:9])]] * (areas.HOLD + 2)
+    shown = ['clusters' in b[0] for b in run(small)[0]]
+    assert shown.index(False) == n + areas.HOLD
+
+
+def test_the_floor_is_twelve_functions_and_the_loose_ends_are_no_group():
+    twelve = cliques(3, 4)                                          # 3 groups of 4
+    eleven = [f for f in twelve if f['name'] != 'c2_3']             # 3 groups of 4, 4, 3
+    two_and_loose = cliques(2, 5) + [fn('src', 'lone1', 8), fn('src', 'lone2', 8)]    # 12: 2 groups + 2 loose ends
+    got, _ = clusters.apply([blob(twelve, 'src.a'), blob(eleven, 'src.b'), blob(two_and_loose, 'src.c')], {})
+    assert ['clusters' in b for b in got] == [True, False, False]
+    assert sum(c['id'] != clusters.LOOSE for c in got[0]['clusters']) == 3
+
+
+def test_a_blob_turned_plain_forgets_its_members_and_comes_back_with_new_ids():
+    full = cliques(3, 6)
+    steps = [[blob(full)]] * 100 + [[blob(full[:9])]] * (areas.HOLD + 2) + [[blob(full)]] * (areas.HOLD + 2)
+    out, _ = run(steps)
+    on = ['clusters' in b[0] for b in out]
+    assert on[:100 + areas.HOLD] == [True] * (100 + areas.HOLD) and not any(on[100 + areas.HOLD:100 + areas.HOLD + 2 + areas.HOLD])
+    assert on[-2:] == [True, True]
+    before, after = table(out[0][0]), table(out[-1][0])
+    assert sorted(map(sorted, before.values())) == sorted(map(sorted, after.values()))   # the same groups ...
+    assert not set(before) & set(after)                                                  # ... under new ids
+
+
+def test_a_blob_that_has_been_around_waits_the_hold_before_it_is_clustered():
+    # plain for 100 steps (11 functions), then 12 for one step and back: never clustered, not even for that step
+    eleven = [f for f in cliques(3, 4) if f['name'] != 'c2_3']
+    steps = [[blob(eleven)]] * 100 + [[blob(cliques(3, 4))]] + [[blob(eleven)]] * 5
+    assert not any('clusters' in b[0] for b in run(steps)[0])
+    # reaching it for good: clustered once that has held HOLD steps; a blob new at 12 functions at once
+    steps = [[blob(eleven)]] * 100 + [[blob(cliques(3, 4))]] * (areas.HOLD + 2)
+    on = ['clusters' in b[0] for b in run(steps)[0]]
+    assert on.index(True) == 100 + areas.HOLD and all(on[100 + areas.HOLD:])
+    assert 'clusters' in run([[blob(eleven)], [blob(eleven), blob(cliques(3, 4), 'src.new')]])[0][1][1]
 
 
 def test_new_functions_never_open_clusters_past_the_cap():
@@ -255,9 +326,12 @@ def c_mini_snaps():
 
 
 def lowered(monkeypatch):
-    """c-mini's blobs are small: gates lowered so its bigger blobs get clusters (and give up a piece or two)."""
+    """c-mini's blobs are small: floors lowered so its bigger blobs get clusters (and, cut gates lowered, give up a
+    piece or two)."""
     monkeypatch.setattr(areas, 'SPLIT_LINES', 12)
     monkeypatch.setattr(areas, 'SPLIT_FUNCS', 3)
+    monkeypatch.setattr(clusters, 'MIN_FUNCS', 3)
+    monkeypatch.setattr(clusters, 'MIN_GROUPS', 1)
 
 
 def test_c_mini_clusters_survive_the_timeline_incremental_equals_full(monkeypatch):
@@ -327,3 +401,30 @@ def test_live_code_lists_every_local_module_the_build_imports():
     for f in ('timeline.py', 'areas.py', 'live.py'):
         walk(f)
     assert 'clusters.py' in seen and seen <= set(live.CODE), sorted(seen - set(live.CODE))
+
+
+def test_engine_live_equals_batch_at_the_default_floors(tmp_path, monkeypatch):
+    # five call groups in one C file, rewritten with two, then with five again: the 3-group verdict and its hold run
+    # through the timeline and the live writer (with restarts) as in a batch build
+    import live
+    import test_clusters_page as page
+    from test_live import exported_equals_batch, follow
+    from test_replay import SID, msg, result, text, tool, ts, write_lines
+    root, path = '/work/e', '/work/e/engine.c'
+    five = page.engine()
+    monkeypatch.setattr(page, 'GROUPS', {k: page.GROUPS[k] for k in ('draw', 'model')})
+    two = page.engine()
+    monkeypatch.undo()
+    recs, t = [msg('user', 'write the engine', ts=ts(0))], 1
+    for k, body in enumerate([five, two, five]):
+        call = tool(f'w{k}', 'Write', file_path=path, content=body)
+        recs += [msg('assistant', [text(f'step {k}'), call], ts=ts(t), cwd=root), dict(result(f'w{k}'), timestamp=ts(t, 1))]
+        t += 1
+    proj = tmp_path / 'src'
+    write_lines(proj / f'{SID}.jsonl', recs)
+    w, store, p = follow(tmp_path, str(proj), root, restarts=2, check_every=1, seed=3)
+    exported_equals_batch(store, p, root)
+    steps = timeline.expand(json.loads(live.export_text(store)))
+    # step 1 folds the two groups left into engine.<module> (14 functions, 3 groups: clustered at once, a short life
+    # holds nothing); step 2 shrinks it to main again: still held on, but a single cluster is never shown
+    assert [[b['id'] for b in st['blobs'] if 'clusters' in b] for st in steps] == [['hub:engine'], ['engine.<module>'], ['hub:engine']]

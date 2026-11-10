@@ -1,17 +1,22 @@
-"""Clusters inside big blobs (SCHEMA.md "v6"): the call communities of a blob's functions, for the page's drill-down.
+"""Clusters inside blobs (SCHEMA.md "v6"): the call communities of a blob's functions, for the page's drill-down.
 
     blobs, state = clusters.apply(blobs, state)   # areas.Zoner.apply, after merges, cuts and areas; state: {} at first
 
-A blob at the cut size (areas.SPLIT_LINES lines or areas.SPLIT_FUNCS functions, never a tests blob) gets `clusters`:
-[{id, cap, emoji, funcs: [qual...]}] sorted by id, its functions in the blob's order. The page draws it as a few
-sub-blobs instead of one crowd of functions.
+A code blob of MIN_FUNCS or more functions (never a tests blob) whose functions fall into MIN_GROUPS or more call
+groups (the loose ends not counted) gets `clusters`: [{id, cap, emoji, funcs: [qual...]}] sorted by id, its functions
+in the blob's order. The page draws it as a few sub-blobs instead of one crowd of functions; any other blob keeps the
+plain drill-down. The floor: under 12 functions the plain drill-down names every function and draws every call
+readably, and 3 groups of 2-4 functions would only add a level to click through; the 3 groups: with 2 (or 1) the
+view is a split, not a map (aiblob's own `analyze`, 11 functions in 500+ lines, came out as one cluster).
 
 The fresh grouping is the draft's (web/index.html clusters view, variant A), bit for bit: Louvain modularity over the
 blob's own calls, undirected, weighted by call sites (resolution RESOLUTION, the page's rng() seeded SEED shuffling the
 visit order, levels until nothing moves); functions with no call inside the blob are the loose ends; a single-function
 community joins the one it has the most call sites with per sqrt(its lines); then the smallest by lines joins its best
 linked one the same way (the loose ends when it has no link) until at most round(PER_ROOT x sqrt(n)) clusters are
-left, clamped to MIN_CLUSTERS..MAX_CLUSTERS, loose ends included. Ordered loose ends last, then by lines.
+left, clamped to MIN_CLUSTERS..MAX_CLUSTERS, loose ends included. Ordered loose ends last, then by lines. The draft
+clamped to 6..14; 6 only bound under 30 functions (1.1 x sqrt(30) = 6.02), where it forced 15 functions into up to
+6 clusters: the floor is MIN_GROUPS (3) now, the same for 30+ functions (every blob the draft measured).
 
 Stability: a blob's clusters keep their ids and members from step to step, as areas.Zoner keeps its areas. The fresh
 grouping is recomputed only when the blob's functions, their lines or the calls between them changed, and each fresh
@@ -20,9 +25,17 @@ A function new to the blob joins its fresh group's cluster (a group no cluster m
 the cluster it has the most call sites with, then the smallest); a function gone leaves; the others stay where they
 are until the fresh grouping is adopted wholesale (matched groups keep their cluster's id, others get new ids), which
 needs both: the same fresh grouping has come out on each of the areas.HOLD steps after the one it first came out on
-(or half the blob's clustered steps so far, for short ones), and it would change some cluster's members by more than
-areas.REGROUP of their lines (symmetric difference over union); or at once, when the clusters would exceed the cap.
-A blob that drops under the cut size forgets its clusters. Everything is ordered by position, id or an explicit key,
+(or half the steps the blob has existed, for short ones), and it would change some cluster's members by more than
+areas.REGROUP of their lines (symmetric difference over union); or at once, when the clusters would exceed the cap,
+or when fewer than MIN_GROUPS clusters are left besides the loose ends and the fresh grouping has enough.
+Whether a blob is clustered at all holds the same way: the verdict (MIN_FUNCS+ functions and MIN_GROUPS+ fresh
+groups) changes the view only once it has come out the same on each of the areas.HOLD steps after the one it first
+came out on (or half the steps the blob has existed, when fewer): the verdict on the step a blob first appears applies
+at once, while a blob that has been around and reaches the line (or leaves it) waits the hold. Every code blob's age
+is counted for that, clustered or not. A blob crossing the line
+back and forth keeps its view until the other verdict holds; turned on, it adopts the fresh grouping (new ids,
+never reused); turned off, it forgets its members. A held view is never a single cluster: while fewer than 2 are
+left besides the loose ends the blob shows plain (and goes on as clustered). Everything is ordered by position, id or an explicit key,
 never by hash, so a run is the same whatever PYTHONHASHSEED.
 
 Captions (guess()): the first word of the members' names, abbreviations expanded (tl -> timeline), weighted by
@@ -35,10 +48,11 @@ import math
 import re
 from collections import Counter, defaultdict
 
-import areas             # SPLIT_LINES, SPLIT_FUNCS, HOLD, REGROUP, read at call time (tests lower them)
+import areas             # HOLD, REGROUP, read at call time
 
 RESOLUTION, SEED, LEVELS, PASSES = 1.3, 7, 12, 30
-MIN_CLUSTERS, MAX_CLUSTERS, PER_ROOT = 6, 14, 1.1
+MIN_FUNCS, MIN_GROUPS = 12, 3       # read at call time (tests lower them)
+MIN_CLUSTERS, MAX_CLUSTERS, PER_ROOT = MIN_GROUPS, 14, 1.1
 LOOSE = 0                # the loose ends' id
 
 ABBR = {'tl': 'timeline', 'fmt': 'format', 'nv': 'nvim', 'ss': 'search', 'sv': 'structure', 'syn': 'syntax',
@@ -58,9 +72,13 @@ LOOSE_CAP, LOOSE_EMOJI, ANY_EMOJI = 'loose ends', '🧷', '🧩'
 
 
 def due(b):
-    """A blob that gets clusters: the cut size (areas.py), code, not tests."""
-    fs = b.get('funcs') or ()
-    return bool(fs) and b.get('kind') != 'tests' and (b['size'] >= areas.SPLIT_LINES or len(fs) >= areas.SPLIT_FUNCS)
+    """A code blob clusters are tried on: MIN_FUNCS+ functions (apply() leaves tests blobs out before)."""
+    return len(b.get('funcs') or ()) >= MIN_FUNCS
+
+
+def real(groups):
+    """The groups of a fresh grouping besides the loose ends."""
+    return sum(not loose for loose, _ in groups)
 
 
 def cap_of(n):
@@ -268,9 +286,10 @@ def guess(groups, names, lines, adj):
 
 # --- per blob, step to step -----------------------------------------------------------------------------------------
 
-def held(s):
-    """The blob's current fresh grouping came out HOLD or more of its clustered steps ago (or half of them)."""
-    return s['k'] - s['since'] >= min(areas.HOLD, s['k'] // 2)
+def held(s, key='since'):
+    """The blob's current fresh grouping (key 'vk': its verdict) came out HOLD or more steps ago (or half the steps
+    the blob has existed)."""
+    return s['k'] - s[key] >= min(areas.HOLD, s['k'] // 2)
 
 
 def regroup(s, quals, lines, inner):
@@ -329,7 +348,7 @@ def regroup(s, quals, lines, inner):
                     if t in here:
                         tie[here[t]] += 1
                 assign[q] = min(in_use, key=lambda c: (-tie[c], size[c], c))
-        moved = len(set(assign.values())) > top
+        moved = len(set(assign.values())) > top or len(set(assign.values()) - {LOOSE}) < MIN_GROUPS <= real(fresh)
     if moved:
         for gi in range(len(fresh)):
             cid(gi)
@@ -342,7 +361,17 @@ def apply(blobs, state):
     never written to (a forked Zoner shares it)."""
     out, new = [], {}
     for b in blobs:
-        if not due(b):
+        if not b.get('funcs') or b.get('kind') == 'tests':
+            out.append(b)
+            continue
+        prev = state.get(b['id'])
+        s = dict(prev) if prev else {'k': -1, 'next': 1, 'assign': None, 'fresh': None, 'since': 0, 'ripe': False,
+                                     'sig': None, 'out': None, 'on': False, 'verdict': None, 'vk': 0}
+        s['k'] += 1                    # the blob's age: steps since it first appeared (every code blob is counted)
+        if not due(b) and not s['on']:
+            if s['verdict'] is not False:
+                s['verdict'], s['vk'] = False, s['k']
+            new[b['id']] = s
             out.append(b)
             continue
         fs = b['funcs']
@@ -351,19 +380,25 @@ def apply(blobs, state):
         mine = set(quals)
         inner = {f['qual']: tuple(c['to'] for c in f['calls'] if c['to'] in mine) for f in fs}
         sig = (tuple(quals), tuple(lines[q] for q in quals), tuple(inner[q] for q in quals))
-        prev = state.get(b['id'])
-        s = dict(prev) if prev else {'k': -1, 'next': 1, 'assign': None, 'fresh': None, 'since': 0, 'ripe': False,
-                                     'sig': None, 'out': None}
-        s['k'] += 1
         adj = deg = None
-        if sig != s['sig']:
+        moved = False
+        if (due(b) or s['on']) and sig != s['sig']:
             s['sig'] = sig
             adj, deg = graph(quals, sig[2])
             groups = [(loose, tuple(quals[i] for i in ids)) for loose, ids in fresh(sig[1], adj, deg)]
             if groups != s['fresh']:
                 s['fresh'], s['since'], s['ripe'] = groups, s['k'], False
-            regroup(s, quals, lines, inner)
-        elif not s['ripe'] and held(s):
+            moved = True
+        verdict = due(b) and real(s['fresh']) >= MIN_GROUPS
+        if verdict != s['verdict']:
+            s['verdict'], s['vk'] = verdict, s['k']
+        if s['on'] != verdict and held(s, 'vk'):
+            s['on'], s['assign'], s['out'] = verdict, None, None
+        if not s['on']:
+            new[b['id']] = s
+            out.append(b)
+            continue
+        if moved or s['assign'] is None or not s['ripe'] and held(s):
             regroup(s, quals, lines, inner)
         if adj is None:
             adj, deg = graph(quals, sig[2])
@@ -379,5 +414,5 @@ def apply(blobs, state):
         if table != s['out']:
             s['out'] = table
         new[b['id']] = s
-        out.append(dict(b, clusters=s['out']))
+        out.append(dict(b, clusters=s['out']) if len(table) - (table[0]['id'] == LOOSE) >= 2 else b)
     return out, new

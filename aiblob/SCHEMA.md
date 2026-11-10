@@ -239,9 +239,13 @@ page's `expandSteps()` read v3, v4 and v5 (a file whose full steps carry no `are
 
 ## v6 (2026-11-09): clusters inside big blobs
 
-Top level `"schema": 6`. A code blob still at the cut size after the folds and cuts (500+ lines or 50+ functions,
-`areas.SPLIT_LINES` / `areas.SPLIT_FUNCS`; never a tests blob, never with `timeline.py --no-smart`) carries the call
-communities of its functions, which the page's drill-down draws instead of every function. Everything else is v5;
+Top level `"schema": 6`. A code blob (after the folds and cuts; never a tests blob, never with `timeline.py
+--no-smart`) of 12+ functions (`clusters.MIN_FUNCS`) whose functions fall into 3+ call groups besides the loose ends
+(`clusters.MIN_GROUPS`), whatever its lines, carries the call communities of its functions, which the page's
+drill-down draws instead of every function; any other blob keeps the plain drill-down. Under 12 functions the plain
+drill-down names every function and draws every call readably; with 1-2 groups the view would be a split, not a map.
+(First rule, 2026-11-09: blobs at the cut size, 500+ lines or 50+ functions; changed 2026-11-10 by the user: "any
+size, 3+ groups". The page's dials keep the cut size as their limits.) Everything else is v5;
 `expand()` and the page's `expandSteps()` read v3 to v6 (a file without clusters is a v5 file).
 
 - Blob field `clusters` (after `funcs`): `[{"id", "cap", "emoji", "funcs": [qual, ...]}]`, sorted by id, never
@@ -254,8 +258,10 @@ communities of its functions, which the page's drill-down draws instead of every
   undirected, weighted by call sites (resolution 1.3; the visit order shuffled by the page's `rng()` seeded 7);
   functions with no call inside the blob are the loose ends; a single-function community joins the one it has the
   most call sites with per sqrt(its lines); then the smallest by lines joins its best-linked one the same way (the
-  loose ends when it has no link) until at most round(1.1 x sqrt(functions)) clusters are left, clamped to 6..14,
-  loose ends included. Deterministic: nothing depends on dict order of unordered data or the hash seed.
+  loose ends when it has no link) until at most round(1.1 x sqrt(functions)) clusters are left, clamped to 3..14,
+  loose ends included (12-15 functions: 4; 30: 6; 39: 7; 86: 10; 162+: 14). The draft clamped to 6..14, which only
+  bound under 30 functions (15 functions forced into up to 6 clusters); from 30 functions on the bounds are the
+  draft's. Deterministic: nothing depends on dict order of unordered data or the hash seed.
 - Stability: a blob's clusters keep their ids and members from step to step, as areas do. The fresh grouping is
   recomputed only when the blob's functions, their lines or the calls between them changed; each fresh group is
   matched to the cluster it overlaps most (lines + 1 per function, greedy; the loose ends always to 0). A function
@@ -263,9 +269,17 @@ communities of its functions, which the page's drill-down draws instead of every
   it has the most call sites with, then the smallest, then the lowest id); a function gone leaves; the others move
   only when the fresh grouping is adopted wholesale (matched groups keep their ids, others get new ones), which
   needs both: the same fresh grouping has come out on each of the 40 steps after the one it first came out on
-  (`areas.HOLD`; or half the blob's clustered steps so far, when shorter), and it would change some cluster's
-  members by more than half of their lines (`areas.REGROUP`); or at once, when the clusters would exceed the cap.
-  A blob that drops under the cut size forgets its clusters (ids start again from 1 if it comes back).
+  (`areas.HOLD`; or half the steps the blob has existed, when shorter), and it would change some cluster's
+  members by more than half of their lines (`areas.REGROUP`); or at once, when the clusters would exceed the cap or
+  fewer than 3 are left besides the loose ends while the fresh grouping has 3+.
+- Clustered or plain holds the same way: the verdict (12+ functions and 3+ fresh groups) changes a blob's view only
+  once it has come out the same on each of the 40 steps after the one it first came out on (or half the steps the
+  blob has existed, when fewer): the verdict on the step a blob first appears applies at once; a blob that has been
+  around and reaches the line (or drops under it) waits the hold, so it is never clustered for a step or two. A blob crossing the line back and forth keeps its view (a
+  blob turned plain shows no `clusters`; one kept clustered under the line shows what it had, updated as above).
+  Turned on, a blob adopts the fresh grouping with new ids (never reused while it exists); turned off, it forgets its
+  members. A held view is never a single cluster: while fewer than 2 are left besides the loose ends (a blob shrunk
+  to a function or two) the blob has no `clusters` that step, and goes on as clustered.
 - Captions: the members' first name word (split at `_`, other non-alphanumerics and camelCase humps; `tl` ->
   `timeline` and the draft's other abbreviations) weighted by sqrt(lines) + 1, when it covers half the cluster;
   else the best-connected member's first two words; a caption another cluster took gets the hub's words. Emoji: the
