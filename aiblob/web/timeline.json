@@ -22,6 +22,7 @@
      "module": ".",
      "area": "files",
      "path": "requirements.txt",
+     "fmt": "pipreq",
      "size": 2,
      "complexity": 0,
      "errors": 0,
@@ -883,6 +884,51 @@
         "removed": 0,
         "state": "new"
        }
+      }
+     ],
+     "clusters": [
+      {
+       "id": 0,
+       "cap": "loose ends",
+       "emoji": "🧷",
+       "funcs": [
+        "models.Note.to_dict",
+        "models.save_note",
+        "models.delete_note"
+       ]
+      },
+      {
+       "id": 1,
+       "cap": "note from",
+       "emoji": "🏷️",
+       "funcs": [
+        "models.Note.from_row",
+        "models.create_note",
+        "models.get_note",
+        "models.get_note_by_share_token",
+        "models.list_notes"
+       ]
+      },
+      {
+       "id": 2,
+       "cap": "create user",
+       "emoji": "🧩",
+       "funcs": [
+        "models.new_token",
+        "models.create_user",
+        "models.get_user",
+        "models.regenerate_api_token"
+       ]
+      },
+      {
+       "id": 3,
+       "cap": "json",
+       "emoji": "📦",
+       "funcs": [
+        "models.User.from_row",
+        "models.get_user_by_username",
+        "models.get_user_by_token"
+       ]
       }
      ],
      "label": {
@@ -1925,6 +1971,52 @@
       "models.new_token",
       "models.get_user",
       "models.get_user_by_username"
+     ],
+     "clusters": [
+      {
+       "id": 0,
+       "cap": "loose ends",
+       "emoji": "🧷",
+       "funcs": [
+        "models.Note.to_dict",
+        "models.save_note",
+        "models.delete_note",
+        "models.new_token"
+       ]
+      },
+      {
+       "id": 1,
+       "cap": "note from",
+       "emoji": "🏷️",
+       "funcs": [
+        "models.Note.from_row",
+        "models.get_note_by_share_token",
+        "models.list_notes"
+       ]
+      },
+      {
+       "id": 3,
+       "cap": "json",
+       "emoji": "📦",
+       "funcs": [
+        "models.get_user_by_token",
+        "models.User.from_row",
+        "models.get_user",
+        "models.get_user_by_username"
+       ]
+      },
+      {
+       "id": 4,
+       "cap": "create",
+       "emoji": "🏷️",
+       "funcs": [
+        "models.create_note",
+        "models.get_note"
+       ]
+      }
+     ],
+     "clusters_remove": [
+      2
      ],
      "label": {
       "emoji": "🗄️",
@@ -5494,8 +5586,9 @@
      "emoji": "📃",
      "kind": "text",
      "module": "templates",
-     "area": "files",
+     "area": "docs",
      "path": "templates/base.html",
+     "fmt": "html",
      "size": 34,
      "complexity": 0,
      "errors": 0,
@@ -5521,11 +5614,10 @@
    "edges_remove": [],
    "areas": [
     {
-     "id": "files",
-     "caption": "Files",
+     "id": "docs",
+     "caption": "Docs",
      "faces": [
-      "🎨",
-      "📦"
+      "🎨"
      ]
     }
    ],
@@ -5593,6 +5685,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/base.html",
+     "fmt": "html",
      "size": 34,
      "complexity": 0,
      "errors": 0,
@@ -5620,6 +5713,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/register.html",
+     "fmt": "html",
      "size": 10,
      "complexity": 0,
      "errors": 0,
@@ -5672,6 +5766,9 @@
       "📦"
      ]
     }
+   ],
+   "areas_remove": [
+    "docs"
    ],
    "stats": {
     "calls": 88,
@@ -5762,6 +5859,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/login.html",
+     "fmt": "html",
      "size": 10,
      "complexity": 0,
      "errors": 0,
@@ -5904,6 +6002,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/token.html",
+     "fmt": "html",
      "size": 8,
      "complexity": 0,
      "errors": 0,
@@ -6018,6 +6117,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/error.html",
+     "fmt": "html",
      "size": 6,
      "complexity": 0,
      "errors": 0,
@@ -6354,6 +6454,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/share.html",
+     "fmt": "html",
      "size": 7,
      "complexity": 0,
      "errors": 0,
@@ -6509,6 +6610,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/notes/index.html",
+     "fmt": "html",
      "size": 13,
      "complexity": 0,
      "errors": 0,
@@ -6710,6 +6812,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/notes/form.html",
+     "fmt": "html",
      "size": 10,
      "complexity": 0,
      "errors": 0,
@@ -6851,6 +6954,7 @@
      "module": "templates",
      "area": "files",
      "path": "templates/notes/view.html",
+     "fmt": "html",
      "size": 16,
      "complexity": 0,
      "errors": 0,
